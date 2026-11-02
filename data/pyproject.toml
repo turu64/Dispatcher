@@ -6,7 +6,9 @@ authors = [
     { name = "turu64", email = "contact_dispatcher@turutaru.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "shapely>=2.2.0",
+]
 
 [project.scripts]
 dispatcher-data = "dispatcher_data:main"

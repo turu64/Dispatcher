@@ -14,9 +14,12 @@
   },
   "dependencies": {
     "jszip": "^3.10.2",
+    "kdbush": "^4.1.0",
+    "maplibre-gl": "^6.16.0",
     "papaparse": "^5.7.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

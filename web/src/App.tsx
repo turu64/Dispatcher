@@ -4,6 +4,7 @@ import LoadStep from '@/components/steps/LoadStep'
 import ReachStep from '@/components/steps/ReachStep'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import BaseMap from '@/map/BaseMap'
+import ReachLayers from '@/map/ReachLayers'
 
 // 1画面構成:左に手順のパネル、右に地図。
 // 手順の中身は components/steps/ の1手順1ファイル。左パネルの一番下はデータの出典。
@@ -30,6 +31,8 @@ export default function App() {
         </aside>
         <main className="relative min-w-0 flex-1" aria-label="地図">
           <BaseMap />
+          {/* 到達圏のセル・停留所・駅のレイヤーと凡例。地図の準備ができてから重ねる */}
+          <ReachLayers />
         </main>
       </div>
     </TooltipProvider>

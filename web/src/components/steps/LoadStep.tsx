@@ -6,9 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { loadGtfsZip } from '@/gtfs/load'
 import { fetchSampleGtfs, fetchSampleGtfsInfo, type SampleGtfsInfo } from '@/gtfs/sample'
+import { loadGtfsInWorker } from '@/gtfs/workerClient'
 import { useGtfsStore } from '@/store/gtfs'
+import { useReachStore } from '@/store/reach'
 
 type SampleState = { status: 'checking' } | { status: 'ready'; info: SampleGtfsInfo } | { status: 'unreachable' }
 
@@ -29,15 +30,21 @@ export default function LoadStep() {
       .catch(() => setSample({ status: 'unreachable' }))
   }, [])
 
-  // ファイル選択とサンプルは、どちらもここから同じ読み込み処理を通す
+  // ファイル選択とサンプルは、どちらもここから同じ読み込み処理を通す。
+  // ZIP の展開と CSV の読み取りは Web Worker で行い、画面を止めない
   async function open(getData: () => Promise<Blob>, name: string, sampleInfo?: SampleGtfsInfo) {
     const { clear, setLoaded } = useGtfsStore.getState()
+    const reach = useReachStore.getState()
     setBusy(true)
     setError(null)
     clear()
+    reach.setSource(null)
     try {
-      const loaded = await loadGtfsZip(await getData())
+      const loaded = await loadGtfsInWorker(await getData())
       setLoaded({ label: name, feed: loaded, sample: sampleInfo })
+      // 停留所と運行期間は setLoaded で求めてある。到達圏の手順に渡し、既定の日付で計算を始める
+      const { stops, servicePeriod } = useGtfsStore.getState()
+      reach.setSource({ feed: loaded, stops, period: servicePeriod })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

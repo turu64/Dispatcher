@@ -27,4 +27,13 @@ describe('App', () => {
   it('地図の領域がある', () => {
     expect(html).toContain('aria-label="地図"')
   })
+
+  it('GTFS を読み込む前は、手順2・3は読み込みを促す', () => {
+    expect(html).toContain('手順1で GTFS を読み込むと選べます')
+    expect(html).toContain('手順1で GTFS を読み込むと、選んだ日付・時間帯の到達圏を計算します')
+  })
+
+  it('鉄道駅の扱いの注記を出す', () => {
+    expect(html).toContain('鉄道駅は時刻表データが無いため、6〜24時のすべての時間帯で使えるものとみなしています')
+  })
 })

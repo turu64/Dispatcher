@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { REACH_COLORS, REACH_FILL_OPACITY, REGION_COLORS } from './colors'
+import { REACH_COLORS, REACH_FILL_OPACITY, REACH_FILL_OPACITY_REACHABLE, REGION_COLORS } from './colors'
 
 // 色覚シミュレーション(Machado, Oliveira, Fernandes, 2009 の重大度 1.0)。線形 RGB に掛ける。
 const SIMULATIONS = {
@@ -80,5 +80,10 @@ describe('到達圏の色', () => {
   it('塗りの不透明度は 0 より大きく 1 以下', () => {
     expect(REACH_FILL_OPACITY).toBeGreaterThan(0)
     expect(REACH_FILL_OPACITY).toBeLessThanOrEqual(1)
+  })
+
+  it('徒歩圏内は、外れるセルより薄く塗る(見えなくなるほど薄くはしない)', () => {
+    expect(REACH_FILL_OPACITY_REACHABLE).toBeGreaterThanOrEqual(0.15)
+    expect(REACH_FILL_OPACITY_REACHABLE).toBeLessThan(REACH_FILL_OPACITY)
   })
 })

@@ -138,3 +138,29 @@ export function computeReach(input: ReachInput): ReachResult
 - 区分:DID の中は都市部。外なら、親の 250m セルの人口密度(人口 ÷ セルの面積)がしきい値以上で郊外、未満で中山間・地方
 - 到達できる:その時間帯に出発が1本以上ある停留所が、そのセルの区分のバス停の徒歩圏にある。または駅が、区分の駅の徒歩圏にある
 - **参照データが無いとき**(`/api/ref/{mesh1}` が 404):すべてのセルを `fallbackClass`(画面で選べる、既定は郊外)とし、駅は無いものとして計算する。画面にその旨の注意を出す
+
+## 追記(11/3、フェーズ1の結果を受けて。上の記述より優先する)
+
+### 運行日の判定
+- `feedServicePeriod` の端は、運行日を生む `calendar` の行の `start_date`・`end_date` と、`exception_type=1` の日付から取る。削除(`exception_type=2`)の日付と、運行日を1日も生まない行は数えない
+- 同じ `service_id`・同じ日付に 1 と 2 の両方があれば、削除を優先する
+- 追加:`servicesFor(feed, date): { today: Set<string>; yesterday: Set<string> }`(`today` は `date`、`yesterday` は前日の `activeServiceIds`)。画面は `departureCountsByBand` にこれを渡す
+
+### 時間帯ごとの出発
+- `counts` には出発が1本も無い停留所は入らない。使う側は `counts.get(id)` が無ければ、すべての時間帯を 0 とみなす
+- 追加:`DepartureCounts.skippedInvalidTime: number`(`departure_time` が空ではないが時刻として読めない行の数)。画面で知らせる
+- `stop_sequence` は 0 以上の10進の整数だけを読む(`'0x0A'`・`'1e1'` は読めない値)。読めない行は終点の判定に使わない
+- `pickup_type` は前後の空白を取って `'1'` と一致する行だけを乗車不可とする(`calendar` の `exception_type` と同じく文字列で照合する)
+- `hasFrequencies` は `frequencies.txt` に行が1件以上あるときだけ true
+
+### 参照データ
+- 駅の `line` は、複数の路線にまたがる駅では路線名を「・」でつなぐ(例:「宗谷線・函館線・富良野線」)
+- 各駅は、代表点を含む1次メッシュのファイルに1回だけ入れる。web は、停留所の範囲(外接矩形)を最大の徒歩圏(既定 1,600m)だけ広げた範囲に入る1次メッシュのファイルを、すべて読む
+- 廃止された駅は `data/src/dispatcher_data/closed_stations.csv`(駅名・事業者・路線・廃止日・出典 URL)で除く。N02-25(2025年12月31日時点)には、2026年4月1日に廃止された留萌線(深川〜石狩沼田)の駅が残っているため
+- `pop250` に入らない 250m セルは人口 0 とみなす(e-Stat で秘匿された値も、人口総数は秘匿されないので 0 にはならない)
+
+### 到達圏
+- 地域メッシュの範囲外(緯度 0〜66.67 度、経度 100〜200 度の外)や、(0, 0) の停留所は除く
+- `ReachResult` に追加:`excludedStops: number`(除いた停留所の数)、`cellPopulation: number[]`(推計人口。親の 250m セルの人口 ÷ 4。参照データが無ければ 0)
+- 距離は `mesh.ts` の `distanceM`(GRS80、ヒュベニの式)にそろえる。kdbush は平面の距離で探すので、候補を取るだけに使い、最後は `distanceM` で判定する
+- 追加:`web/src/reach/worker.ts` と `workerClient.ts` の `computeReachInWorker(input): Promise<ReachResult>`(GTFS の Worker と同じ作り)

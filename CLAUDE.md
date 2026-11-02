@@ -21,7 +21,7 @@
 ```
 web/     React + Vite + TypeScript。shadcn/ui + Tailwind、MapLibre GL JS、Zustand、Dexie.js(IndexedDB)、
          JSZip、Papa Parse、kdbush。重い計算は Web Worker
-server/  Python(FastAPI、SQLite)。Claude の中継、利用制限、Web 調査結果の使い回し、参照データの配信だけ
+server/  Python(FastAPI、SQLite)。Claude の中継、利用制限、Web 調査結果の使い回し、参照データとサンプル GTFS の配信だけ
 data/    参照データ(北海道)の加工スクリプト(Python)。data/raw/ → data/out/
 ```
 
@@ -93,6 +93,13 @@ cd data && uv run pytest -q
 
 最初は北海道のみ。参照データは 1次メッシュごとに分け、必要な範囲だけブラウザに読み込む。
 
+### サンプル GTFS(道北バス)
+
+- 画面の「サンプルを読み込む」で道北バスの GTFS を開ける。ファイル選択と同じ読み込み処理(`web/src/gtfs/load.ts` の `loadGtfsZip`)を通す。読み込んだら出典を画面に出す
+- ZIP は利用者が利用フォームに記入してから `data/raw/gtfs/dohoku-bus.zip` に置く(コミットしない)。サーバーが `GET /api/sample-gtfs`(有無と出典)と `GET /api/sample-gtfs/download` で配信する
+- 本番は環境変数 `DISPATCHER_SAMPLE_GTFS` でファイルの場所を渡す(Docker ではボリュームでマウント)
+- 開発中は Vite が `/api` を `127.0.0.1:8000` に中継する
+
 ## 開発での Claude Code
 
 - **フック**(`.claude/settings.json`):Edit・Write の後に `.claude/hooks/post-edit.sh` が走る。web は `vitest related`、server・data は pytest。失敗すると結果が返ってくるので、直してから先に進む
@@ -102,3 +109,4 @@ cd data && uv run pytest -q
 - **shadcn MCP サーバー**:`.mcp.json` はコミットしないため、各自で `claude mcp add --scope local shadcn -- npx shadcn@latest mcp` を実行する
 - テストは Vitest と pytest、CI は GitHub Actions(テストと型チェック)
 - コミットはこまめに、日本語で。期間中に作ったことをコミット履歴で示す
+- **ブランチ**:作業は `develop` で行う。`main` はおおまかな公開版を置く場所で、利用者が指示したときだけ `develop` から取り込む

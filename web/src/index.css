@@ -25,3 +25,40 @@ body {
 .map {
   background: #eef0f2;
 }
+
+.steps button,
+.steps input[type='file'] {
+  display: block;
+  margin: 8px 0;
+}
+
+.steps table {
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.steps th,
+.steps td {
+  padding: 2px 8px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+}
+
+.steps td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  color: #555;
+  font-size: 13px;
+}
+
+.error {
+  color: #b00020;
+}
+
+.warnings {
+  color: #8a5a00;
+  font-size: 13px;
+}

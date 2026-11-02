@@ -68,6 +68,38 @@ def test_人口の無い1次メッシュも指定すれば書く(fixture_raw: Pa
     assert ref["stations"] == []
 
 
+@pytest.mark.parametrize("mesh1", ["6540", "6741", "0000", "9999"])
+def test_海だけ_範囲外の1次メッシュも空の参照データを書く(fixture_raw: Path, tmp_path: Path, mesh1: str):
+    # web は参照データが1つでも 404 だと全体を使わない。人口も DID も駅も無い1次メッシュ(海だけ・北海道の外)も、空の JSON を書く
+    report = run(fixture_raw, tmp_path, [mesh1, "6542"])
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted([f"{mesh1}.json", "6542.json"])
+    ref = json.loads((tmp_path / f"{mesh1}.json").read_text(encoding="utf-8"))
+    assert list(ref) == ["mesh1", "pop250", "did125", "stations", "sources"]
+    assert ref["mesh1"] == mesh1
+    assert ref["pop250"] == {}
+    assert ref["did125"] == []
+    assert ref["stations"] == []
+    assert ref["sources"] == EXPECTED_SOURCES
+    assert [f[0] for f in report.files] == sorted([mesh1, "6542"])
+    assert report.no_population == [mesh1]
+    # 人口のある 6542 はいつもどおり
+    assert len(json.loads((tmp_path / "6542.json").read_text(encoding="utf-8"))["pop250"]) == 3
+
+
+def test_人口の元データが無い1次メッシュにも駅はある(fixture_raw: Path, tmp_path: Path):
+    # 大久保(東京)は 5339 にある。人口の元データが無くても、pop250 だけを空にして駅は入れる
+    report = run(fixture_raw, tmp_path, ["5339"])
+    ref = json.loads((tmp_path / "5339.json").read_text(encoding="utf-8"))
+    assert ref["pop250"] == {}
+    assert ref["did125"] == []
+    assert [(s["name"], s["line"]) for s in ref["stations"]] == [("大久保", "中央線")]
+    assert report.no_population == ["5339"]
+
+
+def test_指定が無ければ人口の元データが無い1次メッシュは出ない(fixture_raw: Path, tmp_path: Path):
+    assert run(fixture_raw, tmp_path).no_population == []
+
+
 def test_元データが無ければエラー(tmp_path: Path):
     with pytest.raises(MissingSourceError, match="人口メッシュ"):
         find_sources(tmp_path)
@@ -79,6 +111,20 @@ def test_コマンド(fixture_raw: Path, tmp_path: Path, capsys: pytest.CaptureF
     assert (out / "6542.json").exists()
     printed = capsys.readouterr().out
     assert "6542: 人口セル 3(計 20 人)、DID セル 40、駅 2" in printed
+    assert "人口の元データが無い" not in printed
+
+
+def test_コマンド_人口の無い1次メッシュを指定すると空で書いて知らせる(fixture_raw: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    out = tmp_path / "ref"
+    assert main(["--raw", str(fixture_raw), "--out", str(out), "--mesh1", "6540", "6542"]) == 0
+    assert sorted(p.name for p in out.iterdir()) == ["6540.json", "6542.json"]
+    printed = capsys.readouterr().out
+    assert "6540: 人口セル 0(計 0 人)、DID セル 0、駅 0" in printed
+    assert "6542: 人口セル 3(計 20 人)、DID セル 40、駅 2" in printed
+    notice = [line for line in printed.splitlines() if line.startswith("人口の元データが無い1次メッシュ:")]
+    assert len(notice) == 1
+    assert "6540" in notice[0]
+    assert "6542" not in notice[0]
 
 
 def test_コマンド_元データが無いと1を返す(tmp_path: Path, capsys: pytest.CaptureFixture[str]):

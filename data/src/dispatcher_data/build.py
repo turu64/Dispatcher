@@ -65,6 +65,8 @@ class BuildReport:
     # 廃止駅として除いた駅の線の数(N02 の線の単位)と、どの線にも一致しなかった廃止駅の行(「路線 駅名」)
     closed_removed: int = 0
     closed_unmatched: list[str] = field(default_factory=list)
+    # 指定されたが、人口の元データに1行も無かった1次メッシュ(海だけ・範囲外など)。pop250 を空にして書く
+    no_population: list[str] = field(default_factory=list)
     files: list[tuple[str, Path, int, dict[str, int]]] = field(default_factory=list)
 
 
@@ -136,7 +138,11 @@ def build_refs(
     stations: list[Station],
     mesh1_list: list[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """1次メッシュごとの参照データ。mesh1_list が無ければ、人口のある1次メッシュすべて。"""
+    """1次メッシュごとの参照データ。mesh1_list が無ければ、人口のある1次メッシュすべて。
+
+    mesh1_list で指定した1次メッシュは、人口・DID・駅のどれが無くても(海だけ・範囲外でも)必ず作る。
+    web は参照データが1つでも 404 だと全体を使わないため、無いものは空の pop250・did125・stations にする。
+    """
     pop = merge_population(tables)
     targets = sorted(mesh1_list) if mesh1_list else sorted(pop)
     stations_by_mesh1: dict[str, list[Station]] = {}
@@ -177,6 +183,7 @@ def run(
         bad_key=sum(t.bad_key for t in tables),
         closed_removed=len(closed.removed),
         closed_unmatched=[f"{c.line} {c.name}" for c in closed.unmatched],
+        no_population=sorted(set(refs) - {code[:4] for t in tables for code in t.pop}),
     )
     for mesh1, path, size in write_refs(refs, out_dir):
         ref = refs[mesh1]

@@ -95,10 +95,21 @@ def _write_csv(tmp_path: Path, body: str, header: str = CSV_HEADER) -> Path:
 def test_廃止駅の一覧を読む(tmp_path: Path):
     path = _write_csv(tmp_path, " 深川 ,北海道旅客鉄道,留萌線,2026-04-01,https://example.com/a.pdf\n\n二股,北海道旅客鉄道,函館線,2026-03-14,https://example.com/b.pdf\n")
     closed = load_closed_stations(path)
-    assert [(c.name, c.operator, c.line, c.closed_on.isoformat(), c.source_url) for c in closed] == [
-        ("深川", JR, "留萌線", "2026-04-01", "https://example.com/a.pdf"),
-        ("二股", JR, "函館線", "2026-03-14", "https://example.com/b.pdf"),
+    assert [(c.name, c.operator, c.line, c.closed_on.isoformat(), c.source_urls) for c in closed] == [
+        ("深川", JR, "留萌線", "2026-04-01", ("https://example.com/a.pdf",)),
+        ("二股", JR, "函館線", "2026-03-14", ("https://example.com/b.pdf",)),
     ]
+
+
+def test_出典URLは空白で区切って複数書ける(tmp_path: Path):
+    path = _write_csv(
+        tmp_path,
+        "深川,北海道旅客鉄道,留萌線,2026-04-01, https://example.com/a.pdf  https://example.com/b.pdf \n"
+        "二股,北海道旅客鉄道,函館線,2026-03-14,https://example.com/c.pdf\n",
+    )
+    closed = load_closed_stations(path)
+    assert closed[0].source_urls == ("https://example.com/a.pdf", "https://example.com/b.pdf")
+    assert closed[1].source_urls == ("https://example.com/c.pdf",)
 
 
 @pytest.mark.parametrize(
@@ -176,4 +187,11 @@ def test_同梱の廃止駅の一覧():
     assert sorted(c.name for c in closed if c.line == "函館線") == sorted(["仁山", "二股"])
     assert {c.operator for c in closed} == {JR}
     # 出典は JR北海道の公式の発表
-    assert all(c.source_url.startswith("https://www.jrhokkaido.co.jp/CM/Info/press/pdf/") for c in closed)
+    assert all(u.startswith("https://www.jrhokkaido.co.jp/CM/Info/press/pdf/") for c in closed for u in c.source_urls)
+    # 留萌線は、廃止の届出(廃止日・最終運行日)と、駅名の根拠(2026年2月9日の運転時刻の発表)の2つ。函館線は 2025年12月12日のダイヤ改正の発表の1つ
+    rumoi = {
+        "https://www.jrhokkaido.co.jp/CM/Info/press/pdf/20250328_KO_todokede.pdf",
+        "https://www.jrhokkaido.co.jp/CM/Info/press/pdf/20260209_HP_AS_rumoiline.pdf",
+    }
+    assert all(set(c.source_urls) == rumoi and len(c.source_urls) == 2 for c in closed if c.line == "留萌線")
+    assert all(c.source_urls == ("https://www.jrhokkaido.co.jp/CM/Info/press/pdf/20251212_KO_kaisei.pdf",) for c in closed if c.line == "函館線")

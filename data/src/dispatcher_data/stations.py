@@ -69,13 +69,16 @@ class Station:
 
 @dataclass(frozen=True)
 class ClosedStation:
-    """廃止された駅の線1本(closed_stations.csv の1行)。N02 の事業者(N02_004)・路線名(N02_003)・駅名(N02_005)で照合する。"""
+    """廃止された駅の線1本(closed_stations.csv の1行)。N02 の事業者(N02_004)・路線名(N02_003)・駅名(N02_005)で照合する。
+
+    source_urls は出典の URL(1つ以上)。CSV の出典URL 列では、複数の URL を空白で区切って書く。
+    """
 
     name: str
     operator: str
     line: str
     closed_on: date
-    source_url: str
+    source_urls: tuple[str, ...]
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -187,6 +190,7 @@ def load_closed_stations(path: Path = CLOSED_STATIONS_CSV) -> list[ClosedStation
     """廃止駅の一覧(UTF-8、見出しつき)を読む。形が違えば ValueError。
 
     各欄の前後の空白は取る。空行は飛ばす。廃止日は YYYY-MM-DD。同じ(事業者・路線・駅名)が2行あればエラー。
+    出典URL の欄には、URL を空白で区切って複数書ける(URL に空白は入らない)。
     廃止日は記録で、除くかどうかの判定には使わない(一覧にある線はすべて除く)。
     """
     with open(path, encoding="utf-8-sig", newline="") as f:
@@ -202,7 +206,7 @@ def load_closed_stations(path: Path = CLOSED_STATIONS_CSV) -> list[ClosedStation
                 continue
             if len(cells) != len(CLOSED_STATIONS_HEADER) or not all(cells):
                 raise ValueError(f"{path.name} の {number} 行目は {len(CLOSED_STATIONS_HEADER)} 列すべてを埋めてください: {row}")
-            name, operator, line, closed_on, source_url = cells
+            name, operator, line, closed_on, source_cell = cells
             try:
                 # 'YYYY-MM-DD' だけを許す(fromisoformat は 'YYYYMMDD' なども読むため桁を確かめる)
                 if len(closed_on) != 10:
@@ -210,7 +214,7 @@ def load_closed_stations(path: Path = CLOSED_STATIONS_CSV) -> list[ClosedStation
                 day = date.fromisoformat(closed_on)
             except ValueError:
                 raise ValueError(f"{path.name} の {number} 行目の廃止日が YYYY-MM-DD ではありません: {closed_on}") from None
-            item = ClosedStation(name, operator, line, day, source_url)
+            item = ClosedStation(name, operator, line, day, tuple(source_cell.split()))
             if item.key in seen:
                 raise ValueError(f"{path.name} の {number} 行目が重複しています: {operator} {line} {name}")
             seen.add(item.key)

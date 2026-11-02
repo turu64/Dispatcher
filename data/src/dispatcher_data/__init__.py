@@ -54,6 +54,12 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"{mesh1}: 人口セル {c['pop250']}(計 {c['人口']} 人)、DID セル {c['did125']}、駅 {c['stations']} → {path}({size:,} バイト)"
         )
+    if report.no_population:
+        print(
+            f"人口の元データが無い1次メッシュ:{'、'.join(report.no_population)}"
+            "(pop250 を空にして書きました。web はこの範囲のセルを人口 0 として調べません。"
+            "停留所があるなら、e-Stat の人口を data/raw/mesh/ に置いて作り直してください)"
+        )
     return 0
 
 

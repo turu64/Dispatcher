@@ -22,16 +22,17 @@ cd web && pnpm exec vitest run src/gtfs
 2. 参照の整合:trips.route_id、trips.service_id、stop_times.trip_id、stop_times.stop_id が、参照先に存在する
 3. 日付は YYYYMMDD、時刻は HH:MM:SS。24時を超える時刻(25:10:00 など)を正しく扱う
 4. stop_times の stop_sequence が便ごとに増えていく
-5. calendar と calendar_dates:exception_type は 1(追加)か 2(除外)。減便期間の外で、元のダイヤが変わっていない
+5. calendar と calendar_dates:exception_type は 1(追加)か 2(除外)。calendar_dates の行は出力の有効期間の中だけ。有効期間が7日以下のデータセットは作らない
 6. feed_info の版番号(feed_version)が更新されている
 
 ## 3. 減便の反映として確かめること(検証器では見きれない部分)
 
 - **入力の作り方に従っているか**:入力が calendar 中心なら calendar 中心、calendar_dates 中心ならそのまま。service_id の付け方も入力に合わせる
-- **期間の外は元のまま**:減便期間の前後の日付で、運行する便の集合が入力と同じ
-- **期間の中**:平日に、方針で選んだダイヤ(土曜または日祝)の便が走り、足し戻した便だけが平日側に残る
+- **有効期間**:形2(便の入れ替え)なので、出力の有効期間は減便の期間に合わせる(`docs/interfaces-1104.md` §5.6)。開始日より前の日は出力に含まれない。calendar の start_date・end_date と feed_info の feed_start_date・feed_end_date がそろっている
+- **入れ替え**:平日の service_id に入る便が、方針で選んだダイヤ(土曜または日祝)の便の写しと、除外した系統の平日便と、足し戻した便だけになっている。土曜・日祝の service の便は変わらない。trip_id が一意で、写した便の trip_id は取り決めの規則どおり
+- **足し戻し**:足し戻した便が、元の平日便と停留所・時刻まで同じ
 - **祝日**:内閣府の祝日一覧に基づく日付の扱いが、入力と矛盾しない
-- **元に戻せる**:編集の履歴から入力と同じ GTFS に戻せる
+- **元に戻せる**:編集の履歴から入力と同じ GTFS に戻せる(出力 GTFS 単体では戻せない。基準の GTFS と履歴で戻す)
 
 ## 4. 報告の形
 

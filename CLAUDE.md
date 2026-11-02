@@ -32,6 +32,8 @@ data/    参照データ(北海道)の加工スクリプト(Python)。data/raw/ 
 
 ## コマンド
 
+VS Code のタスク(`.vscode/tasks.json`)に、開発サーバーの起動(画面とサーバーを同時に。既定のビルドタスク)、依存パッケージの導入、テスト、CI と同じチェックを用意している。中身は下のコマンドと同じ。
+
 ```bash
 # web
 cd web && pnpm install

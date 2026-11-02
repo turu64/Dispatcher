@@ -17,6 +17,8 @@
 
 必要なもの:Node.js 22、pnpm 10(`corepack enable && corepack install -g pnpm@10`)、uv
 
+VS Code では、コマンドパレットの「タスク: タスクの実行」から「開発サーバーを起動」を選ぶと、画面とサーバーが同時に起動します(⇧⌘B でも起動できます)。ターミナルで動かす場合は次のとおりです。
+
 ```bash
 # 画面
 cd web

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeServiceIds, addDays, feedServicePeriod, isValidGtfsDate, weekdayIndex } from './calendar'
+import { activeServiceIds, addDays, feedServicePeriod, isValidGtfsDate, servicesFor, weekdayIndex } from './calendar'
 import type { GtfsFeed, GtfsRow } from './load'
 
 const CALENDAR_FIELDS = [
@@ -259,6 +259,151 @@ describe('activeServiceIds', () => {
     const feed = feedOf({ calendar: BASE_CALENDAR })
     expect(() => activeServiceIds(feed, '20261332')).toThrow('日付の形が正しくありません')
     expect(() => activeServiceIds(feed, '2026-11-02')).toThrow('日付の形が正しくありません')
+  })
+})
+
+describe('servicesFor', () => {
+  function pair(feed: GtfsFeed, date: string): { today: string[]; yesterday: string[] } {
+    const { today, yesterday } = servicesFor(feed, date)
+    return { today: [...today].sort(), yesterday: [...yesterday].sort() }
+  }
+
+  it('対象日(today)と前日(yesterday)の運行する service_id を返す', () => {
+    const feed = feedOf({ calendar: BASE_CALENDAR })
+    expect(pair(feed, '20261102')).toEqual({ today: ['平日'], yesterday: ['日祝'] }) // 月曜の前日は日曜
+    expect(pair(feed, '20261107')).toEqual({ today: ['土曜'], yesterday: ['平日'] }) // 土曜の前日は金曜
+    expect(pair(feed, '20261108')).toEqual({ today: ['日祝'], yesterday: ['土曜'] })
+  })
+
+  it('today は date の activeServiceIds、yesterday は前日の activeServiceIds と同じ(期間のすべての日)', () => {
+    const feed = feedOf({
+      calendar: BASE_CALENDAR,
+      calendar_dates: [ex('平日', '20261103', '2'), ex('日祝', '20261103', '1'), ex('臨時', '20261120', '1')],
+    })
+    for (let d = '20260925'; d <= '20261205'; d = addDays(d, 1)) {
+      const { today, yesterday } = servicesFor(feed, d)
+      expect([...today].sort(), d).toEqual(ids(feed, d))
+      expect([...yesterday].sort(), d).toEqual(ids(feed, addDays(d, -1)))
+    }
+  })
+
+  describe('前日が月・年・うるう日をまたぐ', () => {
+    // 1日に1つずつ、その日だけに走る service_id(S + 日付)を足したフィード。
+    // 前日を暦どおりに求めていれば、yesterday はちょうど S + 前日 の1つになる
+    const PAIRS: [date: string, previous: string][] = [
+      ['20261101', '20261031'], // 月初(31日の月)
+      ['20261201', '20261130'], // 月初(30日の月)
+      ['20260501', '20260430'],
+      ['20270101', '20261231'], // 年初
+      ['20280101', '20271231'],
+      ['20270301', '20270228'], // うるう年でない年の3月1日
+      ['20280301', '20280229'], // うるう年の3月1日
+      ['20280229', '20280228'],
+      ['20000301', '20000229'], // 400 で割り切れる年はうるう年
+      ['21000301', '21000228'], // 100 で割り切れて 400 で割り切れない年はうるう年でない
+    ]
+    const dates = [...new Set(PAIRS.flat())]
+    const feed = feedOf({ calendar_dates: dates.map((d) => ex(`S${d}`, d, '1')) })
+
+    for (const [date, previous] of PAIRS) {
+      it(`${date} の前日は ${previous}`, () => {
+        expect(pair(feed, date)).toEqual({ today: [`S${date}`], yesterday: [`S${previous}`] })
+      })
+    }
+  })
+
+  it('期間をまたぐ calendar で、年初の前日(12/31)の calendar_dates の変更を前日に反映する', () => {
+    const feed = feedOf({
+      calendar: [
+        cal('平日', '1111100', '20261201', '20270331'),
+        cal('土曜', '0000010', '20261201', '20270331'),
+        cal('日祝', '0000001', '20261201', '20270331'),
+      ],
+      calendar_dates: [ex('平日', '20261231', '2'), ex('日祝', '20261231', '1')],
+    })
+    // 2027-01-01 は金曜。12/31(木)は calendar では平日だが、calendar_dates で日祝に差し替えている
+    expect(pair(feed, '20270101')).toEqual({ today: ['平日'], yesterday: ['日祝'] })
+    expect(pair(feed, '20261231')).toEqual({ today: ['日祝'], yesterday: ['平日'] })
+  })
+
+  it('対象日の変更が前日に、前日の変更が対象日に混ざらない', () => {
+    const feed = feedOf({
+      calendar: BASE_CALENDAR,
+      calendar_dates: [ex('平日', '20261103', '2'), ex('日祝', '20261103', '1')],
+    })
+    // 11/3(火)は祝日で日祝。11/2(月)と 11/4(水)は calendar のとおり平日
+    expect(pair(feed, '20261102')).toEqual({ today: ['平日'], yesterday: ['日祝'] })
+    expect(pair(feed, '20261103')).toEqual({ today: ['日祝'], yesterday: ['平日'] })
+    expect(pair(feed, '20261104')).toEqual({ today: ['平日'], yesterday: ['日祝'] })
+  })
+
+  it('期間の最初の日は前日が期間の外なので yesterday が空。期間の翌日は today が空で yesterday が最終日の分', () => {
+    const feed = feedOf({ calendar: BASE_CALENDAR })
+    expect(pair(feed, '20261001')).toEqual({ today: ['平日'], yesterday: [] })
+    expect(pair(feed, '20261201')).toEqual({ today: [], yesterday: ['平日'] })
+    expect(pair(feed, '20261202')).toEqual({ today: [], yesterday: [] })
+  })
+
+  it('calendar_dates.txt だけのフィードも扱う', () => {
+    const feed = feedOf({ calendar_dates: [ex('A', '20261231', '1'), ex('B', '20270101', '1'), ex('A', '20270101', '1')] })
+    expect(pair(feed, '20270101')).toEqual({ today: ['A', 'B'], yesterday: ['A'] })
+    expect(pair(feed, '20270102')).toEqual({ today: [], yesterday: ['A', 'B'] })
+  })
+
+  it('空白を取った service_id を返す(today も yesterday も)', () => {
+    const feed = feedOf({
+      calendar: [cal(' 平日 ', '1111100', ' 20261001 ', '20261130 '), cal('日祝\t', '0000001', '20261001', '20261130')],
+    })
+    const { today, yesterday } = servicesFor(feed, '20261102')
+    expect([...today]).toEqual(['平日'])
+    expect([...yesterday]).toEqual(['日祝'])
+  })
+
+  it('calendar.txt も calendar_dates.txt も無ければどちらも空', () => {
+    const { today, yesterday } = servicesFor(feedOf({}), '20261102')
+    expect(today.size).toBe(0)
+    expect(yesterday.size).toBe(0)
+  })
+
+  it('today と yesterday は別の Set で、片方を書き換えてももう一方は変わらない', () => {
+    // 平日が連続する火曜(前日も平日)。中身が同じでも同じ Set を返してはいけない
+    const feed = feedOf({ calendar: BASE_CALENDAR })
+    const first = servicesFor(feed, '20261103')
+    expect([...first.today]).toEqual(['平日'])
+    expect([...first.yesterday]).toEqual(['平日'])
+    expect(first.today).not.toBe(first.yesterday)
+    first.today.add('追加')
+    expect([...first.yesterday]).toEqual(['平日'])
+    // 呼ぶたびに新しい Set を返す
+    const second = servicesFor(feed, '20261103')
+    expect([...second.today]).toEqual(['平日'])
+  })
+
+  it('不正な日付を渡すとエラーにする', () => {
+    const feed = feedOf({ calendar: BASE_CALENDAR })
+    expect(() => servicesFor(feed, '20261332')).toThrow('日付の形が正しくありません')
+    expect(() => servicesFor(feed, '2026-11-02')).toThrow('日付の形が正しくありません')
+    expect(() => servicesFor(feed, '')).toThrow('日付の形が正しくありません')
+  })
+
+  it('表せる最小の日付 00000101 は、isValidGtfsDate が真なのでエラーにしない(前日は表せないので yesterday は空)', () => {
+    expect(isValidGtfsDate('00000101')).toBe(true)
+    const feed = feedOf({ calendar_dates: [ex('A', '00000101', '1'), ex('B', '00000102', '1')] })
+    expect(pair(feed, '00000101')).toEqual({ today: ['A'], yesterday: [] })
+    expect(pair(feed, '00000102')).toEqual({ today: ['B'], yesterday: ['A'] })
+  })
+
+  it('表せる最大の日付 99991231 でも、前日の 99991230 を求められる', () => {
+    const feed = feedOf({ calendar_dates: [ex('A', '99991230', '1'), ex('B', '99991231', '1')] })
+    expect(pair(feed, '99991231')).toEqual({ today: ['B'], yesterday: ['A'] })
+  })
+
+  it('読み込んだ行を書き換えない', () => {
+    const calendar = BASE_CALENDAR.map((r) => ({ ...r }))
+    const feed = feedOf({ calendar, calendar_dates: [ex(' 平日 ', ' 20261103', ' 2 ')] })
+    servicesFor(feed, '20261104')
+    expect(calendar).toEqual(BASE_CALENDAR)
+    expect(feed.tables.get('calendar_dates')?.rows).toEqual([ex(' 平日 ', ' 20261103', ' 2 ')])
   })
 })
 

@@ -1,6 +1,7 @@
+import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
 import { departureCountsByBand, makeBands, parseGtfsTime, type DepartureCounts } from './departures'
-import type { GtfsFeed, GtfsRow } from './load'
+import { loadGtfsZip, type GtfsFeed, type GtfsRow } from './load'
 
 /** 引用符の無い簡単な CSV を行にする(値の前後の空白は元のまま残す) */
 function rowsOf(csv: string): GtfsRow[] {
@@ -279,6 +280,116 @@ T2,A,2,08:10:00,0`),
       })
       expect(departureCountsByBand(feed, WEEKDAY, BANDS3).counts.size).toBe(0)
     })
+
+    /** 1つの便に、(stop_id, stop_sequence)の並びを 7:00 から1分おきの出発で作る */
+    function oneTrip(sequences: [string, string][]): GtfsFeed {
+      const lines = sequences.map(([stop, seq], i) => `T1,${stop},${seq},07:${String(i).padStart(2, '0')}:00,0`)
+      return feedOf({
+        trips: rowsOf('trip_id,service_id\nT1,平日'),
+        stop_times: rowsOf(`trip_id,stop_id,stop_sequence,departure_time,pickup_type\n${lines.join('\n')}`),
+      })
+    }
+    function countedStops(feed: GtfsFeed): string[] {
+      return [...departureCountsByBand(feed, WEEKDAY, BANDS3).counts.keys()].sort()
+    }
+
+    it("16進('0x0A')の stop_sequence は読めない値で、終点の判定に使わない", () => {
+      // 以前は 0x0A を 10 と読んで D を終点としていた。読めない行は終点にならず数える
+      const feed = oneTrip([['A', '1'], ['B', '2'], ['C', '3'], ['D', '0x0A']])
+      expect(countedStops(feed)).toEqual(['A', 'B', 'D'])
+    })
+
+    it("指数('1e1')の stop_sequence は読めない値で、終点の判定に使わない", () => {
+      const feed = oneTrip([['A', '1'], ['B', '2'], ['C', '3'], ['D', '1e1']])
+      expect(countedStops(feed)).toEqual(['A', 'B', 'D'])
+    })
+
+    it('小数・負・符号つき・全角・区切りつき・空の stop_sequence は読めない値で、終点の判定に使わない', () => {
+      for (const bad of ['1.5', '-1', '+9', '９', '1_0', '', '   ', 'abc', '0b11', '1e1']) {
+        const feed = oneTrip([['A', '1'], ['B', '2'], ['C', '3'], ['D', bad]])
+        expect(countedStops(feed), JSON.stringify(bad)).toEqual(['A', 'B', 'D'])
+      }
+    })
+
+    it("先頭が 0 の10進('01'・'010')は整数として読む。'010' は 10 なので 9 より後ろの終点になる", () => {
+      const feed = oneTrip([['S1', '01'], ['S9', '9'], ['S10', '010']])
+      expect(countedStops(feed)).toEqual(['S1', 'S9'])
+      // '01' と '1' は同じ値。最大の行が '03' の便では、'03' の行が終点になる
+      expect(countedStops(oneTrip([['A', '01'], ['B', '2'], ['C', '03']]))).toEqual(['A', 'B'])
+    })
+
+    it('stop_sequence が 0 の行も読む(0 以上の整数)', () => {
+      expect(countedStops(oneTrip([['A', '0'], ['B', '1']]))).toEqual(['A'])
+    })
+
+    it('前後の空白を取れば10進の整数になる値は読む', () => {
+      expect(countedStops(oneTrip([['A', ' 1 '], ['B', '\t2'], ['C', ' 10 ']]))).toEqual(['A', 'B'])
+    })
+
+    it('どの行の stop_sequence も読めない便は、終点を決められないのですべて数える', () => {
+      const feed = oneTrip([['A', '0x01'], ['B', '1e0'], ['C', '']])
+      expect(countedStops(feed)).toEqual(['A', 'B', 'C'])
+    })
+
+    it('桁が多い stop_sequence も10進の整数として読み、Number では同じ値になる大きな値同士でも正確に比べる', () => {
+      // 取り決めは「0 以上の10進の整数だけを読む」。桁数の上限は無い。
+      // Number にすると、この2つはどちらも 1e40 になり、区別できない
+      const max = '9'.repeat(40)
+      const second = `${'9'.repeat(39)}8`
+      expect(Number(max)).toBe(Number(second))
+      // 最大の行だけが終点。A と B は数える
+      expect(countedStops(oneTrip([['A', '1'], ['B', second], ['C', max]]))).toEqual(['A', 'B'])
+      // 行の並びを入れ替えても、終点は最大の値の行
+      expect(countedStops(oneTrip([['C', max], ['A', '1'], ['B', second]]))).toEqual(['A', 'B'])
+      expect(countedStops(oneTrip([['B', second], ['C', max], ['A', '1']]))).toEqual(['A', 'B'])
+    })
+
+    it('桁数が違う大きな値は桁数で比べ、先頭の 0 は値に入れない', () => {
+      // 1 の後ろに 0 が 30 個(31 桁)は、9 が 29 個より大きい
+      const wide = `1${'0'.repeat(30)}`
+      const narrow = '9'.repeat(29)
+      expect(countedStops(oneTrip([['A', narrow], ['B', wide]]))).toEqual(['A'])
+      expect(countedStops(oneTrip([['B', wide], ['A', narrow]]))).toEqual(['A'])
+      // 先頭に 0 が何個あっても値は変わらない(41 桁の '0…01' は 1)
+      const paddedOne = `${'0'.repeat(40)}1`
+      expect(countedStops(oneTrip([['A', paddedOne], ['B', '2']]))).toEqual(['A'])
+      expect(countedStops(oneTrip([['A', '2'], ['B', paddedOne]]))).toEqual(['B'])
+      // 先頭の 0 を除くと同じ値になる2行は、どちらも終点(最大の値と等しいので数えない)
+      expect(countedStops(oneTrip([['A', '1'], ['B', '3'], ['C', '0003']]))).toEqual(['A'])
+    })
+
+    it('0 だけの stop_sequence(複数桁を含む)は 0 として読む', () => {
+      expect(countedStops(oneTrip([['A', '000'], ['B', '0'], ['C', '1']]))).toEqual(['A', 'B'])
+    })
+  })
+
+  describe('pickup_type', () => {
+    function oneTripWithPickup(values: string[]): GtfsFeed {
+      const lines = values.map((p, i) => `T1,P${i},${i + 1},07:${String(i).padStart(2, '0')}:00,${p}`)
+      // 終点 Z は数えない
+      lines.push(`T1,Z,${values.length + 1},08:00:00,0`)
+      return feedOf({
+        trips: rowsOf('trip_id,service_id\nT1,平日'),
+        stop_times: rowsOf(`trip_id,stop_id,stop_sequence,departure_time,pickup_type\n${lines.join('\n')}`),
+      })
+    }
+
+    it("文字列が '1'(前後の空白を除く)の行だけを乗車できない行とする", () => {
+      const feed = oneTripWithPickup(['1', ' 1 ', '\t1'])
+      expect(departureCountsByBand(feed, WEEKDAY, BANDS3).counts.size).toBe(0)
+    })
+
+    it("'01'・'1.0'・'+1'・'1e0'・'0x1' は '1' ではないので乗車できる行として数える", () => {
+      const values = ['01', '1.0', '+1', '1e0', '0x1']
+      const result = departureCountsByBand(oneTripWithPickup(values), WEEKDAY, BANDS3)
+      expect([...result.counts.keys()].sort()).toEqual(values.map((_, i) => `P${i}`))
+    })
+
+    it("'0'・'2'・'3'・空・想定外の値は乗車できる行として数える", () => {
+      const values = ['0', '2', '3', '', 'x']
+      const result = departureCountsByBand(oneTripWithPickup(values), WEEKDAY, BANDS3)
+      expect([...result.counts.keys()].sort()).toEqual(values.map((_, i) => `P${i}`))
+    })
   })
 
   it('departure_time が空の行は数えず、数を skippedBlankTime に入れる(補間しない)', () => {
@@ -313,6 +424,87 @@ T9,,,Z,2,0`),
     const result = departureCountsByBand(feed, WEEKDAY, BANDS3)
     expect(result.counts.size).toBe(0)
     expect(result.skippedBlankTime).toBe(0)
+    // 空ではないが時刻として読めない行は skippedInvalidTime に入れる
+    expect(result.skippedInvalidTime).toBe(1)
+  })
+
+  describe('時刻として読めない departure_time(skippedInvalidTime)', () => {
+    it("'7:5:00'・'07.10.00' など、空ではないが読めない値は数えず、行の数を skippedInvalidTime に入れる", () => {
+      const feed = tripsWithDeparture([
+        { trip: 'T1', service: '平日', time: '7:5:00' },
+        { trip: 'T2', service: '平日', time: '07.10.00' },
+        { trip: 'T3', service: '平日', time: '07:10' },
+        { trip: 'T4', service: '平日', time: '07:60:00' },
+        { trip: 'T5', service: '平日', time: '七時' },
+        { trip: 'T6', service: '平日', time: '07:00:00' },
+      ])
+      const result = departureCountsByBand(feed, WEEKDAY, BANDS3)
+      expect(result.skippedInvalidTime).toBe(5)
+      expect(result.skippedBlankTime).toBe(0)
+      // 読めた T6 だけを数える
+      expect(countsAt(result, 'A')).toEqual([1, 0, 0, 0, 0, 0])
+    })
+
+    it('空の行は skippedBlankTime、読めない行は skippedInvalidTime に分けて数える。空白だけの値は空とみなす', () => {
+      const feed = tripsWithDeparture([
+        { trip: 'T1', service: '平日', time: '' },
+        { trip: 'T2', service: '平日', time: '   ' },
+        { trip: 'T3', service: '平日', time: '07.10.00' },
+        { trip: 'T4', service: '平日', time: ' 7:5:00 ' },
+      ])
+      const result = departureCountsByBand(feed, WEEKDAY, BANDS3)
+      expect(result.skippedBlankTime).toBe(2)
+      expect(result.skippedInvalidTime).toBe(2)
+      expect(result.counts.size).toBe(0)
+    })
+
+    it('前後の空白を取れば読める値は、読めない行に入れず数える', () => {
+      const feed = tripsWithDeparture([{ trip: 'T1', service: '平日', time: ' 07:00:00 ' }])
+      const result = departureCountsByBand(feed, WEEKDAY, BANDS3)
+      expect(result.skippedInvalidTime).toBe(0)
+      expect(countsAt(result, 'A')).toEqual([1, 0, 0, 0, 0, 0])
+    })
+
+    it('当日と前日の両方で走る便の読めない行は、1行として1回だけ数える', () => {
+      const feed = tripsWithDeparture([{ trip: 'T1', service: '平日', time: '07.10.00' }])
+      const both = new Set(['平日'])
+      const result = departureCountsByBand(feed, { today: both, yesterday: both }, BANDS3)
+      expect(result.skippedInvalidTime).toBe(1)
+    })
+
+    it('運行しない便、乗車できない行、終点の行の読めない値は数えない', () => {
+      const feed = feedOf({
+        trips: rowsOf(`
+trip_id,service_id
+T1,平日
+T9,土曜`),
+        stop_times: rowsOf(`
+trip_id,stop_id,stop_sequence,departure_time,pickup_type
+T1,A,1,07:00:00,0
+T1,P,2,07.10.00,1
+T1,B,3,7:5:00,0
+T1,Z,4,07.30.00,0
+T9,A,1,07.10.00,0
+T9,Z,2,07.20.00,0`),
+      })
+      const result = departureCountsByBand(feed, WEEKDAY, BANDS3)
+      // 数える対象のうち読めないのは B の1行だけ。P(乗車できない)・Z(終点)・T9(運行しない)は対象外
+      expect(result.skippedInvalidTime).toBe(1)
+      expect([...result.counts.keys()]).toEqual(['A'])
+    })
+
+    it('departure_time の列が無い行は、読めない値ではなく空として数える', () => {
+      const feed = feedOf({
+        trips: rowsOf('trip_id,service_id\nT1,平日'),
+        stop_times: [
+          { trip_id: 'T1', stop_id: 'A', stop_sequence: '1' },
+          { trip_id: 'T1', stop_id: 'Z', stop_sequence: '2' },
+        ],
+      })
+      const result = departureCountsByBand(feed, WEEKDAY, BANDS3)
+      expect(result.skippedBlankTime).toBe(1)
+      expect(result.skippedInvalidTime).toBe(0)
+    })
   })
 
   it('trip_id・service_id・stop_id の前後の空白を取って照合し、キーも空白を取った値にする', () => {
@@ -372,6 +564,46 @@ T1 ,Z,10,12:00:00,0`),
       // stop_times の1本だけを数える
       expect(countsAt(result, 'A')).toEqual([1, 0, 0, 0, 0, 0])
     })
+
+    it('行が 0 件の frequencies(見出しだけのファイル)は false', () => {
+      const feed = feedOf({ ...base, frequencies: [] })
+      expect(feed.tables.has('frequencies')).toBe(true)
+      expect(departureCountsByBand(feed, WEEKDAY, BANDS3).hasFrequencies).toBe(false)
+    })
+
+    it('行が 1 件だけでも true', () => {
+      const feed = feedOf({
+        ...base,
+        frequencies: rowsOf('trip_id,start_time,end_time,headway_secs\nT1,07:00:00,08:00:00,1200'),
+      })
+      expect(departureCountsByBand(feed, WEEKDAY, BANDS3).hasFrequencies).toBe(true)
+    })
+
+    it('運行する便が無い日でも、frequencies の有無は返す', () => {
+      const none = { today: new Set<string>(), yesterday: new Set<string>() }
+      const withRows = feedOf({ ...base, frequencies: rowsOf('trip_id,start_time,end_time,headway_secs\nT1,07:00:00,08:00:00,1200') })
+      expect(departureCountsByBand(withRows, none, BANDS3).hasFrequencies).toBe(true)
+      expect(departureCountsByBand(feedOf({ ...base, frequencies: [] }), none, BANDS3).hasFrequencies).toBe(false)
+    })
+
+    it('ZIP の中の見出しだけの frequencies.txt を読み込むと false、行があれば true', async () => {
+      const zipOf = async (frequencies: string) => {
+        const zip = new JSZip()
+        zip.file('trips.txt', 'trip_id,service_id\nT1,平日\n')
+        zip.file('stop_times.txt', 'trip_id,stop_id,stop_sequence,departure_time\nT1,A,1,07:00:00\nT1,Z,2,07:10:00\n')
+        zip.file('frequencies.txt', frequencies)
+        return loadGtfsZip(await zip.generateAsync({ type: 'arraybuffer' }))
+      }
+      const headerOnly = await zipOf('trip_id,start_time,end_time,headway_secs\n')
+      expect(headerOnly.tables.get('frequencies')?.rows).toEqual([])
+      expect(departureCountsByBand(headerOnly, WEEKDAY, BANDS3).hasFrequencies).toBe(false)
+      // 末尾の空行があっても行は増えない
+      const blankLines = await zipOf('trip_id,start_time,end_time,headway_secs\r\n\r\n\r\n')
+      expect(departureCountsByBand(blankLines, WEEKDAY, BANDS3).hasFrequencies).toBe(false)
+
+      const withRow = await zipOf('trip_id,start_time,end_time,headway_secs\nT1,07:00:00,08:00:00,1200\n')
+      expect(departureCountsByBand(withRow, WEEKDAY, BANDS3).hasFrequencies).toBe(true)
+    })
   })
 
   describe('運行しない便', () => {
@@ -401,7 +633,7 @@ X1,Z,2,07:10:00`),
     it('運行する service_id が無い日は空の結果を返す', () => {
       const feed = tripsWithDeparture([{ trip: 'T1', service: '平日', time: '07:00:00' }])
       const result = departureCountsByBand(feed, { today: new Set(), yesterday: new Set() }, BANDS3)
-      expect(result).toEqual({ counts: new Map(), skippedBlankTime: 0, hasFrequencies: false })
+      expect(result).toEqual({ counts: new Map(), skippedBlankTime: 0, skippedInvalidTime: 0, hasFrequencies: false })
     })
   })
 

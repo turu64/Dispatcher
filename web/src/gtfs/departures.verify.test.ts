@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { departureCountsByBand, makeBands, type DepartureCounts } from './departures'
+import { activeServiceIds, servicesFor } from './calendar'
+import { departureCountsByBand, makeBands, parseGtfsTime, type DepartureCounts } from './departures'
 import { loadGtfsZip, type GtfsFeed, type GtfsRow, type GtfsTable } from './load'
 
 // 道北バスの GTFS(data/raw/gtfs/ に置く。コミットしない)。ファイルがあるときだけ走る。
@@ -126,6 +127,220 @@ describe('前日の便の時間帯の端(手で作ったデータ)', () => {
   })
 })
 
+// 実装から独立した基準(オラクル)との照合。実データが無くても走る。
+// オラクルは実装の関数を使わず、取り決めの文面どおりに素直に書く(stop_sequence は BigInt で比べる)
+describe('独立した基準との照合(乱数で作った小さなフィード)', () => {
+  type Services = { today: Set<string>; yesterday: Set<string> }
+
+  // 取り決めに書かれた値の書き方と、書かれていない崩れた書き方を混ぜる
+  const SEQUENCES = [
+    '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '01', '02', '010', ' 3 ', '0', '000',
+    '0x0A', '1e1', '1.5', '-1', '+9', '９', '', 'abc', '1_0',
+    '9'.repeat(20), `${'9'.repeat(19)}8`, `${'0'.repeat(20)}5`,
+  ]
+  const PICKUPS = ['0', '0', '0', '1', ' 1 ', '01', '1.0', '+1', '1e0', '', '2', '3']
+  const TIMES = [
+    '06:00:00', '6:00:00', '07:59:59', '08:00:00', '09:00:00', '12:30:00', '23:59:59', '24:00:00', '25:10:00',
+    '29:59:59', '30:00:00', '30:10:00', '47:59:59', '48:00:00', '100:00:00', ' 07:00:00 ', '',
+    '   ', '7:5:00', '07.10.00', '07:60:00', '07:00', 'abc',
+  ]
+  const STOPS = ['A', 'B', 'C', ' A ', 'D', '']
+  const SERVICE_NAMES = ['W', 'S', 'X']
+
+  function pick<T>(xs: readonly T[], next: () => number): T {
+    return xs[Math.floor(next() * xs.length)]
+  }
+  function randomSubset(xs: readonly string[], next: () => number): Set<string> {
+    return new Set(xs.filter(() => next() < 0.5))
+  }
+
+  /** 線形合同法の乱数(0 以上 1 未満) */
+  function generator(seed: number): () => number {
+    let s = seed >>> 0
+    return () => {
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0
+      return s / 2 ** 32
+    }
+  }
+
+  function randomFeed(next: () => number): GtfsFeed {
+    const trips: GtfsRow[] = []
+    const stopTimes: GtfsRow[] = []
+    const tripCount = 1 + Math.floor(next() * 5)
+    for (let i = 0; i < tripCount; i++) {
+      const id = `T${i}`
+      trips.push({ trip_id: next() < 0.2 ? ` ${id} ` : id, service_id: pick(['W', 'S', 'X', ' W '], next) })
+      const rowCount = 1 + Math.floor(next() * 7)
+      for (let k = 0; k < rowCount; k++) {
+        stopTimes.push({
+          trip_id: next() < 0.2 ? `${id}\t` : id,
+          stop_id: pick(STOPS, next),
+          stop_sequence: next() < 0.6 ? String(k + 1) : pick(SEQUENCES, next),
+          pickup_type: pick(PICKUPS, next),
+          departure_time: pick(TIMES, next),
+        })
+      }
+    }
+    // 運行しない便の行と、trips に無い便の行も混ぜる
+    stopTimes.push({ trip_id: 'NOWHERE', stop_id: 'A', stop_sequence: '1', pickup_type: '0', departure_time: '07:00:00' })
+    const table = (name: string, rows: GtfsRow[]): [string, GtfsTable] => [name, { fileName: `${name}.txt`, fields: [], rows }]
+    return { tables: new Map([table('trips', trips), table('stop_times', stopTimes)]), warnings: [] }
+  }
+
+  /** 取り決めの文面を、そのまま素直に書いた数え方 */
+  function oracle(feed: GtfsFeed, services: Services, stepHours: 1 | 3) {
+    const serviceOfTrip = new Map<string, string>()
+    for (const t of feed.tables.get('trips')?.rows ?? []) serviceOfTrip.set((t.trip_id ?? '').trim(), (t.service_id ?? '').trim())
+    const byTrip = new Map<string, GtfsRow[]>()
+    for (const r of feed.tables.get('stop_times')?.rows ?? []) {
+      const id = (r.trip_id ?? '').trim()
+      byTrip.set(id, [...(byTrip.get(id) ?? []), r])
+    }
+
+    const counts = new Map<string, number[]>()
+    const bandCount = 18 / stepHours
+    let blank = 0
+    let invalid = 0
+    for (const [tripId, rows] of byTrip) {
+      const service = serviceOfTrip.get(tripId)
+      if (service === undefined) continue
+      const offsets: number[] = []
+      if (services.today.has(service)) offsets.push(0)
+      if (services.yesterday.has(service)) offsets.push(-86400)
+      if (offsets.length === 0) continue
+
+      // 0 以上の10進の整数として読める stop_sequence の最大
+      let last: bigint | null = null
+      for (const r of rows) {
+        const s = (r.stop_sequence ?? '').trim()
+        if (!/^[0-9]+$/.test(s)) continue
+        const n = BigInt(s)
+        if (last === null || n > last) last = n
+      }
+
+      for (const r of rows) {
+        if ((r.pickup_type ?? '').trim() === '1') continue
+        const s = (r.stop_sequence ?? '').trim()
+        if (last !== null && /^[0-9]+$/.test(s) && BigInt(s) === last) continue
+        const dep = (r.departure_time ?? '').trim()
+        if (dep === '') {
+          blank++
+          continue
+        }
+        const m = /^([0-9]{1,3}):([0-5][0-9]):([0-5][0-9])$/.exec(dep)
+        if (!m) {
+          invalid++
+          continue
+        }
+        const stop = (r.stop_id ?? '').trim()
+        if (stop === '') continue
+        for (const off of offsets) {
+          const sec = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + off
+          if (sec < 6 * 3600 || sec >= 24 * 3600) continue
+          const index = Math.floor((sec - 6 * 3600) / (stepHours * 3600))
+          const arr = counts.get(stop) ?? new Array<number>(bandCount).fill(0)
+          arr[index]++
+          counts.set(stop, arr)
+        }
+      }
+    }
+    return { counts, blank, invalid }
+  }
+
+  it('500 通りのフィード・運行日・時間帯の幅で、オラクルと一致する(停留所ごとの配列と、数えなかった行の数)', () => {
+    const next = generator(20261103)
+    let withCounts = 0
+    let withInvalid = 0
+    for (let i = 0; i < 500; i++) {
+      const feed = randomFeed(next)
+      const services: Services = { today: randomSubset(SERVICE_NAMES, next), yesterday: randomSubset(SERVICE_NAMES, next) }
+      const step = next() < 0.5 ? 1 : 3
+      const actual = departureCountsByBand(feed, services, makeBands(step))
+      const expected = oracle(feed, services, step)
+      const label = `${i} 回目 ${JSON.stringify([...services.today])}/${JSON.stringify([...services.yesterday])} 幅${step}`
+      expect(sorted(actual), label).toEqual([...expected.counts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      expect(actual.skippedBlankTime, label).toBe(expected.blank)
+      expect(actual.skippedInvalidTime, label).toBe(expected.invalid)
+      if (actual.counts.size > 0) withCounts++
+      if (expected.invalid > 0) withInvalid++
+    }
+    // 乱数の偏りで、どの場合も試されていない状態になっていないこと
+    expect(withCounts).toBeGreaterThan(100)
+    expect(withInvalid).toBeGreaterThan(50)
+  })
+})
+
+// calendar(運行日の判定)と departures(出発の数え方)は、「1」の書き方を同じ規則で読む:
+// 前後の空白を除いた文字列が '1' のときだけ。数としては読まない
+describe('calendar と departures で「1」の読み方がそろっている', () => {
+  // [書き方, 「1」として読むか]
+  const TOKENS: [string, boolean][] = [
+    ['1', true], [' 1 ', true], ['\t1', true], ['1\t', true],
+    ['01', false], ['001', false], ['1.0', false], ['+1', false], ['1e0', false], ['0x1', false], ['１', false],
+    ['', false], ['  ', false], ['0', false], ['2', false], ['true', false], ['-1', false],
+  ]
+  const DATE = '20261102' // 月曜
+  const table = (name: string, rows: GtfsRow[]): [string, GtfsTable] => [name, { fileName: `${name}.txt`, fields: [], rows }]
+
+  /** calendar_dates の exception_type が token の追加の行で、運行する service_id になるか */
+  function addedByExceptionType(token: string): boolean {
+    const feed: GtfsFeed = {
+      tables: new Map([table('calendar_dates', [{ service_id: 'A', date: DATE, exception_type: token }])]),
+      warnings: [],
+    }
+    return activeServiceIds(feed, DATE).has('A')
+  }
+
+  /** calendar の月曜の列が token のとき、月曜に運行する service_id になるか */
+  function runsByWeekdayColumn(token: string): boolean {
+    const row: GtfsRow = {
+      service_id: 'A', monday: token, tuesday: '0', wednesday: '0', thursday: '0', friday: '0', saturday: '0', sunday: '0',
+      start_date: '20261001', end_date: '20261130',
+    }
+    return activeServiceIds({ tables: new Map([table('calendar', [row])]), warnings: [] }, DATE).has('A')
+  }
+
+  /** pickup_type が token の行が、乗車できない行として除かれるか */
+  function skippedByPickupType(token: string): boolean {
+    const feed: GtfsFeed = {
+      tables: new Map([
+        table('trips', [{ trip_id: 'T', service_id: 'S' }]),
+        table('stop_times', [
+          { trip_id: 'T', stop_id: 'A', stop_sequence: '1', pickup_type: token, departure_time: '07:00:00' },
+          { trip_id: 'T', stop_id: 'Z', stop_sequence: '2', pickup_type: '0', departure_time: '07:10:00' },
+        ]),
+      ]),
+      warnings: [],
+    }
+    const result = departureCountsByBand(feed, { today: new Set(['S']), yesterday: new Set() }, makeBands(3))
+    return !result.counts.has('A')
+  }
+
+  for (const [token, isOne] of TOKENS) {
+    it(`${JSON.stringify(token)} は ${isOne ? '「1」として読む' : '「1」として読まない'}(exception_type・曜日の列・pickup_type で同じ)`, () => {
+      expect(addedByExceptionType(token)).toBe(isOne)
+      expect(runsByWeekdayColumn(token)).toBe(isOne)
+      expect(skippedByPickupType(token)).toBe(isOne)
+    })
+  }
+
+  it("exception_type の削除('2')も、前後の空白を除いた文字列が '2' のときだけ", () => {
+    const feed = (token: string): GtfsFeed => ({
+      tables: new Map([
+        table('calendar', [{
+          service_id: 'A', monday: '1', tuesday: '0', wednesday: '0', thursday: '0', friday: '0', saturday: '0', sunday: '0',
+          start_date: '20261001', end_date: '20261130',
+        }]),
+        table('calendar_dates', [{ service_id: 'A', date: DATE, exception_type: token }]),
+      ]),
+      warnings: [],
+    })
+    for (const [token, removes] of [['2', true], [' 2 ', true], ['02', false], ['2.0', false], ['+2', false], ['2e0', false], ['', false]] as const) {
+      expect(activeServiceIds(feed(token), DATE).has('A'), JSON.stringify(token)).toBe(!removes)
+    }
+  })
+})
+
 // 2026-11-02(月曜)。当日は平日ダイヤ 01、前日の 11/1(日曜)は日祝ダイヤ 06
 const NOV2 = { today: new Set(['01']), yesterday: new Set(['06']) }
 
@@ -139,6 +354,16 @@ describe.skipIf(!existsSync(BEFORE))('道北バス(減便前)の 2026-11-02 の�
     expect(feed.tables.get('feed_info')?.rows[0]?.feed_version).toBe('202609171038')
   }, 60_000)
 
+  it('stop_times の値の書き方は厳密な読み方でも変わらない(pickup_type は 0 か 1、stop_sequence は10進の整数、時刻は読める、frequencies.txt は無い)', () => {
+    // 数え方を厳密にした(pickup_type は文字列の '1' だけ、stop_sequence は10進の整数だけ)あとも
+    // 期待値が変わらないのは、実データがこの書き方だけで書かれているため
+    const rows = feed.tables.get('stop_times')?.rows ?? []
+    expect(new Set(rows.map((r) => r.pickup_type))).toEqual(new Set(['0', '1']))
+    expect(rows.filter((r) => !/^\d+$/.test(r.stop_sequence ?? '')).length).toBe(0)
+    expect(rows.filter((r) => parseGtfsTime(r.departure_time) === null).length).toBe(0)
+    expect(feed.tables.has('frequencies')).toBe(false)
+  })
+
   it('3時間ごとの合計は朝(6〜9時)が多く、夜(21〜24時)が最も少ない', () => {
     const bands = makeBands(3)
     const result = departureCountsByBand(feed, NOV2, bands)
@@ -149,6 +374,8 @@ describe.skipIf(!existsSync(BEFORE))('道北バス(減便前)の 2026-11-02 の�
     expect(sum(totals)).toBe(16819)
     expect(result.counts.size).toBe(1443)
     expect(result.skippedBlankTime).toBe(0)
+    // 実データの departure_time はすべて時刻として読める
+    expect(result.skippedInvalidTime).toBe(0)
     expect(result.hasFrequencies).toBe(false)
 
     expect(totals[0]).toBeGreaterThan(totals[5] * 10)
@@ -156,6 +383,16 @@ describe.skipIf(!existsSync(BEFORE))('道北バス(減便前)の 2026-11-02 の�
     // 夕方以降は減っていく
     expect(totals[3]).toBeGreaterThan(totals[4])
     expect(totals[4]).toBeGreaterThan(totals[5])
+  })
+
+  it('servicesFor の結果をそのまま渡すと、手で書いた NOV2 と同じ結果になる(11/2 と祝日の 11/3)', () => {
+    const bands = makeBands(3)
+    const viaCalendar = departureCountsByBand(feed, servicesFor(feed, '20261102'), bands)
+    expect(bandTotals(viaCalendar, bands.length)).toEqual([3105, 3787, 3792, 3488, 2365, 282])
+    expect(sorted(viaCalendar)).toEqual(sorted(departureCountsByBand(feed, NOV2, bands)))
+    // 祝日の 11/3(当日 06、前日 01)
+    const holiday = departureCountsByBand(feed, servicesFor(feed, '20261103'), bands)
+    expect(bandTotals(holiday, bands.length)).toEqual([2324, 3500, 3391, 3120, 1867, 235])
   })
 
   it('1時間ごとの合計は3時間ごとと一致し、23〜24時は0本', () => {
@@ -313,6 +550,53 @@ describe.skipIf(!existsSync(BEFORE))('道北バス(減便前)の 2026-11-02 の�
     expect(result.counts.get('7010_01')).toEqual([1, 0, 1, 1, 1, 0])
   })
 
+  it('通し:servicesFor(カレンダー)→ departureCountsByBand。11/2(月)・11/3(祝日)・11/9(月)・11/23(祝日)を Python で数えた値と比べる', () => {
+    // 期待値は検証担当が Python で別に数えた値。日付から運行する service_id を求める段と、
+    // その service_id で出発を数える段を、つなげた形で確かめる
+    const bands = makeBands(3)
+    const run = (date: string) => {
+      const services = servicesFor(feed, date)
+      return { services, result: departureCountsByBand(feed, services, bands) }
+    }
+    const names = (set: Set<string>) => [...set].sort()
+
+    // 平日(月曜)。当日は平日 01、前日の日曜は 06
+    const nov2 = run('20261102')
+    expect([names(nov2.services.today), names(nov2.services.yesterday)]).toEqual([['01'], ['06']])
+    expect(bandTotals(nov2.result, bands.length)).toEqual([3105, 3787, 3792, 3488, 2365, 282])
+    expect(nov2.result.counts.size).toBe(1443)
+    expect(nov2.result.counts.get('2880_02')).toEqual([27, 38, 42, 41, 28, 1])
+
+    // 祝日(火曜の文化の日)。calendar_dates で 01 が外れ、06 が足される。当日は 06、前日の 11/2 は 01
+    const nov3 = run('20261103')
+    expect([names(nov3.services.today), names(nov3.services.yesterday)]).toEqual([['06'], ['01']])
+    expect(bandTotals(nov3.result, bands.length)).toEqual([2324, 3500, 3391, 3120, 1867, 235])
+    expect(nov3.result.counts.size).toBe(1301)
+    expect(nov3.result.counts.get('2880_02')).toEqual([21, 36, 34, 33, 24, 0])
+
+    // 翌週の月曜。calendar_dates に載っていない日なので、11/2 と同じ service_id になり、同じ結果になる
+    const nov9 = run('20261109')
+    expect([names(nov9.services.today), names(nov9.services.yesterday)]).toEqual([['01'], ['06']])
+    expect(bandTotals(nov9.result, bands.length)).toEqual([3105, 3787, 3792, 3488, 2365, 282])
+    expect(nov9.result.counts.size).toBe(1443)
+    expect(nov9.result.counts.get('2880_02')).toEqual([27, 38, 42, 41, 28, 1])
+    expect(sorted(nov9.result)).toEqual(sorted(nov2.result))
+
+    // 祝日の勤労感謝の日(月曜)。前日の日曜も 06 なので、当日・前日の両方に 06 が入る(1つの便が両方の旗を持つ)。
+    // 24時を超える出発が無いので、前日の分は何も足さず、11/3 と同じ結果になる
+    const nov23 = run('20261123')
+    expect([names(nov23.services.today), names(nov23.services.yesterday)]).toEqual([['06'], ['06']])
+    expect(bandTotals(nov23.result, bands.length)).toEqual([2324, 3500, 3391, 3120, 1867, 235])
+    expect(nov23.result.counts.size).toBe(1301)
+    expect(nov23.result.skippedBlankTime).toBe(0)
+    expect(nov23.result.skippedInvalidTime).toBe(0)
+    expect(sorted(nov23.result)).toEqual(sorted(nov3.result))
+
+    // 日付を替えても結果が変わらない(平日の 11/2 と 11/9 は同じ、祝日の 11/3 と 11/23 は同じ)一方で、
+    // 平日と祝日は違う。日付から service_id を求める段が効いている
+    expect(sorted(nov9.result)).not.toEqual(sorted(nov3.result))
+  })
+
   it('実データで1回の計算が 1 秒を超えない', () => {
     const times: Record<string, number[]> = { '3時間ごと': [], '1時間ごと': [] }
     for (let i = 0; i < 5; i++) {
@@ -344,6 +628,10 @@ describe.skipIf(!existsSync(BEFORE) || !existsSync(AFTER))('道北バス(減便�
 
     expect(a).toEqual([2784, 3496, 3390, 3231, 1906, 238])
     expect(sum(a)).toBe(15045)
+    const afterResult = departureCountsByBand(after, NOV2, bands)
+    expect(afterResult.skippedBlankTime).toBe(0)
+    expect(afterResult.skippedInvalidTime).toBe(0)
+    expect(afterResult.hasFrequencies).toBe(false)
     for (let i = 0; i < bands.length; i++) expect(a[i]).toBeLessThanOrEqual(b[i])
 
     // 検証担当が Python で別に数えた値:減便後の祝日 11/3(当日 06、前日 01)と、1時間ごとの 11/2
@@ -354,5 +642,38 @@ describe.skipIf(!existsSync(BEFORE) || !existsSync(AFTER))('道北バス(減便�
     expect(bandTotals(departureCountsByBand(after, NOV2, hourly), hourly.length)).toEqual([
       126, 1331, 1327, 1110, 1105, 1281, 1230, 966, 1194, 1164, 1182, 885, 919, 636, 351, 187, 51, 0,
     ])
+  }, 60_000)
+
+  it('通し:減便後の servicesFor → departureCountsByBand(11/2・11/3・11/9・11/23)。期間の最初の 11/1 は前日が期間の外', async () => {
+    // 期待値は検証担当が Python で別に数えた値
+    const after = await loadSample(AFTER)
+    const bands = makeBands(3)
+    const run = (date: string) => departureCountsByBand(after, servicesFor(after, date), bands)
+    const weekday = [2784, 3496, 3390, 3231, 1906, 238]
+    const holiday = [2324, 3496, 3379, 3118, 1867, 235]
+
+    const nov2 = run('20261102')
+    expect(bandTotals(nov2, bands.length)).toEqual(weekday)
+    expect(nov2.counts.size).toBe(1354)
+    expect(nov2.counts.get('2880_02')).toEqual([24, 36, 35, 35, 24, 0])
+
+    const nov3 = run('20261103')
+    expect(bandTotals(nov3, bands.length)).toEqual(holiday)
+    expect(nov3.counts.size).toBe(1296)
+    expect(nov3.counts.get('2880_02')).toEqual([21, 36, 34, 33, 24, 0])
+
+    const nov9 = run('20261109')
+    expect(bandTotals(nov9, bands.length)).toEqual(weekday)
+    expect(sorted(nov9)).toEqual(sorted(nov2))
+
+    const nov23 = run('20261123')
+    expect(bandTotals(nov23, bands.length)).toEqual(holiday)
+    expect(sorted(nov23)).toEqual(sorted(nov3))
+
+    // 期間の最初の日 11/1(日曜、06)は、前日の 10/31 が期間の外なので yesterday が空
+    const nov1 = servicesFor(after, '20261101')
+    expect([...nov1.today]).toEqual(['06'])
+    expect(nov1.yesterday.size).toBe(0)
+    expect(bandTotals(departureCountsByBand(after, nov1, bands), bands.length)).toEqual(holiday)
   }, 60_000)
 })

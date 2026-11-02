@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { activeServiceIds, addDays, feedServicePeriod, isValidGtfsDate, weekdayIndex } from './calendar'
+import { activeServiceIds, addDays, feedServicePeriod, isValidGtfsDate, servicesFor, weekdayIndex } from './calendar'
 import { loadGtfsZip, type GtfsFeed, type GtfsRow } from './load'
 
 // ---- 実装から独立した基準(オラクル) ----
@@ -315,6 +315,12 @@ function exceptionsByDate(feed: GtfsFeed): Record<string, Record<string, string>
 
 const HOLIDAY_EXCEPTIONS = { '01': '2', '03': '2', '06': '1' }
 
+/** servicesFor の結果を、比べやすいように並べた配列にする */
+function servicesOf(feed: GtfsFeed, date: string): { today: string[]; yesterday: string[] } {
+  const { today, yesterday } = servicesFor(feed, date)
+  return { today: [...today].sort(), yesterday: [...yesterday].sort() }
+}
+
 const BEFORE = samplePath('dohoku_bus_減便前.zip')
 const AFTER = samplePath('dohoku_bus_減便後.zip')
 
@@ -369,6 +375,30 @@ describe.skipIf(!existsSync(BEFORE))('道北バス(減便前、20261001〜202611
     expect([...inTrips].sort()).toEqual(['01', '03', '06'])
     for (const id of inTrips) expect(inCalendar.has(id), id).toBe(true)
   })
+
+  it('servicesFor:11/2(月)の当日は平日 01、前日の 11/1(日)は日祝 06', () => {
+    expect(servicesOf(feed, '20261102')).toEqual({ today: ['01'], yesterday: ['06'] })
+  })
+
+  it('servicesFor:祝日の 11/3(火)は当日が 06、前日の 11/2 は 01。翌日の 11/4 は前日が祝日の 06', () => {
+    expect(servicesOf(feed, '20261103')).toEqual({ today: ['06'], yesterday: ['01'] })
+    expect(servicesOf(feed, '20261104')).toEqual({ today: ['01'], yesterday: ['06'] })
+  })
+
+  it('servicesFor:月またぎ(10/31 土→11/1 日)と期間の端(開始日の前日・終了日の翌日)', () => {
+    expect(servicesOf(feed, '20261101')).toEqual({ today: ['06'], yesterday: ['03'] })
+    expect(servicesOf(feed, '20261001')).toEqual({ today: ['01'], yesterday: [] })
+    expect(servicesOf(feed, '20261201')).toEqual({ today: [], yesterday: ['01'] })
+  })
+
+  it('servicesFor:期間のすべての日で、today・yesterday は activeServiceIds と一致する', () => {
+    for (let d = '20260930'; d <= '20261201'; d = addDays(d, 1)) {
+      expect(servicesOf(feed, d), d).toEqual({
+        today: [...activeServiceIds(feed, d)].sort(),
+        yesterday: [...activeServiceIds(feed, addDays(d, -1))].sort(),
+      })
+    }
+  })
 })
 
 describe.skipIf(!existsSync(AFTER))('道北バス(減便後、20261101〜20270331)', () => {
@@ -409,5 +439,22 @@ describe.skipIf(!existsSync(AFTER))('道北バス(減便後、20261101〜2027033
   it('期間のすべての日で、ちょうど1つの service_id が走る', () => {
     const days = expectOneServicePerDay(feed, '20261101', '20270331', ['20261103', '20261123'])
     expect(days).toBe(151)
+  })
+
+  it('servicesFor:開始日の 11/1(日)は前日の 10/31 が期間の外なので yesterday が空', () => {
+    expect(servicesOf(feed, '20261101')).toEqual({ today: ['06'], yesterday: [] })
+    expect(servicesOf(feed, '20261102')).toEqual({ today: ['01'], yesterday: ['06'] })
+  })
+
+  it('servicesFor:祝日の 11/3 と、その翌日(前日が祝日の 06)', () => {
+    expect(servicesOf(feed, '20261103')).toEqual({ today: ['06'], yesterday: ['01'] })
+    expect(servicesOf(feed, '20261104')).toEqual({ today: ['01'], yesterday: ['06'] })
+  })
+
+  it('servicesFor:年またぎ(12/31 木→1/1 金)と、終了日の翌日', () => {
+    expect(servicesOf(feed, '20270101')).toEqual({ today: ['01'], yesterday: ['01'] })
+    expect(servicesOf(feed, '20270102')).toEqual({ today: ['03'], yesterday: ['01'] })
+    expect(servicesOf(feed, '20270331')).toEqual({ today: ['01'], yesterday: ['01'] })
+    expect(servicesOf(feed, '20270401')).toEqual({ today: [], yesterday: ['01'] })
   })
 })

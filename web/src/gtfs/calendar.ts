@@ -12,6 +12,9 @@ const WEEKDAY_COLUMNS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday',
 
 const DATE_PATTERN = /^(\d{4})(\d{2})(\d{2})$/
 
+/** 8桁で表せる最初の日付(前日が無い) */
+const FIRST_DATE = '00000101'
+
 interface YMD {
   y: number
   m: number
@@ -152,6 +155,22 @@ export function activeServiceIds(feed: GtfsFeed, date: string): Set<string> {
   for (const serviceId of removed) active.delete(serviceId)
 
   return active
+}
+
+/**
+ * 対象日 date に走る service_id(today)と、その前日に走る service_id(yesterday)。
+ * 画面は、この結果をそのまま departureCountsByBand に渡す(前日の便の 24時を超える出発を、対象日の早朝として数えるため)。
+ *
+ * 前日は addDays(date, -1) で求めるので、月初・年初・うるう日の翌日でも暦どおりに前の日になる。
+ * today と yesterday は別の Set で、片方を書き換えてももう一方には影響しない。
+ * 8桁で表せる最初の日付 00000101 には前日が無いので、yesterday は空にする(エラーにしない)。
+ * date が不正な日付ならエラーにする(activeServiceIds と同じ)。
+ */
+export function servicesFor(feed: GtfsFeed, date: string): { today: Set<string>; yesterday: Set<string> } {
+  const today = activeServiceIds(feed, date)
+  // 00000101 の前日は4桁の年で表せない。isValidGtfsDate が真の日付でエラーにしないよう、yesterday は空にする
+  const yesterday = date === FIRST_DATE ? new Set<string>() : activeServiceIds(feed, addDays(date, -1))
+  return { today, yesterday }
 }
 
 /**

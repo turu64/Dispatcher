@@ -1,4 +1,5 @@
 import type { GtfsFeed, GtfsRow } from './load'
+import { NON_NEGATIVE_INTEGER } from './parse'
 
 /** 到達圏を数える時間帯。開始の時刻を含み、終了の時刻を含まない */
 export interface TimeBand {
@@ -47,7 +48,12 @@ export interface DepartureCounts {
   counts: Map<string, number[]>
   /** departure_time が空で数えなかった行の数(運行する便の、本来なら数える行だけ。補間はしない) */
   skippedBlankTime: number
-  /** frequencies.txt があれば true(展開はしない) */
+  /**
+   * departure_time が空ではないが、時刻として読めず数えなかった行の数('7:5:00'・'07.10.00' など)。
+   * 数える範囲は skippedBlankTime と同じ(運行する便の、本来なら数える行だけ)。画面で知らせる
+   */
+  skippedInvalidTime: number
+  /** frequencies.txt に行が1件以上あれば true(見出しだけのファイルは false。展開はしない) */
   hasFrequencies: boolean
 }
 
@@ -60,8 +66,10 @@ const RUNS_YESTERDAY = 2
  *
  * - `services.today`:D に走る service_id。出発時刻 t をそのまま時間帯に当てはめる
  * - `services.yesterday`:D−1 に走る service_id。`t − 86400` を当てはめる(前日の便の '30:10' は D の 6:10)
- * - 数えないもの:pickup_type=1(乗車できない)の行、各便の最後の停留所(stop_sequence を数値として比べて最大のもの)、
- *   departure_time が空の行(数は skippedBlankTime に入れる)
+ * - 数えないもの:pickup_type が '1'(前後の空白を除いて文字列として一致。乗車できない)の行、
+ *   各便の最後の停留所(stop_sequence を数値として比べて最大のもの。0 以上の10進の整数だけを読み、
+ *   '0x0A'・'1e1' のような値は読めない値として終点の判定に使わない)、
+ *   departure_time が空の行(数は skippedBlankTime に入れる)、時刻として読めない行(数は skippedInvalidTime に入れる)
  *
  * stop_times は数万行になるため、便ごとの最後の stop_sequence を先に1回で求め、全体を O(行数) で数える。
  */
@@ -71,7 +79,8 @@ export function departureCountsByBand(
   bands: TimeBand[],
 ): DepartureCounts {
   const counts = new Map<string, number[]>()
-  const hasFrequencies = feed.tables.has('frequencies')
+  // 見出しだけの frequencies.txt(行が 0 件)は、運行間隔の便が無いので false
+  const hasFrequencies = (feed.tables.get('frequencies')?.rows.length ?? 0) > 0
   const tripRows = feed.tables.get('trips')?.rows ?? []
   const stopTimeRows = feed.tables.get('stop_times')?.rows ?? []
 
@@ -86,23 +95,24 @@ export function departureCountsByBand(
     if (services.yesterday.has(serviceId)) flags |= RUNS_YESTERDAY
     if (flags !== 0) runs.set(tripId, (runs.get(tripId) ?? 0) | flags)
   }
-  if (runs.size === 0 || bands.length === 0) return { counts, skippedBlankTime: 0, hasFrequencies }
+  if (runs.size === 0 || bands.length === 0) return { counts, skippedBlankTime: 0, skippedInvalidTime: 0, hasFrequencies }
 
-  // 2. 便ごとの最後の stop_sequence(数値として比べる。'10' > '9')
-  const lastSequence = new Map<string, number>()
+  // 2. 便ごとの最後の stop_sequence(整数として比べる。'10' > '9')
+  const lastSequence = new Map<string, string>()
   for (const row of stopTimeRows) {
     const tripId = trimmed(row.trip_id)
     if (!runs.has(tripId)) continue
     const seq = sequenceOf(row)
     if (seq === null) continue
     const prev = lastSequence.get(tripId)
-    if (prev === undefined || seq > prev) lastSequence.set(tripId, seq)
+    if (prev === undefined || isLaterSequence(seq, prev)) lastSequence.set(tripId, seq)
   }
 
   // 3. 出発を時間帯に当てはめる(時間帯の端は秒にしておく)
   const starts = bands.map((b) => b.startHour * 3600)
   const ends = bands.map((b) => b.endHour * 3600)
   let skippedBlankTime = 0
+  let skippedInvalidTime = 0
 
   for (const row of stopTimeRows) {
     const tripId = trimmed(row.trip_id)
@@ -118,8 +128,11 @@ export function departureCountsByBand(
       continue
     }
     const t = parseGtfsTime(departure)
-    // 形式が違う時刻は数えない(検証器が別に知らせる)
-    if (t === null) continue
+    // 空ではないが時刻として読めない値は数えず、数だけ返す(詳しい指摘は検証器が行う)
+    if (t === null) {
+      skippedInvalidTime++
+      continue
+    }
 
     const stopId = trimmed(row.stop_id)
     if (stopId === '') continue
@@ -127,7 +140,7 @@ export function departureCountsByBand(
     if (flags & RUNS_YESTERDAY) addToBands(counts, stopId, t - SECONDS_PER_DAY, starts, ends)
   }
 
-  return { counts, skippedBlankTime, hasFrequencies }
+  return { counts, skippedBlankTime, skippedInvalidTime, hasFrequencies }
 }
 
 function addToBands(counts: Map<string, number[]>, stopId: string, t: number, starts: number[], ends: number[]): void {
@@ -146,16 +159,29 @@ function trimmed(v: string | undefined): string {
   return v === undefined ? '' : v.trim()
 }
 
-/** stop_sequence を数値にする。空や数でない値は null(最後の停留所の判定に使わない) */
-function sequenceOf(row: GtfsRow): number | null {
+/**
+ * stop_sequence を、先頭の 0 を除いた10進の文字列にする。0 以上の10進の整数だけを読み、
+ * それ以外('0x0A'・'1e1'・'1.5'・'-1'・空)は null(最後の停留所の判定に使わない)。'01' と '1' は同じ値。
+ * Number() に任せると '0x0A' が 10、'1e1' が 10 になり、終点の判定がずれる。
+ * 桁数の上限は設けない(取り決めは「0 以上の10進の整数」)。Number にすると、桁が多い値同士が同じ値になって
+ * 順序を失うので、数には直さず、桁数と文字の並びで比べる(isLaterSequence)
+ */
+function sequenceOf(row: GtfsRow): string | null {
   const s = trimmed(row.stop_sequence)
-  if (s === '') return null
-  const n = Number(s)
-  return Number.isFinite(n) ? n : null
+  if (!NON_NEGATIVE_INTEGER.test(s)) return null
+  // 先頭の 0 を除く。'000' は '0' にする
+  return s.replace(/^0+(?=\d)/, '')
 }
 
-/** pickup_type=1(乗車できない)。空は 0(乗車できる)とみなす */
+/** sequenceOf の値 a が b より大きいか。先頭の 0 が無い10進の文字列なので、桁数が多いほど大きく、同じ桁数なら文字の並びで決まる */
+function isLaterSequence(a: string, b: string): boolean {
+  return a.length !== b.length ? a.length > b.length : a > b
+}
+
+/**
+ * pickup_type=1(乗車できない)。前後の空白を除いた文字列が '1' のときだけ(calendar_dates の exception_type と同じ照合)。
+ * 空・'0'・'2'・'3' は乗車できる。'01'・'1.0'・'1e0' のような別の書き方は '1' ではないので乗車できる側に倒す
+ */
 function isNoPickup(v: string | undefined): boolean {
-  const s = trimmed(v)
-  return s !== '' && Number(s) === 1
+  return trimmed(v) === '1'
 }

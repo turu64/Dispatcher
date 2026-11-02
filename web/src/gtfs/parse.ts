@@ -16,7 +16,8 @@ export interface Stop {
 
 // 10進の小数だけを通す。Number() に任せると、''・'  ' が 0、'0x10' が 16、'1e2' が 100 になってしまう
 const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)$/
-const NON_NEGATIVE_INTEGER = /^\d+$/
+// 0 以上の10進の整数だけを通す(stop_sequence の読み取りなど、ほかの段でも使う)
+export const NON_NEGATIVE_INTEGER = /^\d+$/
 
 /** 緯度経度の値を数にする。数でない・範囲外なら null */
 function parseCoordinate(raw: string | undefined, limit: number): number | null {

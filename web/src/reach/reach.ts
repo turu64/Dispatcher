@@ -2,12 +2,18 @@
  * 到達圏の計算。125m の格子(8分の1地域メッシュ)のセルごとに、時間帯ごとに
  * 「その時間帯に出発がある停留所、または鉄道駅が、徒歩圏にあるか」を判定する。
  *
- * - 調べるセル:停留所と駅から、最大の徒歩圏(分数の最大 × 分速。既定 20分 × 80m = 1,600m)以内に中心があるセル。
- *   参照データがあれば、そのうち親の 250m セルの人口が 1 人以上のものだけ
+ * - 起点:渡された停留所(input.stops)をすべて起点とみなす。どの停留所を渡すか(stop_times に出てくる、
+ *   location_type が 0 か空のもの)は呼び出し側が選ぶ。駅は起点にしない(到達できるかの判定にだけ使う)
+ * - 調べるセル:起点の停留所から、バス停の距離(分 × 分速)以内に中心があるセル。参照データがあれば、距離は
+ *   3区分のバス停の距離の最大(既定 15分 × 80m = 1,200m)で、そのうち親の 250m セルの人口が 1 人以上のものだけ。
+ *   参照データが無ければ、fallbackClass のバス停の距離(既定の郊外なら 800m)
  * - 区分:DID(did125)の中は都市部。外なら、親の 250m セルの人口 ÷ 面積がしきい値以上で郊外、未満で中山間・地方。
  *   参照データが無ければ、すべて fallbackClass
- * - 到達できる:時間帯 b に出発がある(bandCounts[b] > 0)停留所が、セルの中心から区分のバス停の距離(分 × 分速)以内にある。
- *   または、駅が区分の駅の距離以内にある(駅は時刻表が無いので、すべての時間帯で使えるとみなす)
+ * - 到達できる見込みがある(coverable):区分のバス停の距離以内に起点の停留所がある(その日の出発の有無は問わない)か、
+ *   区分の駅の距離以内に駅がある。見込みが無いセルは、ダイヤと関係なく外れる
+ * - 到達できる:時間帯 b に出発がある(bandCounts[b] > 0)停留所が、セルの中心から区分のバス停の距離以内にある。
+ *   または、駅が区分の駅の距離以内にある(駅は時刻表が無いので、すべての時間帯で使えるとみなす)。
+ *   到達できるセルは、必ず到達できる見込みもある
  * - 距離は mesh.ts の distanceM(meshCenter(セル), 点) で判定し、ちょうどの距離は届くとする(cellsWithinRadius と同じ計算)
  *
  * 計算はコードで行う。結果の解釈と説明は画面や Claude の役目。
@@ -51,7 +57,10 @@ export interface RefData {
 }
 
 export interface ReachInput {
-  /** 停留所。bandCounts は時間帯ごとの出発の数(足りない時間帯は 0 とみなす) */
+  /**
+   * 起点の停留所(呼び出し側が選んだもの。すべて起点とみなす)。
+   * bandCounts は時間帯ごとの出発の数(足りない時間帯は 0 とみなす)
+   */
   stops: { lat: number; lon: number; bandCounts: number[] }[]
   /** 参照データ。無ければ null(すべてのセルを fallbackClass にし、駅は無いものとする) */
   ref: RefData | null
@@ -69,6 +78,11 @@ export interface ReachResult {
   classes: RegionClass[]
   /** [時間帯][セル] */
   reachable: boolean[][]
+  /**
+   * セルごとの、到達できる見込みがあるか(cells と同じ並び)。区分のバス停の距離以内に起点の停留所がある
+   * (出発の有無は問わない)か、区分の駅の距離以内に駅があれば true。false のセルはダイヤと関係なく外れる
+   */
+  coverable: boolean[]
   /** 参照データが無く、fallbackClass で計算したら true */
   usedFallback: boolean
   /** 緯度経度が地域メッシュの範囲外((0, 0) を含む)で、計算から除いた停留所の数 */
@@ -166,7 +180,7 @@ function candidates(index: KDBush, center: LatLon, radiusM: number): number[] {
 /**
  * 到達圏を計算する。
  * 停留所のうち、緯度経度が地域メッシュの範囲外のもの((0, 0) を含む)は除き、数を excludedStops に入れる。
- * 出発が1本も無い停留所も、調べるセルを決めるのには使う(減便で便が無くなった停留所のまわりは「到達できない」と出る)。
+ * 出発が1本も無い停留所も起点にする(減便で便が無くなった停留所のまわりは「到達できない」と出て、coverable は true)。
  */
 export function computeReach(input: ReachInput): ReachResult {
   checkInput(input)
@@ -184,16 +198,18 @@ export function computeReach(input: ReachInput): ReachResult {
   // 参照データの駅は refDataFromJson で範囲を確かめているが、手で作った RefData にも備えて範囲外は使わない
   const stations = (ref?.stations ?? []).filter((p) => inMeshRange(p.lat, p.lon))
 
-  // 2. 調べるセル
+  // 2. 調べるセル。起点は停留所だけ(駅のまわりだけのセルは調べない)。
+  // 参照データがあれば区分はセルごとに違うので、3区分のバス停の距離の最大で集める。無ければ fallbackClass のバス停の距離
   const radius = {} as Record<RegionClass, { bus: number; rail: number }>
-  let maxRadius = 0
+  let maxBusRadius = 0
   for (const c of REGION_CLASSES) {
     const m = params.walkMinutes[c]
     radius[c] = { bus: m.bus * params.speedMPerMin, rail: m.rail * params.speedMPerMin }
-    maxRadius = Math.max(maxRadius, radius[c].bus, radius[c].rail)
+    maxBusRadius = Math.max(maxBusRadius, radius[c].bus)
   }
-  const seeds: LatLon[] = [...stops.map((s) => ({ lat: s.lat, lon: s.lon })), ...stations]
-  const candidateCells = cellsWithinRadius(seeds, maxRadius)
+  const seedRadius = ref ? maxBusRadius : radius[fallbackClass].bus
+  const stopPoints: LatLon[] = stops.map((s) => ({ lat: s.lat, lon: s.lon }))
+  const candidateCells = cellsWithinRadius(stopPoints, seedRadius)
 
   // 3. セルの区分と推計人口。人口密度による区分は親の 250m セルで決まるので、親ごとに1回だけ計算する
   const cells: string[] = []
@@ -222,31 +238,23 @@ export function computeReach(input: ReachInput): ReachResult {
     }
   }
 
-  // 4. 停留所ごとの「出発がある時間帯」を 32 時間帯ずつのビットにする。出発が1本も無い停留所は索引に入れない
+  // 4. 停留所ごとの「出発がある時間帯」を 32 時間帯ずつのビットにする。
+  // 出発が1本も無い停留所も、到達できる見込み(coverable)の判定に使うので索引に入れる(ビットはすべて 0)
   const words = Math.max(1, Math.ceil(bandCount / 32))
-  const activeStops: LatLon[] = []
-  const masks: number[] = []
-  for (const s of stops) {
-    const mask = new Uint32Array(words)
-    let any = false
+  const stopMasks = new Uint32Array(stops.length * words)
+  stops.forEach((s, k) => {
     for (let b = 0; b < bandCount; b++) {
-      if (s.bandCounts[b] > 0) {
-        mask[b >>> 5] |= 1 << (b & 31)
-        any = true
-      }
+      if (s.bandCounts[b] > 0) stopMasks[k * words + (b >>> 5)] |= 1 << (b & 31)
     }
-    if (!any) continue
-    activeStops.push({ lat: s.lat, lon: s.lon })
-    masks.push(...mask)
-  }
-  const stopMasks = Uint32Array.from(masks)
+  })
   const full = new Uint32Array(words)
   for (let b = 0; b < bandCount; b++) full[b >>> 5] |= 1 << (b & 31)
-  const stopIndex = buildIndex(activeStops)
+  const stopIndex = buildIndex(stopPoints)
   const stationIndex = buildIndex(stations)
 
   // 5. セルごとに判定する
   const reachable: boolean[][] = Array.from({ length: bandCount }, () => new Array<boolean>(cells.length).fill(false))
+  const coverable = new Array<boolean>(cells.length).fill(false)
   const acc = new Uint32Array(words)
   for (let i = 0; i < cells.length; i++) {
     const center = meshCenter(cells[i])
@@ -254,6 +262,7 @@ export function computeReach(input: ReachInput): ReachResult {
 
     // 駅が徒歩圏にあれば、すべての時間帯で到達できる
     if (stationIndex && reachesAny(stationIndex, stations, center, r.rail)) {
+      coverable[i] = true
       for (let b = 0; b < bandCount; b++) reachable[b][i] = true
       continue
     }
@@ -261,13 +270,15 @@ export function computeReach(input: ReachInput): ReachResult {
 
     acc.fill(0)
     for (const k of candidates(stopIndex, center, r.bus)) {
-      if (distanceM(center, activeStops[k]) > r.bus) continue
+      if (distanceM(center, stopPoints[k]) > r.bus) continue
+      // 出発の有無を問わず、区分のバス停の距離以内に起点の停留所があれば、到達できる見込みがある
+      coverable[i] = true
       let done = true
       for (let w = 0; w < words; w++) {
         acc[w] |= stopMasks[k * words + w]
         if (acc[w] !== full[w]) done = false
       }
-      // すべての時間帯で届いたら、残りの候補は見なくてよい
+      // すべての時間帯で届いたら、残りの候補は見なくてよい(coverable はもう true)
       if (done) break
     }
     for (let b = 0; b < bandCount; b++) {
@@ -275,7 +286,7 @@ export function computeReach(input: ReachInput): ReachResult {
     }
   }
 
-  return { cells, classes, reachable, usedFallback: ref === null, excludedStops, cellPopulation }
+  return { cells, classes, reachable, coverable, usedFallback: ref === null, excludedStops, cellPopulation }
 }
 
 /** 索引の点のどれかが、center から radiusM 以内にあるか */

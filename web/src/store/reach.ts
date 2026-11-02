@@ -5,7 +5,7 @@ import type { GtfsFeed } from '../gtfs/load'
 import type { Stop } from '../gtfs/parse'
 import { todayInJapan } from '../lib/dates'
 import { defaultServiceDate } from '../lib/serviceDay'
-import { buildReachStops, cloneParams, maxWalkRadiusM, REGION_CLASSES } from '../reach/input'
+import { buildReachStops, cloneParams, originStops, refMarginM, REGION_CLASSES, type OriginStops } from '../reach/input'
 import { DEFAULT_REACH_PARAMS, type ReachInput, type ReachParams, type ReachResult, type RegionClass } from '../reach/reach'
 import { fetchRefData, pointsBounds, refMeshesFor, type RefLoadResult } from '../reach/refData'
 import { summarizeReach, type ReachSummary } from '../reach/summary'
@@ -16,8 +16,19 @@ export type StepHours = 1 | 3
 /** 到達圏を計算する GTFS(手順1で読み込んだもの) */
 export interface ReachSource {
   feed: GtfsFeed
+  /** stops.txt の停留所すべて(toStops の結果)。起点は store が選ぶ(originStops) */
   stops: Stop[]
   period: { start: string; end: string } | null
+}
+
+/** 起点の停留所の数と、起点から除いたものの数(画面の表に出す) */
+export interface OriginCounts {
+  /** 起点の停留所(stop_times.txt に出てくる、location_type が 0 か空のもの)の数 */
+  origins: number
+  /** stop_times.txt に一度も出てこないので除いた停留所の数 */
+  unused: number
+  /** location_type が 0 でも空でもない(駅舎・出入口など)ので除いた行の数 */
+  nonStop: number
 }
 
 /** 参照データの読み込みの状態。key は読む1次メッシュを「,」でつないだもの */
@@ -35,12 +46,18 @@ export interface ReachSnapshot {
   result: ReachResult
   summary: ReachSummary
   params: ReachParams
+  origin: OriginCounts
 }
 
 export type WalkKind = 'bus' | 'rail'
 
 interface ReachState {
   source: ReachSource | null
+  /**
+   * 到達圏の起点の停留所(docs/interfaces-1103.md の追記2)。source から setSource で選ぶ。
+   * 計算(computeReach)に渡すのも、地図に点として出すのも、この停留所だけ
+   */
+  origins: OriginStops | null
   /** 選んだ日付('YYYYMMDD')。運行日が無いフィードでは null */
   date: string | null
   stepHours: StepHours
@@ -86,6 +103,8 @@ export interface ReachStoreDeps {
 }
 
 const NO_STOPS = '位置の分かる停留所がありません。stops.txt の stop_lat・stop_lon を確かめてください。'
+const NO_ORIGINS =
+  'stop_times.txt に出てくる停留所(location_type が 0 か空のもの)に、位置の分かるものがありません。stop_times.txt の stop_id と、stops.txt を確かめてください。'
 
 function messageOf(e: unknown): string {
   const message = e instanceof Error ? e.message : String(e)
@@ -143,6 +162,7 @@ export function createReachStore(deps: ReachStoreDeps) {
 
     return {
       source: null,
+      origins: null,
       date: null,
       stepHours: 3,
       selectedHour: 6,
@@ -157,11 +177,11 @@ export function createReachStore(deps: ReachStoreDeps) {
         cancelTimer()
         seq++
         if (!source) {
-          set({ source: null, date: null, snapshot: null, error: null, computing: false })
+          set({ source: null, origins: null, date: null, snapshot: null, error: null, computing: false })
           return
         }
         const date = defaultServiceDate(source.feed, source.period, deps.today())
-        set({ source, date, snapshot: null, error: null })
+        set({ source, origins: originStops(source.feed, source.stops), date, snapshot: null, error: null })
         void get().recompute()
       },
 
@@ -223,19 +243,20 @@ export function createReachStore(deps: ReachStoreDeps) {
       async recompute() {
         cancelTimer()
         const id = ++seq
-        const { source, date, stepHours, params, fallbackClass } = get()
-        if (!source || !date) {
+        const { source, origins, date, stepHours, params, fallbackClass } = get()
+        if (!source || !origins || !date) {
           set({ computing: false })
           return
         }
-        if (!pointsBounds(source.stops)) {
-          set({ computing: false, snapshot: null, error: NO_STOPS })
+        if (!pointsBounds(origins.stops)) {
+          set({ computing: false, snapshot: null, error: pointsBounds(source.stops) ? NO_ORIGINS : NO_STOPS })
           return
         }
         set({ computing: true, error: null })
         try {
-          // 1. 参照データ(読む1次メッシュは、分数が変われば変わることがある)
-          const mesh1s = refMeshesFor(source.stops, maxWalkRadiusM(params))
+          // 1. 参照データ。起点の外接矩形を「バス停の距離の最大 + 駅の距離の最大」だけ広げた範囲の1次メッシュを読む
+          //    (分数が変われば変わることがある)
+          const mesh1s = refMeshesFor(origins.stops, refMarginM(params))
           const key = mesh1s.join(',')
           let refResult: RefLoadResult
           const current = get().ref
@@ -252,19 +273,20 @@ export function createReachStore(deps: ReachStoreDeps) {
           const bands = makeBands(stepHours)
           const departures = departureCountsByBand(source.feed, servicesFor(source.feed, date), bands)
 
-          // 3. 到達圏(Web Worker)
+          // 3. 到達圏(Web Worker)。起点の停留所だけを渡す(computeReach は渡された停留所をすべて起点とみなす)
           const usedParams = cloneParams(params)
           const result = await deps.compute({
-            stops: buildReachStops(source.stops, departures.counts, bands.length),
+            stops: buildReachStops(origins.stops, departures.counts, bands.length),
             ref: refResult.ok ? refResult.ref : null,
             fallbackClass,
             params: usedParams,
             bandCount: bands.length,
           })
           if (id !== seq) return
+          const origin: OriginCounts = { origins: origins.stops.length, unused: origins.unused, nonStop: origins.nonStop }
           set({
             computing: false,
-            snapshot: { date, stepHours, bands, departures, result, summary: summarizeReach(result), params: usedParams },
+            snapshot: { date, stepHours, bands, departures, result, summary: summarizeReach(result), params: usedParams, origin },
           })
         } catch (e) {
           if (id !== seq) return

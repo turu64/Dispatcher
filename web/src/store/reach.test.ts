@@ -61,6 +61,7 @@ function fakeResult(input: ReachInput): ReachResult {
     cells: ['65423700111', '65423700112'],
     classes: [input.ref ? 'urban' : input.fallbackClass, input.ref ? 'rural' : input.fallbackClass],
     reachable,
+    coverable: [true, true],
     usedFallback: input.ref === null,
     excludedStops: 0,
     cellPopulation: input.ref ? [10, 5] : [0, 0],
@@ -234,8 +235,8 @@ describe('useReachStore(createReachStore)', () => {
   })
 
   it('参照データは同じ1次メッシュの組なら読み直さない。分数を増やして範囲が広がれば、読み直す', async () => {
-    // 6542 の南端(43.333…度)から約 2.2km の停留所
-    const stops = [{ stop_id: 'A', stop_name: 'A', stop_lat: String(130 / 3 + 0.02), stop_lon: '142.5' }]
+    // 6542 の南端(43.333…度)から約 3.3km の停留所。既定の読み込み範囲(バス停 1,200m + 駅 1,600m = 2,800m)には南の 6442 が入らない
+    const stops = [{ stop_id: 'A', stop_name: 'A', stop_lat: String(130 / 3 + 0.03), stop_lon: '142.5' }]
     const { store, loadRef } = setup()
     store.getState().setSource(sourceOf(makeFeed(stops)))
     await settle()
@@ -244,11 +245,124 @@ describe('useReachStore(createReachStore)', () => {
     expect(loadRef).toHaveBeenCalledTimes(1)
     expect(loadRef.mock.calls[0][0]).toEqual(['6542'])
 
+    // 都市部のバス停を 30 分(2,400m)にすると、読み込み範囲は 2,400m + 1,600m = 4,000m になり、6442 も読む
     store.getState().setWalkMinutes('urban', 'bus', 30)
     await settle()
     expect(loadRef).toHaveBeenCalledTimes(2)
     expect(loadRef.mock.calls[1][0]).toEqual(['6442', '6542'])
     expect(store.getState().snapshot?.params.walkMinutes.urban.bus).toBe(30)
+  })
+
+  it('参照データの読み込み範囲は「バス停の距離の最大 + 駅の距離の最大」(駅の分数を増やしても広がる)', async () => {
+    // 6542 の南端から約 2.2km の停留所。バス停 1,200m + 駅 1,600m = 2,800m なので、既定でも 6442 を読む
+    const near = [{ stop_id: 'A', stop_name: 'A', stop_lat: String(130 / 3 + 0.02), stop_lon: '142.5' }]
+    const first = setup()
+    first.store.getState().setSource(sourceOf(makeFeed(near)))
+    await settle()
+    expect(first.loadRef.mock.calls[0][0]).toEqual(['6442', '6542'])
+
+    // 約 3.3km の停留所は、中山間・地方の駅を 30 分(2,400m)にすると 1,200m + 2,400m = 3,600m で 6442 も読む
+    const far = [{ stop_id: 'A', stop_name: 'A', stop_lat: String(130 / 3 + 0.03), stop_lon: '142.5' }]
+    const second = setup()
+    second.store.getState().setSource(sourceOf(makeFeed(far)))
+    await settle()
+    expect(second.loadRef.mock.calls[0][0]).toEqual(['6542'])
+    second.store.getState().setWalkMinutes('rural', 'rail', 30)
+    await settle()
+    expect(second.loadRef.mock.calls[1][0]).toEqual(['6442', '6542'])
+  })
+
+  it('起点は stop_times に出てくる、location_type が 0 か空の停留所だけ(計算にも地図にもそれだけを使う)', async () => {
+    const stops: GtfsRow[] = [
+      { stop_id: ' A ', stop_name: 'A', stop_lat: '43.6667', stop_lon: '142.5', location_type: '' },
+      { stop_id: 'B', stop_name: 'B', stop_lat: '43.6700', stop_lon: '142.51', location_type: '0' },
+      // stop_times に出てこない停留所
+      { stop_id: 'C', stop_name: '使われない停留所', stop_lat: '43.6800', stop_lon: '142.52' },
+      // 駅舎(location_type 1)。stop_times に出てきても起点にしない
+      { stop_id: 'S', stop_name: '駅舎', stop_lat: '43.6900', stop_lon: '142.53', location_type: '1' },
+      { stop_id: 'E', stop_name: '出入口', stop_lat: '43.6910', stop_lon: '142.53', location_type: '2' },
+    ]
+    const feed = makeFeed(stops)
+    feed.tables.get('stop_times')!.rows.push({
+      trip_id: 'T1',
+      stop_id: 'S',
+      stop_sequence: '3',
+      arrival_time: '07:20:00',
+      departure_time: '07:20:00',
+    })
+    const { store, compute } = setup()
+    store.getState().setSource(sourceOf(feed))
+    await settle()
+
+    const origins = store.getState().origins!
+    expect(origins.stops.map((s) => s.id)).toEqual(['A', 'B'])
+    expect(origins.unused).toBe(1)
+    expect(origins.nonStop).toBe(2)
+    // B は駅舎 S の手前なので出発として数える(S は終点)
+    expect(compute.mock.calls[0][0].stops).toEqual([
+      { lat: 43.6667, lon: 142.5, bandCounts: [1, 0, 0, 0, 0, 0] },
+      { lat: 43.67, lon: 142.51, bandCounts: [1, 0, 0, 0, 0, 0] },
+    ])
+    expect(store.getState().snapshot?.origin).toEqual({ origins: 2, unused: 1, nonStop: 2 })
+  })
+
+  it('stop_times に出てくる停留所に位置の分かるものが無ければ、計算せずに理由を出す', async () => {
+    // A・B は stop_times に出てくるが位置が (0, 0)。C は位置が分かるが stop_times に出てこない
+    const stops: GtfsRow[] = [
+      { stop_id: 'A', stop_name: 'A', stop_lat: '0', stop_lon: '0' },
+      { stop_id: 'B', stop_name: 'B', stop_lat: '0', stop_lon: '0' },
+      { stop_id: 'C', stop_name: 'C', stop_lat: '43.68', stop_lon: '142.52' },
+    ]
+    const { store, compute } = setup()
+    store.getState().setSource(sourceOf(makeFeed(stops)))
+    await settle()
+    expect(compute).not.toHaveBeenCalled()
+    expect(store.getState().error).toContain('stop_times.txt に出てくる停留所')
+  })
+
+  it('前日(日曜だけの service)の 30:10:00 の便は、月曜を選んだときの 6〜9時の出発として計算に届く', async () => {
+    const feed = makeFeed()
+    feed.tables.get('calendar')!.rows.push({
+      service_id: '06',
+      monday: '0',
+      tuesday: '0',
+      wednesday: '0',
+      thursday: '0',
+      friday: '0',
+      saturday: '0',
+      sunday: '1',
+      start_date: '20261001',
+      end_date: '20261130',
+    })
+    feed.tables.get('trips')!.rows.push({ route_id: 'R', service_id: '06', trip_id: 'T6' })
+    feed.tables.get('stop_times')!.rows.push(
+      { trip_id: 'T6', stop_id: 'B', stop_sequence: '1', arrival_time: '30:10:00', departure_time: '30:10:00' },
+      { trip_id: 'T6', stop_id: 'A', stop_sequence: '2', arrival_time: '30:20:00', departure_time: '30:20:00' },
+    )
+    const { store, compute } = setup()
+    store.getState().setSource(sourceOf(feed))
+    await settle()
+
+    // 2026-11-02 は月曜、前日の 11/1 は日曜(service 06 が走る)
+    expect(store.getState().setDate('20261102')).toBeNull()
+    await settle()
+    const monday = compute.mock.calls.at(-1)![0]
+    expect(store.getState().snapshot?.date).toBe('20261102')
+    // A は平日の便(7:00)、B は前日の便(30:10 = 月曜の 6:10)。どちらも 6〜9時
+    expect(monday.stops).toEqual([
+      { lat: 43.6667, lon: 142.5, bandCounts: [1, 0, 0, 0, 0, 0] },
+      { lat: 43.67, lon: 142.51, bandCounts: [1, 0, 0, 0, 0, 0] },
+    ])
+    expect(store.getState().snapshot?.departures.counts.get('B')).toEqual([1, 0, 0, 0, 0, 0])
+
+    // 日曜(11/1)を選ぶと、30:10 は月曜の朝なので日曜の時間帯には入らない(平日の便も走らない)
+    expect(store.getState().setDate('20261101')).toBeNull()
+    await settle()
+    expect(compute.mock.calls.at(-1)![0].stops.map((s) => s.bandCounts)).toEqual([
+      [0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0, 0],
+    ])
+    expect(store.getState().snapshot?.departures.counts.size).toBe(0)
   })
 
   it('参照データが読めなければ fallback の区分で計算し、区分を変えたら計算し直す', async () => {

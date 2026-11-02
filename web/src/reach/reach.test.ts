@@ -75,6 +75,12 @@ function classOf(result: ReachResult, cell: string): RegionClass {
   return result.classes[i]
 }
 
+function coverableOf(result: ReachResult, cell: string): boolean {
+  const i = result.cells.indexOf(cell)
+  if (i < 0) throw new Error(`${cell} は調べたセルに入っていません`)
+  return result.coverable[i]
+}
+
 function paramsWith(over: Partial<ReachParams>): ReachParams {
   return { ...DEFAULT_REACH_PARAMS, ...over }
 }
@@ -90,10 +96,21 @@ describe('テスト用の点の置き方', () => {
 })
 
 describe('computeReach:調べるセル', () => {
-  it('参照データが無ければ、停留所から 1,600m 以内のセルをすべて調べる(人口では絞らない)', () => {
+  it('参照データが無ければ、停留所から fallbackClass のバス停の距離(既定の郊外は 800m)以内のセルをすべて調べる(人口では絞らない)', () => {
     const result = run({ stops: [stop(C, [1, 0])] })
-    expect(result.cells).toEqual(cellsWithinRadius([C], 1600))
+    expect(result.cells).toEqual(cellsWithinRadius([C], 800))
     expect(result.cells).toContain(T)
+    // 都市部なら 400m、中山間・地方なら 1,200m(駅の距離は使わない)
+    expect(run({ stops: [stop(C, [1, 0])], fallbackClass: 'urban' }).cells).toEqual(cellsWithinRadius([C], 400))
+    expect(run({ stops: [stop(C, [1, 0])], fallbackClass: 'rural' }).cells).toEqual(cellsWithinRadius([C], 1200))
+  })
+
+  it('参照データが無ければ、調べたセルはすべて到達できる見込みがある(coverable)', () => {
+    for (const fallbackClass of ['urban', 'suburban', 'rural'] as const) {
+      const result = run({ stops: [stop(C, [0, 0]), stop(pointAt(C, 90, 3000), [1, 0])], fallbackClass })
+      expect(result.coverable).toHaveLength(result.cells.length)
+      expect(result.coverable.every(Boolean)).toBe(true)
+    }
   })
 
   it('参照データがあれば、親の 250m セルの人口が 1 人以上のセルだけを調べる', () => {
@@ -111,33 +128,47 @@ describe('computeReach:調べるセル', () => {
     expect(result.cells).toEqual(children(P_NORTH))
   })
 
-  it('最大の徒歩圏は、分数の最大 × 分速で決まる(駅の 20 分 × 80m = 1,600m)', () => {
-    // 1,600m の少し内側と外側の 250m セルに人口を置く
-    const inside = parentCode(meshCode(pointAt(C, 0, 1500).lat, C.lon, 11), 10)
-    const outside = parentCode(meshCode(pointAt(C, 0, 1800).lat, C.lon, 11), 10)
-    const result = run({ stops: [stop(C, [0, 0])], ref: refOf({ [inside]: 50, [outside]: 50 }) })
+  it('参照データがあれば、調べるセルの半径は3区分のバス停の距離の最大(中山間・地方の 15 分 × 80m = 1,200m)。駅の距離は使わない', () => {
+    // 1,200m の少し内側と外側(駅の 1,600m の内側)の 250m セルに人口を置く
+    const inside = parentCode(meshCode(pointAt(C, 0, 1100).lat, C.lon, 11), 10)
+    const outside = parentCode(meshCode(pointAt(C, 0, 1400).lat, C.lon, 11), 10)
+    expect(inside).not.toBe(outside)
+    const ref = refOf({ [inside]: 50, [outside]: 50 })
+    const result = run({ stops: [stop(C, [0, 0])], ref })
     expect(result.cells.every((c) => c.startsWith(inside))).toBe(true)
     expect(result.cells.length).toBeGreaterThan(0)
-    // 分速を半分にすると、最大の徒歩圏は 800m になり、どちらも入らない
-    const slow = run({ stops: [stop(C, [0, 0])], ref: refOf({ [inside]: 50, [outside]: 50 }), params: paramsWith({ speedMPerMin: 40 }) })
+    // 分速を半分にすると、半径は 600m になり、どちらも入らない
+    const slow = run({ stops: [stop(C, [0, 0])], ref, params: paramsWith({ speedMPerMin: 40 }) })
     expect(slow.cells).toEqual([])
+    // 駅の分数を延ばしても、調べるセルは変わらない
+    const longRail = { urban: { bus: 5, rail: 60 }, suburban: { bus: 10, rail: 60 }, rural: { bus: 15, rail: 60 } }
+    expect(run({ stops: [stop(C, [0, 0])], ref, params: paramsWith({ walkMinutes: longRail }) }).cells).toEqual(result.cells)
+    // 都市部のバス停の分数を 20 分(1,600m)にすると、半径は 1,600m になり、外側のセルも入る
+    const longUrban = { ...DEFAULT_REACH_PARAMS.walkMinutes, urban: { bus: 20, rail: 10 } }
+    const wide = run({ stops: [stop(C, [0, 0])], ref, params: paramsWith({ walkMinutes: longUrban }) })
+    expect(wide.cells.some((c) => c.startsWith(outside))).toBe(true)
   })
 
-  it('駅のまわりのセルも調べる(停留所が無くても)', () => {
+  it('駅は起点にしない:駅だけのまわりのセルは、人口があっても調べない', () => {
     const far = pointAt(C, 90, 5000)
     const farCell = meshCode(far.lat, far.lon, 11)
-    const result = run({ stops: [], ref: refOf({ [parentCode(farCell, 10)]: 30 }, [], [far]) })
-    expect(result.cells).toContain(farCell)
-    expect(reachOf(result, farCell)).toEqual([true, true])
+    const ref = refOf({ [parentCode(farCell, 10)]: 30, [P]: 100 }, [], [far])
+    // 停留所が無ければ、駅があってもセルは 0 個
+    expect(run({ stops: [], ref }).cells).toEqual([])
+    // 5km 離れた停留所があっても、駅のまわりのセルは入らない(停留所のまわりの P だけ)
+    const result = run({ stops: [stop(C, [1, 0])], ref })
+    expect(result.cells).not.toContain(farCell)
+    expect(result.cells).toEqual(children(P))
   })
 
-  it('出発が1本も無い停留所も、調べるセルを決めるのには使う(到達はできない)', () => {
+  it('出発が1本も無い停留所も起点にする(到達はできないが、到達できる見込みはある)', () => {
     const result = run({ stops: [stop(C, [0, 0])], ref: refOf({ [P]: 100 }) })
     expect(result.cells).toEqual(children(P))
     expect(result.reachable).toEqual([
       [false, false, false, false],
       [false, false, false, false],
     ])
+    expect(result.coverable).toEqual([true, true, true, true])
   })
 
   it('停留所も駅も無ければ、セルは 0 個。時間帯の数だけ空の配列を返す', () => {
@@ -146,10 +177,92 @@ describe('computeReach:調べるセル', () => {
       cells: [],
       classes: [],
       reachable: [[], [], []],
+      coverable: [],
       usedFallback: true,
       excludedStops: 0,
       cellPopulation: [],
     })
+  })
+})
+
+describe('computeReach:到達できる見込みのあるセル(coverable)', () => {
+  it('出発の有無を問わず、区分のバス停の距離以内に停留所があれば coverable。出発があっても無くても同じ', () => {
+    const ref = refOf({ [P]: 100 }, [T])
+    const s = pointAt(C, 60, 390)
+    const none = run({ stops: [stop(s, [0, 0])], ref })
+    const some = run({ stops: [stop(s, [3, 1])], ref })
+    expect(none.cells).toEqual(some.cells)
+    expect(none.coverable).toEqual(some.coverable)
+    expect(none.coverable[none.cells.indexOf(T)]).toBe(true)
+    expect(reachOf(none, T)).toEqual([false, false])
+    expect(reachOf(some, T)).toEqual([true, true])
+  })
+
+  const busCases: { cls: RegionClass; ref: RefData; bus: number }[] = [
+    { cls: 'urban', ref: refOf({ [P]: 100 }, [T]), bus: 400 },
+    { cls: 'suburban', ref: refOf({ [P]: 100 }), bus: 800 },
+  ]
+  for (const { cls, ref, bus } of busCases) {
+    it(`${cls}:出発の無い停留所が ${bus}m の 1cm 内側なら coverable、1cm 外側なら coverable でない(セルは 1,200m 以内なので調べる)`, () => {
+      const inside = run({ stops: [stop(pointAt(C, 200, bus - 0.01), [0, 0])], ref })
+      expect(classOf(inside, T)).toBe(cls)
+      expect(coverableOf(inside, T)).toBe(true)
+      const outside = run({ stops: [stop(pointAt(C, 200, bus + 0.01), [0, 0])], ref })
+      expect(coverableOf(outside, T)).toBe(false)
+      expect(reachOf(outside, T)).toEqual([false, false])
+    })
+  }
+
+  it('rural:既定の条件では調べるセルの半径(1,200m)が中山間・地方のバス停の距離と同じなので、中山間・地方のセルはいつも coverable', () => {
+    const ref = refOf({ [P]: 10 })
+    const inside = run({ stops: [stop(pointAt(C, 200, 1200 - 0.01), [0, 0])], ref })
+    expect(classOf(inside, T)).toBe('rural')
+    expect(coverableOf(inside, T)).toBe(true)
+    // 1cm 外側なら、そもそも調べるセルに入らない
+    const outside = run({ stops: [stop(pointAt(C, 200, 1200 + 0.01), [0, 0])], ref })
+    expect(outside.cells).not.toContain(T)
+  })
+
+  const railCases: { cls: RegionClass; ref: RefData; rail: number }[] = [
+    { cls: 'urban', ref: refOf({ [P]: 100 }, [T]), rail: 800 },
+    { cls: 'suburban', ref: refOf({ [P]: 100 }), rail: 1200 },
+  ]
+  for (const { cls, ref, rail } of railCases) {
+    it(`${cls}:バス停の距離に停留所が無くても、駅が ${rail}m の 1cm 内側なら coverable、1cm 外側なら coverable でない`, () => {
+      // 停留所は 1,000m 先(都市部 400m・郊外 800m の外、調べるセルの半径 1,200m の内)
+      const seed = stop(pointAt(C, 0, 1000), [1, 1])
+      const inside = run({ stops: [seed], ref: { ...ref, stations: [pointAt(C, 135, rail - 0.01)] } })
+      expect(classOf(inside, T)).toBe(cls)
+      expect(coverableOf(inside, T)).toBe(true)
+      expect(reachOf(inside, T)).toEqual([true, true])
+      const outside = run({ stops: [seed], ref: { ...ref, stations: [pointAt(C, 135, rail + 0.01)] } })
+      expect(coverableOf(outside, T)).toBe(false)
+      expect(reachOf(outside, T)).toEqual([false, false])
+    })
+  }
+
+  it('到達できるセルは、必ず coverable。coverable でないセルは、どの時間帯でも到達できない', () => {
+    // P の 4 つのセルは DID(都市部 400m)、P_NORTH は中山間・地方(1,200m)。停留所は P から 400m より離して散らす
+    const ref = refOf({ [P]: 100, [P_NORTH]: 10 }, children(P), [pointAt(C, 250, 1500)])
+    const result = run({
+      bandCount: 3,
+      ref,
+      stops: [
+        stop(pointAt(C, 0, 500), [1, 0, 0]),
+        stop(pointAt(C, 90, 700), [0, 1, 0]),
+        stop(pointAt(C, 180, 1100), [0, 0, 0]),
+      ],
+    })
+    expect(result.coverable).toHaveLength(result.cells.length)
+    // P の都市部のセルは、どの停留所・駅からも遠く coverable でない。P_NORTH は 500m 北の停留所で coverable
+    for (const c of children(P)) expect(coverableOf(result, c)).toBe(false)
+    for (const c of children(P_NORTH)) expect(coverableOf(result, c)).toBe(true)
+    expect(reachOf(result, T)).toEqual([false, false, false])
+    for (const band of result.reachable) {
+      band.forEach((ok, i) => {
+        if (ok) expect(result.coverable[i]).toBe(true)
+      })
+    }
   })
 })
 
@@ -245,31 +358,46 @@ describe('computeReach:距離の境目', () => {
     const minutes = { bus: 1, rail: 2 }
     const walkMinutes = { urban: minutes, suburban: minutes, rural: minutes }
     const ref = refOf({ [P]: 100 }, [T])
+    // T を調べるセルに入れるため、T の中心に出発の無い停留所も置く
+    const seed = stop(C, [0, 0])
     // 1 分 × 分速 d = d(浮動小数でもちょうど d)
-    const exact = run({ stops: [stop(s, [1, 0])], ref, params: paramsWith({ walkMinutes, speedMPerMin: d }) })
+    const exact = run({ stops: [seed, stop(s, [1, 0])], ref, params: paramsWith({ walkMinutes, speedMPerMin: d }) })
     expect(reachOf(exact, T)).toEqual([true, false])
     const slower = run({
-      stops: [stop(s, [1, 0])],
+      stops: [seed, stop(s, [1, 0])],
       ref,
       params: paramsWith({ walkMinutes, speedMPerMin: d * (1 - Number.EPSILON) }),
     })
     expect(reachOf(slower, T)).toEqual([false, false])
+    // 起点が s だけなら、ちょうどの距離のセルは調べるセルに入り、わずかに遅ければ入らない(調べるセルの半径も同じ計算)
+    expect(run({ stops: [stop(s, [1, 0])], ref, params: paramsWith({ walkMinutes, speedMPerMin: d }) }).cells).toContain(T)
+    const slowerOnly = run({ stops: [stop(s, [1, 0])], ref, params: paramsWith({ walkMinutes, speedMPerMin: d * (1 - Number.EPSILON) }) })
+    expect(slowerOnly.cells).not.toContain(T)
   })
 
   it('セルの中心にある停留所から 400m 以内の 125m セルは 37 個(手計算)', () => {
     // 旭川付近では、隣のセルの中心まで南北 115.74m・東西 125.80m。南北 i 個・東西 j 個離れたセルの距離が 400m 以下になるのは
     // i = 0:|j| ≤ 3(377m)で 7 個、|i| = 1:|j| ≤ 3(394.8m)で 7 個ずつ、|i| = 2:|j| ≤ 2(326m)で 5 個ずつ、
     // |i| = 3:|j| ≤ 1(366m)で 3 個ずつ。7 + 14 + 10 + 6 = 37
+    // 参照データが無ければ、調べるセルの半径も fallbackClass のバス停の距離なので、調べたセルはすべて届く
     const result = run({ stops: [stop(C, [1, 0])], fallbackClass: 'urban' })
-    const reached = result.cells.filter((_, i) => result.reachable[0][i])
-    expect(reached).toHaveLength(37)
-    expect(reached).toContain(T)
+    expect(result.cells).toHaveLength(37)
+    expect(result.cells).toContain(T)
+    expect(result.reachable[0].every(Boolean)).toBe(true)
     expect(result.reachable[1].some(Boolean)).toBe(false)
     // 郊外(800m)なら 141 個、中山間・地方(1,200m)なら 315 個(cellsWithinRadius と同じ数)
     for (const [cls, n] of [['suburban', 141], ['rural', 315]] as const) {
       const r = run({ stops: [stop(C, [1, 0])], fallbackClass: cls })
+      expect(r.cells).toHaveLength(n)
       expect(r.reachable[0].filter(Boolean)).toHaveLength(n)
     }
+    // 参照データがあり、すべて都市部(DID)なら、調べるセルは 1,200m 以内(315 個)、届くのは 400m 以内の 37 個
+    const all = cellsWithinRadius([C], 1200)
+    const pop = Object.fromEntries(all.map((c) => [parentCode(c, 10), 100]))
+    const urban = run({ stops: [stop(C, [1, 0])], ref: refOf(pop, all) })
+    expect(urban.cells).toEqual(all)
+    expect(urban.reachable[0].filter(Boolean)).toHaveLength(37)
+    expect(urban.coverable.filter(Boolean)).toHaveLength(37)
   })
 })
 

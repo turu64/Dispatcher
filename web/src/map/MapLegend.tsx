@@ -1,17 +1,21 @@
+import { formatCount } from '@/reach/summary'
 import { REACH_COLORS, REACH_FILL_OPACITY, REACH_FILL_OPACITY_REACHABLE, STOP_COLORS } from './colors'
 
 /**
  * 地図の凡例。色だけに頼らないよう、記号の形(塗りつぶし・白抜き・四角)と文字を並べる。
  * caption には、地図に出している日付と時間帯を入れる。
+ * nonCoverableCells は、ダイヤと関係なく外れるので塗っていないセルの数(docs/interfaces-1103.md の追記2)。
  */
 export default function MapLegend({
   caption,
   computing,
   showStations,
+  nonCoverableCells,
 }: {
   caption: string
   computing: boolean
   showStations: boolean
+  nonCoverableCells: number
 }) {
   return (
     <section
@@ -28,6 +32,13 @@ export default function MapLegend({
         <li className="flex items-center gap-2">
           <Swatch color={REACH_COLORS.unreachable} opacity={REACH_FILL_OPACITY} />
           徒歩圏から外れる
+        </li>
+        <li className="flex items-start gap-2" data-non-coverable="true">
+          <EmptySwatch />
+          <span>
+            塗らないセル:ダイヤと関係なく外れる <span className="tabular-nums">{formatCount(nonCoverableCells)}</span>{' '}
+            セル(区分の徒歩圏に停留所も駅も無い)
+          </span>
         </li>
         <li className="flex items-center gap-2">
           <Dot fill={STOP_COLORS.active} />
@@ -54,6 +65,11 @@ function Swatch({ color, opacity }: { color: string; opacity: number }) {
       <span className="absolute inset-0 rounded-sm" style={{ backgroundColor: color, opacity }} />
     </span>
   )
+}
+
+/** 塗らないセルの記号(点線の枠だけ) */
+function EmptySwatch() {
+  return <span aria-hidden="true" className="mt-0.5 inline-block size-3.5 shrink-0 rounded-sm border border-dashed border-foreground/50" />
 }
 
 function Dot({ fill }: { fill: string }) {

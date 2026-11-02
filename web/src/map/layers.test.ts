@@ -6,6 +6,7 @@ import {
   addReachLayers,
   CELLS_LAYER,
   CELLS_SOURCE,
+  cellBandBit,
   cellFillColor,
   cellFillOpacity,
   removeReachLayers,
@@ -80,12 +81,23 @@ function fakeMap(baseLayers: { id: string; type: string }[] = [{ id: 'water', ty
 }
 
 describe('式', () => {
-  it('セルの色は、時間帯の値が 1 なら青、それ以外は橙', () => {
-    expect(cellFillColor(2)).toEqual(['case', ['==', ['get', 'b2'], 1], REACH_COLORS.reachable, REACH_COLORS.unreachable])
+  it('セルの時間帯 b のビットは、取り決め(追記2)の形 floor(m / 2^b) % 2 で取り出す', () => {
+    expect(cellBandBit(0)).toEqual(['%', ['floor', ['/', ['get', 'm'], 1]], 2])
+    expect(cellBandBit(5)).toEqual(['%', ['floor', ['/', ['get', 'm'], 32]], 2])
+    expect(cellBandBit(17)).toEqual(['%', ['floor', ['/', ['get', 'm'], 131072]], 2])
+  })
+
+  it('セルの色は、時間帯のビットが 1 なら青、それ以外は橙', () => {
+    expect(cellFillColor(2)).toEqual(['case', ['==', cellBandBit(2), 1], REACH_COLORS.reachable, REACH_COLORS.unreachable])
   })
 
   it('セルの不透明度は、到達できるセルが薄い', () => {
-    expect(cellFillOpacity(0)).toEqual(['case', ['==', ['get', 'b0'], 1], REACH_FILL_OPACITY_REACHABLE, REACH_FILL_OPACITY])
+    expect(cellFillOpacity(0)).toEqual(['case', ['==', cellBandBit(0), 1], REACH_FILL_OPACITY_REACHABLE, REACH_FILL_OPACITY])
+  })
+
+  it('時間帯が無い(-1)ときは、どのセルも外れる色にする', () => {
+    expect(cellFillColor(-1)).toEqual(['case', false, REACH_COLORS.reachable, REACH_COLORS.unreachable])
+    expect(cellFillOpacity(-1)).toEqual(['case', false, REACH_FILL_OPACITY_REACHABLE, REACH_FILL_OPACITY])
   })
 
   it('停留所は、その時間帯の出発が 1 以上なら黒、無ければ白', () => {
@@ -97,7 +109,7 @@ describe('式', () => {
     ])
   })
 
-  it('時間帯が無い(-1)ときは、どの地物にも無い名前を読む', () => {
+  it('時間帯が無い(-1)ときは、停留所はどの地物にも無い名前を読む', () => {
     expect(JSON.stringify(cellFillColor(-1))).not.toContain('"b-1"')
     expect(JSON.stringify(stopCircleColor(-1))).toContain('_none')
   })
@@ -204,11 +216,21 @@ const STYLE_SPEC = STYLE_SPEC_DIR
   ? `${PNPM_DIR}${STYLE_SPEC_DIR}/node_modules/@maplibre/maplibre-gl-style-spec/dist/index.mjs`
   : undefined
 
+/** スタイルの検証器のうち、ここで使う部分 */
+interface StyleSpec {
+  validateStyleMin(style: unknown): { message: string }[]
+  createExpression(
+    expression: unknown,
+    propertySpec: unknown,
+  ): { result: 'success'; value: { evaluate(globals: { zoom: number }, feature: unknown): unknown } } | { result: 'error'; value: { message: string }[] }
+  latest: { paint_fill: Record<string, unknown> }
+}
+
 describe.skipIf(!STYLE_SPEC || !existsSync(STYLE_SPEC))('MapLibre のスタイルの検証器', () => {
+  const loadSpec = async () => (await import(/* @vite-ignore */ pathToFileURL(STYLE_SPEC!).href)) as StyleSpec
+
   it('足すソース・レイヤーと、時間帯を切り替えた式が、スタイルとして正しい', async () => {
-    const spec = (await import(/* @vite-ignore */ pathToFileURL(STYLE_SPEC!).href)) as {
-      validateStyleMin(style: unknown): { message: string }[]
-    }
+    const spec = await loadSpec()
     const { map, sources, layers } = fakeMap([])
     addReachLayers(map)
     const style = {
@@ -218,7 +240,7 @@ describe.skipIf(!STYLE_SPEC || !existsSync(STYLE_SPEC))('MapLibre のスタイ�
     }
     expect(spec.validateStyleMin(style).map((e) => e.message)).toEqual([])
 
-    for (const band of [0, 5, 17]) {
+    for (const band of [-1, 0, 5, 17]) {
       const switched = structuredClone(style)
       const paintOf = (id: string) => (switched.layers.find((l) => l.id === id) as { paint: Record<string, unknown> }).paint
       paintOf(CELLS_LAYER)['fill-color'] = cellFillColor(band)
@@ -226,5 +248,24 @@ describe.skipIf(!STYLE_SPEC || !existsSync(STYLE_SPEC))('MapLibre のスタイ�
       paintOf(STOPS_LAYER)['circle-color'] = stopCircleColor(band)
       expect(spec.validateStyleMin(switched).map((e) => e.message)).toEqual([])
     }
+  })
+
+  it('MapLibre の式の評価で、セルの m から時間帯ごとの可否を取り出せる(18 の時間帯すべて)', async () => {
+    const spec = await loadSpec()
+    // 時間帯ごとの可否の並び。1時間ごと(18)で、いろいろなビットの組み合わせを作る
+    const patterns = [0, 1, 2 ** 17, 2 ** 18 - 1, 0b101010101010101010, 0b010101010101010101, 0b100000000000000001, 12345]
+    for (let band = 0; band < 18; band++) {
+      const parsed = spec.createExpression(cellFillOpacity(band), spec.latest.paint_fill['fill-opacity'])
+      if (parsed.result !== 'success') throw new Error(parsed.value.map((e) => e.message).join('、'))
+      for (const m of patterns) {
+        const reachable = Math.floor(m / 2 ** band) % 2 === 1
+        const opacity = parsed.value.evaluate({ zoom: 10 }, { type: 'Polygon', properties: { m } })
+        expect(opacity).toBe(reachable ? REACH_FILL_OPACITY_REACHABLE : REACH_FILL_OPACITY)
+      }
+    }
+    // 時間帯が無い(-1)ときは、どのセルも外れる
+    const none = spec.createExpression(cellFillOpacity(-1), spec.latest.paint_fill['fill-opacity'])
+    if (none.result !== 'success') throw new Error('式を作れません')
+    expect(none.value.evaluate({ zoom: 10 }, { type: 'Polygon', properties: { m: 2 ** 18 - 1 } })).toBe(REACH_FILL_OPACITY)
   })
 })

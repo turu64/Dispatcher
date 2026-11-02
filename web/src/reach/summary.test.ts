@@ -9,27 +9,51 @@ const RESULT: ReachResult = {
     [true, true, false, false],
     [true, false, false, true],
   ],
+  // 3つ目のセルは、どの時間帯でも届かない(ダイヤと関係なく外れる)
+  coverable: [true, true, false, true],
   usedFallback: false,
   excludedStops: 0,
-  cellPopulation: [10, 2.5, 7.25, 0],
+  cellPopulation: [10, 2.5, 7.25, 0.5],
 }
 
 describe('summarizeReach', () => {
-  it('時間帯ごとの外れるセルの数と推計人口、全体の数を数える', () => {
+  it('調べたセルの内訳、到達できる見込みのあるセル、時間帯ごとの外れるセル(見込みのあるセルの中)を数える', () => {
     expect(summarizeReach(RESULT)).toEqual({
       totalCells: 4,
-      totalPopulation: 19.75,
+      totalPopulation: 20.25,
       cellsByClass: { urban: 1, suburban: 1, rural: 2 },
+      coverableCells: 3,
+      coverablePopulation: 13,
+      nonCoverableCells: 1,
+      nonCoverablePopulation: 7.25,
       bands: [
-        { unreachableCells: 2, unreachablePopulation: 7.25 },
-        { unreachableCells: 2, unreachablePopulation: 9.75 },
+        { unreachableCells: 1, unreachablePopulation: 0.5 },
+        { unreachableCells: 1, unreachablePopulation: 2.5 },
       ],
     })
   })
 
+  it('見込みの無いセルは、時間帯ごとの外れるセルに入れない(分子と分母の両方から除く)', () => {
+    const r = summarizeReach(RESULT)
+    for (const b of r.bands) expect(b.unreachableCells).toBeLessThanOrEqual(r.coverableCells)
+    expect(r.coverableCells + r.nonCoverableCells).toBe(r.totalCells)
+    expect(r.coverablePopulation + r.nonCoverablePopulation).toBe(r.totalPopulation)
+  })
+
+  it('すべてのセルが見込み無しなら、時間帯ごとの外れるセルは 0、分母も 0', () => {
+    const r = summarizeReach({ ...RESULT, coverable: [false, false, false, false] })
+    expect(r.coverableCells).toBe(0)
+    expect(r.nonCoverableCells).toBe(4)
+    expect(r.nonCoverablePopulation).toBe(20.25)
+    expect(r.bands.map((b) => b.unreachableCells)).toEqual([0, 0])
+    expect(formatPercent(r.bands[0].unreachableCells, r.coverableCells)).toBe('—')
+  })
+
   it('セルが無ければすべて 0、時間帯の数はそのまま', () => {
-    const r = summarizeReach({ ...RESULT, cells: [], classes: [], reachable: [[], []], cellPopulation: [] })
+    const r = summarizeReach({ ...RESULT, cells: [], classes: [], reachable: [[], []], coverable: [], cellPopulation: [] })
     expect(r.totalCells).toBe(0)
+    expect(r.coverableCells).toBe(0)
+    expect(r.nonCoverableCells).toBe(0)
     expect(r.bands).toEqual([
       { unreachableCells: 0, unreachablePopulation: 0 },
       { unreachableCells: 0, unreachablePopulation: 0 },
@@ -39,7 +63,7 @@ describe('summarizeReach', () => {
 
 describe('formatPercent', () => {
   it('小数1桁の割合', () => {
-    expect(formatPercent(7989, 31108)).toBe('25.7%')
+    expect(formatPercent(2431, 17200)).toBe('14.1%')
     expect(formatPercent(0, 10)).toBe('0.0%')
     expect(formatPercent(10, 10)).toBe('100.0%')
   })

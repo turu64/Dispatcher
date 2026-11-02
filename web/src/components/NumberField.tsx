@@ -17,6 +17,7 @@ export default function NumberField({
   onCommit,
   max,
   step,
+  integer = false,
 }: {
   id: string
   label: string
@@ -26,6 +27,8 @@ export default function NumberField({
   onCommit: (value: number) => void
   max?: number
   step?: number
+  /** 整数だけを受け付ける欄(画面の数字のキーボードを出す。受け付けるかどうかは parse が決める) */
+  integer?: boolean
 }) {
   const [text, setText] = useState(String(value))
   const [committed, setCommitted] = useState(value)
@@ -45,7 +48,7 @@ export default function NumberField({
         <Input
           id={id}
           type="number"
-          inputMode="decimal"
+          inputMode={integer ? 'numeric' : 'decimal'}
           min={0}
           max={max}
           step={step ?? 1}

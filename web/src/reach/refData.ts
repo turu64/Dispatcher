@@ -1,7 +1,8 @@
 /**
  * 参照データ(人口・人口集中地区・鉄道駅)の取得。
  *
- * 停留所の範囲(外接矩形)を最大の徒歩圏だけ広げた範囲に入る1次メッシュを求め、
+ * 起点の停留所の範囲(外接矩形)を「バス停の距離の最大 + 駅の距離の最大」(既定 2,800m。input.ts の refMarginM)だけ
+ * 広げた範囲に入る1次メッシュを求め(docs/interfaces-1103.md の追記2)、
  * サーバーの GET /api/ref/{mesh1} から並行で取る。1つでも取れなければ「参照データ無し」として扱う
  * (区分は fallbackClass、駅は無いものとして計算する。docs/interfaces-1103.md)。
  */
@@ -64,7 +65,8 @@ export function expandBounds(b: Bounds, radiusM: number): Bounds {
 }
 
 /**
- * 読む参照データのファイル(1次メッシュ4桁)。停留所の外接矩形を radiusM(最大の徒歩圏)だけ広げた範囲に入るもの。
+ * 読む参照データのファイル(1次メッシュ4桁)。停留所の外接矩形を radiusM だけ広げた範囲に入るもの。
+ * 画面は、起点の停留所と refMarginM(バス停の距離の最大 + 駅の距離の最大)を渡す。
  * 範囲の中の停留所が無ければ空。
  */
 export function refMeshesFor(stops: readonly { lat: number; lon: number }[], radiusM: number): string[] {

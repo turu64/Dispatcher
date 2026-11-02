@@ -3,7 +3,9 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { loadGtfsZip } from '@/gtfs/load'
 import { toStops } from '@/gtfs/parse'
+import { originStops, refMarginM } from './input'
 import { distanceM } from './mesh'
+import { DEFAULT_REACH_PARAMS } from './reach'
 import { expandBounds, fetchRefData, inMeshRange, pointsBounds, refMeshesFor, type RefCache } from './refData'
 
 describe('inMeshRange', () => {
@@ -221,14 +223,28 @@ describe('fetchRefData', () => {
 
 // ---- 実データ(GTFS の ZIP と data/out/ref があるときだけ) ----
 const ZIP = fileURLToPath(new URL('../../../data/raw/gtfs/dohoku_bus_減便前.zip', import.meta.url))
+const ZIP_AFTER = fileURLToPath(new URL('../../../data/raw/gtfs/dohoku_bus_減便後.zip', import.meta.url))
 const REF_DIR = fileURLToPath(new URL('../../../data/out/ref/', import.meta.url))
 const EXPECTED_MESHES = ['6541', '6542', '6543', '6641', '6642', '6643']
 
+async function originsOf(zip: string) {
+  const feed = await loadGtfsZip(new Uint8Array(readFileSync(zip)).buffer)
+  return originStops(feed, toStops(feed).stops).stops
+}
+
 describe.skipIf(!existsSync(ZIP))('実データ(道北バス 減便前)', () => {
-  it('停留所の外接矩形を 1,600m 広げた範囲の1次メッシュは 6541〜6643 の6つ', async () => {
-    const feed = await loadGtfsZip(new Uint8Array(readFileSync(ZIP)).buffer)
-    const { stops } = toStops(feed)
-    expect(refMeshesFor(stops, 1600)).toEqual(EXPECTED_MESHES)
+  it('起点の停留所の外接矩形を 2,800m(バス停 1,200m + 駅 1,600m)広げた範囲の1次メッシュは 6541〜6643 の6つ', async () => {
+    const origins = await originsOf(ZIP)
+    expect(origins).toHaveLength(1460)
+    expect(refMeshesFor(origins, refMarginM(DEFAULT_REACH_PARAMS))).toEqual(EXPECTED_MESHES)
+  })
+
+  it.skipIf(!existsSync(ZIP_AFTER))('減便後の起点の停留所では、6541・6542・6641・6642 の4つ(6つに収まる)', async () => {
+    const origins = await originsOf(ZIP_AFTER)
+    expect(origins).toHaveLength(1364)
+    const meshes = refMeshesFor(origins, refMarginM(DEFAULT_REACH_PARAMS))
+    expect(meshes).toEqual(['6541', '6542', '6641', '6642'])
+    expect(meshes.every((m) => EXPECTED_MESHES.includes(m))).toBe(true)
   })
 
   it.skipIf(!EXPECTED_MESHES.every((m) => existsSync(`${REF_DIR}${m}.json`)))(

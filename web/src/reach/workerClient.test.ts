@@ -31,6 +31,7 @@ function resultOf(bandCount: number): ReachResult {
     cells: [T],
     classes: ['urban'],
     reachable: Array.from({ length: bandCount }, () => [true]),
+    coverable: [true],
     usedFallback: false,
     excludedStops: 0,
     cellPopulation: [25],

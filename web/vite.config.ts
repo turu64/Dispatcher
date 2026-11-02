@@ -14,4 +14,9 @@ export default defineConfig({
     // 開発中は /api をローカルのサーバー(uv run dispatcher-server)に中継する
     proxy: { '/api': 'http://127.0.0.1:8000' },
   },
+  optimizeDeps: {
+    // GTFS の読み込み(Web Worker)で使う。最初から前もって変換しておき、開発サーバーで初めて読み込んだときに
+    // 依存の変換が後から走って画面ごと読み込み直されるのを防ぐ
+    include: ['jszip', 'papaparse'],
+  },
 })

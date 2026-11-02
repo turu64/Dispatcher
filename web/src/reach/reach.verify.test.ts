@@ -3,17 +3,18 @@
 // - 道北バスの GTFS(data/raw/gtfs/dohoku_bus_減便前.zip・dohoku_bus_減便後.zip)
 // - 参照データ(data/out/ref/{1次メッシュ}.json。data/ の Python で作ったもの)
 //
-// 2026-11-02(月)の時間帯ごとの出発の数と参照データで到達圏を計算し、
-// 時間帯ごとの到達できないセルの数と推計人口の割合、計算時間を出力する。
+// 減便前は 2026-11-02(月)、減便後は 2026-11-04(水)の時間帯ごとの出発の数と参照データで到達圏を計算し、
+// 調べたセル・到達できる見込みのあるセル(coverable)と、時間帯ごとの外れるセルの数と推計人口、計算時間を出力する。
+// 起点は、画面と同じく stop_times に1回以上出てくる停留所で、location_type が 0(空を含む)のものだけ(取り決めの追記2)。
 // 検証担当が Python で独立に計算した結果(PYTHON)とも照らす。入力のファイルが変わっていれば、その照合だけを飛ばす。
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
-import * as calendar from '../gtfs/calendar'
+import { servicesFor } from '../gtfs/calendar'
 import { departureCountsByBand, makeBands, type TimeBand } from '../gtfs/departures'
 import { loadGtfsZip, type GtfsFeed } from '../gtfs/load'
-import { toStops } from '../gtfs/parse'
+import { toStops, type Stop } from '../gtfs/parse'
 import { cellsWithinRadius, distanceM, meshCenter, meshCode, meshCodesInBounds, parentCode, type LatLon } from './mesh'
 import {
   computeReach,
@@ -23,19 +24,25 @@ import {
   type ReachParams,
   type ReachResult,
   type RefData,
+  type RegionClass,
 } from './reach'
 
 const DOHOKU_GTFS = fileURLToPath(new URL('../../../data/raw/gtfs/dohoku_bus_減便前.zip', import.meta.url))
+const DOHOKU_GTFS_AFTER = fileURLToPath(new URL('../../../data/raw/gtfs/dohoku_bus_減便後.zip', import.meta.url))
 const REF_DIR = fileURLToPath(new URL('../../../data/out/ref/', import.meta.url))
 const REF_MESH1 = ['6541', '6542', '6543', '6641', '6642', '6643']
 const refPath = (mesh1: string) => `${REF_DIR}${mesh1}.json`
 const HAS_DATA = existsSync(DOHOKU_GTFS) && REF_MESH1.every((m) => existsSync(refPath(m)))
 
-const DATE = '20261102' // 月曜日。前日の 11/1 は日曜日
+/** 減便前の対象日。月曜日で、前日の 11/1 は日曜日 */
+const DATE = '20261102'
+/** 減便後の対象日。水曜日で、前日の 11/3(文化の日)は calendar_dates で日祝ダイヤ(06)になる */
+const DATE_AFTER = '20261104'
+
+/** 参照データの読み込み範囲(取り決めの追記2):バス停の距離の最大 1,200m + 駅の距離の最大 1,600m */
+const REF_MARGIN_M = 2800
 
 const sha256 = (lines: string[]) => createHash('sha256').update(lines.join('\n')).digest('hex')
-
-const DOHOKU_GTFS_AFTER = fileURLToPath(new URL('../../../data/raw/gtfs/dohoku_bus_減便後.zip', import.meta.url))
 
 /** 参照データの 6 ファイル(REF_MESH1 の順)と GTFS の ZIP をこの順につないだ SHA-256。Python の照合はこれが同じときだけ行う */
 function inputFingerprint(gtfs: string): string | null {
@@ -49,66 +56,104 @@ const FINGERPRINT = inputFingerprint(DOHOKU_GTFS)
 const FINGERPRINT_AFTER = inputFingerprint(DOHOKU_GTFS_AFTER)
 
 /**
- * 検証担当が Python(python3 -I)で別に計算した値。reach.ts・mesh.ts のコードは見ずに、取り決めと JIS X 0410 の定義から書いた。
+ * 検証担当が Python(python3 -I)で別に計算した値。reach.ts・mesh.ts のコードは見ずに、取り決め(追記2まで)と
+ * JIS X 0410 の定義から書いた。
+ * - 起点は stop_times に1回以上出てくる、location_type が 0 か空の停留所。駅は起点にしない
+ * - 調べるセルは、起点から 3区分のバス停の距離の最大(1,200m)以内で、親の 250m セルの人口が 1 人以上のもの
  * - 地域メッシュのコードは緯度を分・秒の余りで割っていく定義どおりに作り、中心はコードの各桁から足し上げる
  * - 距離は GRS80 のヒュベニの式、250m セルの面積は M(φ)N(φ)cosφ の Simpson 法の数値積分
  * - 近くの点は 0.02度 × 0.03度の格子で探す(kdbush は使わない)
- * - 運行日(当日 01・前日 06)と時間帯ごとの出発も GTFS から数え直した
- * 距離が徒歩圏の 1mm 以内のセルと、人口密度がしきい値の 0.1% 以内の 250m セルは 0 個(境目の丸めで結果が分かれない)。
+ * - 運行日と時間帯ごとの出発も GTFS から数え直した
+ * 距離が徒歩圏の 1mm 以内のセル(区分のバス停・駅の距離)は 0 個、人口密度がしきい値の 0.1% 以内の 250m セルも 0 個。
+ * 調べるセルの 1,200m の 1mm 以内は1つ(65422434243、1,200.0005m)あるが、親の 250m セルの人口が 0 で結果に入らない。
  * 文字列の SHA-256 は、11 桁のコードの辞書順に並べた行を改行でつないだもの。
+ * 「外れるセル」は coverable のセルのうち、その時間帯に到達できないもの(表の割合の分子)。
+ *
+ * 11/3 に別の検証担当が、上の Python を見ずに取り決め(追記2まで)だけから計算を書き直し(セル × 起点・駅を、
+ * 緯度の差だけで 1,700m を超える組を除いて総当たりし、250m セルの面積は Simpson 法)、3つの場合のここの値が
+ * すべて一致することを確かめた。
+ * そのときの境目までの最小の差は、区分のバス停の距離が 1.1mm(66423363221 と 6720_01、1,200.0011m)、
+ * 区分の駅の距離が 6.3cm、人口密度がしきい値の 0.26%(6642231012)。
  */
 const PYTHON = {
   /** 参照データの駅が 78 のときのファイル(2026-11-03 01:29 に書かれたもの) */
   fingerprint: 'bb1f7d143d46c697acf434dfc7eb6b9e2aefb9fbf66ec2750e61f7ed76806ada',
+  /** 起点の停留所(1,582 のうち、stop_times に出てこない 122 を除く) */
+  originStops: 1460,
   /** 3時間ごとの時間帯の出発の合計 */
   bandTotals: [3105, 3787, 3792, 3488, 2365, 282],
   /** 出発がある停留所の「stop_id:6つの数」(stop_id の順) */
   stopCountsSha: '5b7a822992bbdc38e2b7d28fb6bf8440b2e3d6a9b054843d009a9d1972d3a9b9',
-  /** 停留所・駅から 1,600m 以内のセル(人口で絞る前) */
-  candidateCells: 95947,
-  cells: 31108,
-  cellsSha: 'ab7f387dc2bd7433bfb5a79fda016215c4f5bd48ad2be13b49129754ed5a2af5',
-  classCount: { urban: 7790, suburban: 4041, rural: 19277 },
+  /** 起点から 1,200m 以内のセル(人口で絞る前) */
+  candidateCells: 54903,
+  cells: 18951,
+  cellsSha: 'b1b114112b15455dc4dfe43934b98b1060783caee0031ea554368af5df44c366',
+  classCount: { urban: 5669, suburban: 1971, rural: 11311 },
   /** 「コード:区分」 */
-  classesSha: 'd504b1883651ba1fd8ef568f652fbb1c599c486d5adb5172e78674d3a370b8d6',
+  classesSha: 'd821febe5a9847c162d978fa54569b0d22c0b41f42f2fd9fa024e7eac23d58e4',
   /** 「コード:推計人口 × 4(= 親の 250m セルの人口)」 */
-  populationSha: '665c46e25f50417c07d6abead1b441962265ce8c2bfd18961ed01491716f8275',
-  populationTimes4: 2381147,
-  /** 3時間ごとの到達できないセルの数・コードの SHA-256・推計人口 */
-  unreachableCounts: [7989, 7692, 7953, 7168, 7725, 13920],
-  unreachableSha: [
-    '516ebe631bdd0bf726bfd196600d5b57264a8fc2e9b3dd67f29e54caa9cab6f4',
-    'e7e54e96fb2e68261e229df968e4e63368ad0b5bd14e9de7ccae6e812ebcc8ee',
-    '6f6f816c58f479c4645a701a58aa618f090a6ad935460bff8cd59a9f08775e32',
-    'a3dd6b7b23356448bade196376e0037129f34668e9e4c806a8c700ba3d9a84c6',
-    '4d5b213384697c99ce918912ae309198340d0975cc41b07f947bfecd3ade6358',
-    '78cdd810a30928f13b8e3afff9d2561b644d729f6f021de163211fd8a7c8f11c',
-  ],
-  unreachablePop: [211744.75, 228330, 238406.75, 209405, 228519.5, 299512.25],
+  populationSha: 'f3dd08b45a3634bebca395465d2cbc7ab62c84a468e01fd914e65021346f75b6',
+  populationTimes4: 1617508,
+  /** 到達できる見込みのあるセル(coverable) */
+  coverable: {
+    cells: 17200,
+    sha: '29770298b08b3123cee7bf5f66502f72f6ee545c98d820b0b74d773f5cf4694d',
+    pop: 305703.75,
+    classCount: { urban: 4029, suburban: 1860, rural: 11311 },
+  },
+  /** ダイヤと関係なく外れるセル(coverable でないもの) */
+  nonCoverable: { cells: 1751, pop: 98673.25 },
   /** 駅の徒歩圏(区分の駅の距離)に入るセル */
-  railCells: 14507,
-  /** どの停留所からも 1,600m より遠く、駅だけで調べるセルに入ったもの */
-  stationOnlyCells: 9409,
-  stationOnlyPop: 163230,
-  /** 1時間ごと(18 の時間帯)。unreachableShaAll は、時間帯ごとの SHA-256 を改行でつないだものの SHA-256 */
+  railCells: 6157,
+  /** 区分のバス停の距離に起点が無く、駅だけで coverable になったセル */
+  railOnlyCoverable: 402,
+  /** 3時間ごとの外れるセル(coverable の中)の数・コードの SHA-256・推計人口 */
+  outCounts: [2431, 2134, 2395, 1610, 2167, 8362],
+  outSha: [
+    '6d63b0df7f9fc92fef2ffc2eeeb3ff8a16eb0a8e882ef6a93a1f4e71f269c650',
+    'd1022eada27a571a53ac55020ac08d2920131c16a09b6c06e289a0425cc87d08',
+    '389ec692e160724ea5988d3ddb3d5df460b09fbc9104a990cc425fce5c8a796a',
+    '4fe4a2d88e17622dc6f1449b7f3608f81ac920864f5336c50e507bfb6643441b',
+    'a41a73313611a165bf4b3bc6b1470e1184a2f5c02d244f593893c700874a7143',
+    '296f38686df2eb550f57a7dad3c5cf6f8c0be38f61e22d2e546b51d53d202c5c',
+  ],
+  outPop: [22710, 39295.25, 49372, 20370.25, 39484.75, 110477.5],
+  /** 1時間ごと(18 の時間帯)。outShaAll は、時間帯ごとの SHA-256 を改行でつないだものの SHA-256 */
   hourly: {
     bandTotals: [159, 1519, 1427, 1189, 1229, 1369, 1337, 1157, 1298, 1230, 1246, 1012, 1045, 820, 500, 216, 66, 0],
     stopCountsSha: '21af8ca82f8a73b4dddfb20310883bd56df0ae3cb92262f6a2baba7fe1e3ef3e',
-    unreachableCounts: [13889, 8432, 8976, 9729, 10225, 9586, 8745, 10767, 10165, 9014, 9889, 10388, 9950, 11181, 12923, 14048, 15464, 16601],
-    unreachableShaAll: '997beeb3059b206782d8b336288ddf213ba3c268f8bd07865464f759e4a5e93f',
-    unreachablePop: [
-      319077.5, 217743, 239136, 246306.25, 249784, 249476.5, 246258.25, 261705.25, 255241, 238418.5, 239336, 257718.75, 241389.75,
-      260999.75, 287014.5, 305502.75, 341780.5, 395437.75,
+    outCounts: [8331, 2874, 3418, 4171, 4667, 4028, 3187, 5209, 4607, 3456, 4331, 4830, 4392, 5623, 7365, 8490, 9906, 11043],
+    outShaAll: '9dce90ac2d3a269f0db205c3408503e221035f655a965937f13124caa47b4700',
+    outPop: [
+      130042.75, 28708.25, 50101.25, 57271.5, 60749.25, 60441.75, 57223.5, 72670.5, 66206.25, 49383.75, 50301.25, 68684, 52355,
+      71965, 97979.75, 116468, 152745.75, 206403,
     ],
   },
-  /** 減便後の GTFS(dohoku_bus_減便後.zip)の 3時間ごと。調べるセル・区分・推計人口は減便前と同じ */
+  /**
+   * 減便後の GTFS(dohoku_bus_減便後.zip)の 2026-11-04 の 3時間ごと。
+   * stop_times に出てくる停留所が減便前より少ない(1,364)ので、調べるセルも減便前と違う
+   */
   after: {
     fingerprint: '6f2acd1073c9528cb0a50d14f33388df9c24d9422b1c4ba7cdaa0342c0e7e0e0',
+    originStops: 1364,
     bandTotals: [2784, 3496, 3390, 3231, 1906, 238],
     stopCountsSha: '28adfaec2efbb9f8299a4fa6e2ec9b978072efb4f337ce94eb6282e3e9b3bb8f',
-    unreachableCounts: [8147, 7793, 7888, 7371, 8145, 13924],
-    unreachableShaAll: '4f5abbb60e4b938930d450370a1d67257ef976d8387aa6fa251a75a2e6fd73eb',
-    unreachablePop: [223494.5, 234244, 239256.75, 209866, 231016, 299679.25],
+    cells: 18455,
+    cellsSha: '83cbbaee503966527cff9399c044ade982f5b8f86abf68b588105334cee9b2df',
+    classCount: { urban: 5618, suburban: 1970, rural: 10867 },
+    classesSha: 'c79d0de7a783685493464b5012d2b34cad16be5c1796e8adb742a723ce3be045',
+    populationSha: 'aabc004d5adfb6fde7458c2e16bd2f44a2fda2efb970d70d4bd18fb89f8e0ca9',
+    populationTimes4: 1606895,
+    coverable: {
+      cells: 16559,
+      sha: '9f6701062bc7148e7342a27cfc71ca4189c65da78e6ee0924f24353702853480',
+      pop: 294886.5,
+      classCount: { urban: 3832, suburban: 1860, rural: 10867 },
+    },
+    nonCoverable: { cells: 1896, pop: 106837.25 },
+    outCounts: [2075, 1721, 1816, 1299, 2073, 7852],
+    outShaAll: '381a69d3deceb06f21221294402c5391804c412fdba623fb69c55db58e6ad33f',
+    outPop: [24042.75, 34792.25, 39805, 10414.25, 31564.25, 100227.5],
   },
 } as const
 
@@ -122,45 +167,74 @@ function departureDigest(counts: Map<string, number[]>, bands: number): { sha: s
   return { sha: sha256(lines), totals }
 }
 
-/** 時間帯ごとの到達できないセル(コードの辞書順)の数・SHA-256・推計人口 */
-function unreachableDigest(result: ReachResult): { counts: number[]; shas: string[]; shaAll: string; pop: number[] } {
-  const order = result.cells.map((_, i) => i).sort((a, b) => (result.cells[a] < result.cells[b] ? -1 : 1))
-  const unreachable = result.reachable.map((band) => order.filter((i) => !band[i]))
-  const shas = unreachable.map((u) => sha256(u.map((i) => result.cells[i])))
+/** コードの辞書順の、結果の番号 */
+function codeOrder(result: ReachResult): number[] {
+  return result.cells.map((_, i) => i).sort((a, b) => (result.cells[a] < result.cells[b] ? -1 : 1))
+}
+
+/** 調べたセル・区分・推計人口の SHA-256 と数 */
+function cellDigest(result: ReachResult) {
+  const order = codeOrder(result)
+  const classCount: Record<RegionClass, number> = { urban: 0, suburban: 0, rural: 0 }
+  for (const c of result.classes) classCount[c]++
   return {
-    counts: unreachable.map((u) => u.length),
-    shas,
-    shaAll: sha256(shas),
-    pop: unreachable.map((u) => u.reduce((s, i) => s + result.cellPopulation[i], 0)),
+    cells: result.cells.length,
+    cellsSha: sha256(order.map((i) => result.cells[i])),
+    classCount,
+    classesSha: sha256(order.map((i) => `${result.cells[i]}:${result.classes[i]}`)),
+    // 推計人口 × 4 は親の 250m セルの人口(整数)。÷ 4 は浮動小数でも割り切れる
+    populationSha: sha256(order.map((i) => `${result.cells[i]}:${result.cellPopulation[i] * 4}`)),
+    populationTimes4: result.cellPopulation.reduce((s, n) => s + n * 4, 0),
   }
 }
 
-type ServicesFor = (feed: GtfsFeed, date: string) => { today: Set<string>; yesterday: Set<string> }
+/** coverable のセル(コードの辞書順)の数・SHA-256・推計人口・区分の内訳と、coverable でないセルの数・推計人口 */
+function coverableDigest(result: ReachResult) {
+  const order = codeOrder(result)
+  const cov = order.filter((i) => result.coverable[i])
+  const non = order.filter((i) => !result.coverable[i])
+  const classCount: Record<RegionClass, number> = { urban: 0, suburban: 0, rural: 0 }
+  for (const i of cov) classCount[result.classes[i]]++
+  const pop = (list: number[]) => list.reduce((s, i) => s + result.cellPopulation[i], 0)
+  return {
+    coverable: { cells: cov.length, sha: sha256(cov.map((i) => result.cells[i])), pop: pop(cov), classCount },
+    nonCoverable: { cells: non.length, pop: pop(non) },
+  }
+}
 
-/** 対象日と前日の service_id。calendar.ts に servicesFor があれば使い、無ければ平日 01(11/2)・日曜 06(11/1)を直接作る */
-function services(feed: GtfsFeed): { today: Set<string>; yesterday: Set<string> } {
-  const servicesFor = (calendar as Record<string, unknown>).servicesFor as ServicesFor | undefined
-  if (servicesFor) return servicesFor(feed, DATE)
-  return { today: new Set(['01']), yesterday: new Set(['06']) }
+/** 時間帯ごとの外れるセル(coverable の中で到達できないもの。コードの辞書順)の数・SHA-256・推計人口 */
+function outDigest(result: ReachResult): { counts: number[]; shas: string[]; shaAll: string; pop: number[] } {
+  const order = codeOrder(result).filter((i) => result.coverable[i])
+  const out = result.reachable.map((band) => order.filter((i) => !band[i]))
+  const shas = out.map((u) => sha256(u.map((i) => result.cells[i])))
+  return {
+    counts: out.map((u) => u.length),
+    shas,
+    shaAll: sha256(shas),
+    pop: out.map((u) => u.reduce((s, i) => s + result.cellPopulation[i], 0)),
+  }
+}
+
+/**
+ * 画面と同じ起点(取り決めの追記2):stop_times に1回以上出てくる停留所で、location_type が 0(空は 0 とみなす)のもの。
+ * 照合するときは、stop_id の前後の空白を取る
+ */
+function originStops(feed: GtfsFeed): Stop[] {
+  const used = new Set<string>()
+  for (const row of feed.tables.get('stop_times')?.rows ?? []) {
+    const id = row.stop_id?.trim()
+    if (id) used.add(id)
+  }
+  return toStops(feed).stops.filter((s) => s.locationType === 0 && used.has(s.id))
 }
 
 function readRef(mesh1: string): unknown {
   return JSON.parse(readFileSync(refPath(mesh1), 'utf8'))
 }
 
-/** 時間帯ごとの、到達できないセルの数と、推計人口に占める割合 */
-function unreachableByBand(result: ReachResult): { cells: number; population: number; share: number }[] {
-  const total = result.cellPopulation.reduce((s, n) => s + n, 0)
-  return result.reachable.map((band) => {
-    let cells = 0
-    let population = 0
-    band.forEach((ok, i) => {
-      if (ok) return
-      cells++
-      population += result.cellPopulation[i]
-    })
-    return { cells, population, share: total > 0 ? population / total : 0 }
-  })
+async function loadFeed(path: string): Promise<GtfsFeed> {
+  const buf = readFileSync(path)
+  return loadGtfsZip(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
 }
 
 /** 何回か計算して、最初(読み込み直後)と2回目以降の最短の時間(ms)を返す */
@@ -178,20 +252,32 @@ function timed(input: ReachInput, runs: number): { result: ReachResult; first: n
   return { result: result as ReachResult, first, best: runs > 1 ? best : first }
 }
 
+/** 停留所の外接矩形を marginM だけ広げた範囲にかかる 1次メッシュ(緯度・経度の換算は広めに取る) */
+function mesh1Around(points: LatLon[], marginM: number): string[] {
+  const south = Math.min(...points.map((s) => s.lat))
+  const north = Math.max(...points.map((s) => s.lat))
+  const west = Math.min(...points.map((s) => s.lon))
+  const east = Math.max(...points.map((s) => s.lon))
+  const dLat = marginM / 110_500
+  const dLon = marginM / (111_300 * Math.cos(((north + dLat) * Math.PI) / 180))
+  return [...meshCodesInBounds({ south: south - dLat, west: west - dLon, north: north + dLat, east: east + dLon }, 4)].sort()
+}
+
 describe.skipIf(!HAS_DATA)('道北バス(減便前)と参照データでの到達圏', () => {
   let feed: GtfsFeed
   let ref: RefData
+  let origins: Stop[]
 
   beforeAll(async () => {
-    const buf = readFileSync(DOHOKU_GTFS)
-    feed = await loadGtfsZip(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
+    feed = await loadFeed(DOHOKU_GTFS)
     ref = refDataFromJson(REF_MESH1.map(readRef))
+    origins = originStops(feed)
   }, 60_000)
 
   function inputFor(bands: TimeBand[]): ReachInput {
-    const counts = departureCountsByBand(feed, services(feed), bands)
+    const counts = departureCountsByBand(feed, servicesFor(feed, DATE), bands)
     const zeros = new Array<number>(bands.length).fill(0)
-    const stops = toStops(feed).stops.map((s) => ({ lat: s.lat, lon: s.lon, bandCounts: counts.counts.get(s.id) ?? zeros }))
+    const stops = origins.map((s) => ({ lat: s.lat, lon: s.lon, bandCounts: counts.counts.get(s.id) ?? zeros }))
     return { stops, ref, fallbackClass: 'suburban', params: DEFAULT_REACH_PARAMS, bandCount: bands.length }
   }
 
@@ -202,20 +288,19 @@ describe.skipIf(!HAS_DATA)('道北バス(減便前)と参照データでの到�
     expect(ref.stations).toHaveLength(files.reduce((s, f) => s + f.stations.length, 0))
   })
 
-  it('停留所の範囲を 1,600m 広げた範囲にかかる 1次メッシュは、6 つの参照データのファイルと一致する', () => {
+  it('起点は stop_times に出てくる停留所だけ(道北バスは 1,582 のうち 1,460。すべて location_type 0)', () => {
     const { stops } = toStops(feed)
-    const south = Math.min(...stops.map((s) => s.lat))
-    const north = Math.max(...stops.map((s) => s.lat))
-    const west = Math.min(...stops.map((s) => s.lon))
-    const east = Math.max(...stops.map((s) => s.lon))
-    const dLat = 1600 / 110_500
-    const dLon = 1600 / (111_300 * Math.cos(((north + dLat) * Math.PI) / 180))
-    const mesh1 = meshCodesInBounds({ south: south - dLat, west: west - dLon, north: north + dLat, east: east + dLon }, 4)
-    expect([...mesh1].sort()).toEqual(REF_MESH1)
+    expect(stops).toHaveLength(1582)
+    expect(stops.every((s) => s.locationType === 0)).toBe(true)
+    expect(origins).toHaveLength(1460)
+  })
+
+  it('起点の範囲を 2,800m(バス停 1,200m + 駅 1,600m)広げた範囲にかかる 1次メッシュは、6 つの参照データのファイルと一致する', () => {
+    expect(mesh1Around(origins, REF_MARGIN_M)).toEqual(REF_MESH1)
   })
 
   for (const step of [3, 1] as const) {
-    it(`${step}時間ごと:2 秒以内に計算でき、21〜24 時台の到達できないセルが最も多い`, () => {
+    it(`${step}時間ごと:2 秒以内に計算でき、21〜24 時台の外れるセルが最も多い`, () => {
       const bands = makeBands(step)
       const input = inputFor(bands)
       const { result, first, best } = timed(input, 3)
@@ -225,54 +310,85 @@ describe.skipIf(!HAS_DATA)('道北バス(減便前)と参照データでの到�
       expect(result.reachable).toHaveLength(bands.length)
       expect(result.classes).toHaveLength(result.cells.length)
       expect(result.cellPopulation).toHaveLength(result.cells.length)
+      expect(result.coverable).toHaveLength(result.cells.length)
       expect(result.cellPopulation.every((n) => n >= 0.25)).toBe(true)
 
-      const rows = unreachableByBand(result)
+      const { coverable, nonCoverable } = coverableDigest(result)
+      const out = outDigest(result)
+      const { classCount } = cellDigest(result)
       const total = result.cellPopulation.reduce((s, n) => s + n, 0)
-      const classCount = { urban: 0, suburban: 0, rural: 0 }
-      for (const c of result.classes) classCount[c]++
       console.log(
         [
-          `${step}時間ごと:停留所 ${input.stops.length}、駅 ${ref.stations.length}、調べたセル ${result.cells.length}` +
+          `${step}時間ごと:起点の停留所 ${input.stops.length}、駅 ${ref.stations.length}、調べたセル ${result.cells.length}` +
             `(都市部 ${classCount.urban}、郊外 ${classCount.suburban}、中山間・地方 ${classCount.rural})、推計人口 ${Math.round(total)} 人`,
+          `到達できる見込みのあるセル ${coverable.cells}(推計人口 ${Math.round(coverable.pop)} 人)、` +
+            `ダイヤと関係なく外れるセル ${nonCoverable.cells}(推計人口 ${Math.round(nonCoverable.pop)} 人)`,
           `計算時間:1回目 ${first.toFixed(0)} ms、2回目以降の最短 ${best.toFixed(0)} ms`,
           ...bands.map(
             (b, i) =>
-              `  ${b.label.padEnd(7, ' ')} 到達できないセル ${String(rows[i].cells).padStart(6, ' ')}` +
-              `(${((rows[i].cells / result.cells.length) * 100).toFixed(1)}%)、推計人口 ${Math.round(rows[i].population)} 人(${(rows[i].share * 100).toFixed(1)}%)`,
+              `  ${b.label.padEnd(7, ' ')} 外れるセル ${String(out.counts[i]).padStart(6, ' ')}` +
+              `(${((out.counts[i] / coverable.cells) * 100).toFixed(1)}%)、推計人口 ${Math.round(out.pop[i])} 人` +
+              `(${((out.pop[i] / coverable.pop) * 100).toFixed(1)}%)`,
           ),
         ].join('\n'),
       )
 
       // 2 秒以内(ほかのテストと並んで走ると遅くなるため、2回目以降の最短で判定する)
       expect(best).toBeLessThan(2000)
-      // 夜(21〜24時)は便が少なく、到達できないセルが最も多い
+      // 夜(21〜24時)は便が少なく、外れるセルが最も多い
       const night = bands.findIndex((b) => b.startHour === 21)
-      const maxCells = Math.max(...rows.map((r) => r.cells))
-      if (step === 3) expect(rows[night].cells).toBe(maxCells)
-      else expect(Math.max(...rows.slice(night).map((r) => r.cells))).toBe(maxCells) // 1時間ごとなら 21〜24時のどれか
+      const maxCells = Math.max(...out.counts)
+      if (step === 3) expect(out.counts[night]).toBe(maxCells)
+      else expect(Math.max(...out.counts.slice(night))).toBe(maxCells) // 1時間ごとなら 21〜24時のどれか
     }, 60_000)
   }
 
-  it('セルを間引いて、kdbush を使わず全部の停留所・駅との距離で判定した結果と一致する', () => {
+  it('到達できるセルは、すべて到達できる見込みもある(coverable でないセルは、どの時間帯でも到達できない)', () => {
+    const result = computeReach(inputFor(makeBands(1)))
+    for (const band of result.reachable) {
+      expect(band.every((ok, i) => !ok || result.coverable[i])).toBe(true)
+    }
+    expect(result.coverable.some((v) => !v)).toBe(true)
+  }, 60_000)
+
+  it('すべてのセルで、kdbush を使わず全部の停留所・駅との距離で判定した結果(到達と coverable)と一致する', () => {
     const bands = makeBands(3)
     const input = inputFor(bands)
     const result = computeReach(input)
     const r = Object.fromEntries(
       Object.entries(DEFAULT_REACH_PARAMS.walkMinutes).map(([c, m]) => [c, { bus: m.bus * 80, rail: m.rail * 80 }]),
     ) as Record<string, { bus: number; rail: number }>
-    let checked = 0
-    for (let i = 0; i < result.cells.length; i += 97) {
+    // 緯度 1度は 110,574m 以上あるので、緯度の差が 1,700 ÷ 110,000 度を超える停留所は 1,700m より遠く、
+    // どの区分のバス停の距離(最大 1,200m)にも入らない。距離の計算を省くのはその停留所だけにする
+    const latSkip = 1700 / 110_000
+    const mismatched: string[] = []
+    let nonCoverable = 0
+    for (let i = 0; i < result.cells.length; i++) {
       const center = meshCenter(result.cells[i])
       const { bus, rail } = r[result.classes[i]]
       const byRail = ref.stations.some((s) => distanceM(center, s) <= rail)
-      const expected = bands.map(
-        (_, b) => byRail || input.stops.some((s) => s.bandCounts[b] > 0 && distanceM(center, s) <= bus),
-      )
-      expect(result.reachable.map((band) => band[i])).toEqual(expected)
-      checked++
+      const nearStops = input.stops.filter((s) => Math.abs(s.lat - center.lat) <= latSkip && distanceM(center, s) <= bus)
+      const coverable = byRail || nearStops.length > 0
+      const reach = bands.map((_, b) => byRail || nearStops.some((s) => s.bandCounts[b] > 0))
+      if (result.coverable[i] !== coverable || reach.some((ok, b) => result.reachable[b][i] !== ok)) {
+        mismatched.push(result.cells[i])
+      }
+      if (!coverable) nonCoverable++
     }
-    expect(checked).toBeGreaterThan(100)
+    expect(mismatched).toEqual([])
+    expect(nonCoverable).toBeGreaterThan(10)
+  }, 60_000)
+
+  it('駅だけのまわりのセルは調べない(調べたセルは、どれも起点の停留所から 1,200m 以内)', () => {
+    const result = computeReach(inputFor(makeBands(3)))
+    const near = new Set(cellsWithinRadius(origins, 1200))
+    expect(result.cells.every((c) => near.has(c))).toBe(true)
+    // 起点から 1,200m より遠い駅のセルは入らない(例:駅から 1,200m 以内でも、起点からは遠いセル)
+    const stationCells = new Set(cellsWithinRadius(ref.stations, 1600))
+    const stationOnly = [...stationCells].filter((c) => !near.has(c) && (ref.pop250.get(parentCode(c, 10)) ?? 0) >= 1)
+    expect(stationOnly.length).toBeGreaterThan(0)
+    const cells = new Set(result.cells)
+    expect(stationOnly.some((c) => cells.has(c))).toBe(false)
   }, 60_000)
 
   // ---- 以下は検証担当が足したもの ----
@@ -287,94 +403,125 @@ describe.skipIf(!HAS_DATA)('道北バス(減便前)と参照データでの到�
     expect(FINGERPRINT).toMatch(/^[0-9a-f]{64}$/)
   })
 
-  describe.skipIf(FINGERPRINT !== PYTHON.fingerprint)('Python で独立に計算した結果との照合(減便前)', () => {
+  describe.skipIf(FINGERPRINT !== PYTHON.fingerprint)('Python で独立に計算した結果との照合(減便前、2026-11-02)', () => {
     let input: ReachInput
     let result: ReachResult
-    /** コードの辞書順の、結果の番号 */
-    let order: number[]
 
     beforeAll(() => {
       input = inputFor(makeBands(3))
       result = computeReach(input)
-      order = result.cells.map((_, i) => i).sort((a, b) => (result.cells[a] < result.cells[b] ? -1 : 1))
     })
 
-    it('時間帯ごとの出発の数(停留所ごと)が一致する', () => {
-      const { sha, totals } = departureDigest(departureCountsByBand(feed, services(feed), makeBands(3)).counts, 6)
+    it('起点の停留所の数と、時間帯ごとの出発の数(停留所ごと)が一致する', () => {
+      expect(input.stops).toHaveLength(PYTHON.originStops)
+      const { sha, totals } = departureDigest(departureCountsByBand(feed, servicesFor(feed, DATE), makeBands(3)).counts, 6)
       expect(sha).toBe(PYTHON.stopCountsSha)
       expect(totals).toEqual(PYTHON.bandTotals)
     })
 
-    it('調べるセル(1,600m 以内で、親の 250m セルの人口が 1 人以上)が一致する', () => {
-      const stopsAndStations: LatLon[] = [...input.stops, ...ref.stations]
-      expect(cellsWithinRadius(stopsAndStations, 1600)).toHaveLength(PYTHON.candidateCells)
-      expect(result.cells).toHaveLength(PYTHON.cells)
-      expect(sha256(order.map((i) => result.cells[i]))).toBe(PYTHON.cellsSha)
+    it('調べるセル(起点から 1,200m 以内で、親の 250m セルの人口が 1 人以上)が一致する', () => {
+      expect(cellsWithinRadius(input.stops, 1200)).toHaveLength(PYTHON.candidateCells)
+      const got = cellDigest(result)
+      expect(got.cells).toBe(PYTHON.cells)
+      expect(got.cellsSha).toBe(PYTHON.cellsSha)
     })
 
     it('セルの区分と推計人口が一致する', () => {
-      const count = { urban: 0, suburban: 0, rural: 0 }
-      for (const c of result.classes) count[c]++
-      expect(count).toEqual(PYTHON.classCount)
-      expect(sha256(order.map((i) => `${result.cells[i]}:${result.classes[i]}`))).toBe(PYTHON.classesSha)
-      // 推計人口 × 4 は親の 250m セルの人口(整数)。÷ 4 は浮動小数でも割り切れる
-      expect(sha256(order.map((i) => `${result.cells[i]}:${result.cellPopulation[i] * 4}`))).toBe(PYTHON.populationSha)
-      expect(result.cellPopulation.reduce((s, n) => s + n * 4, 0)).toBe(PYTHON.populationTimes4)
+      const got = cellDigest(result)
+      expect(got.classCount).toEqual(PYTHON.classCount)
+      expect(got.classesSha).toBe(PYTHON.classesSha)
+      expect(got.populationSha).toBe(PYTHON.populationSha)
+      expect(got.populationTimes4).toBe(PYTHON.populationTimes4)
     })
 
-    it('6 つの時間帯それぞれで、到達できないセルの集合と推計人口が一致する', () => {
-      const got = unreachableDigest(result)
-      expect(got.counts).toEqual(PYTHON.unreachableCounts)
-      expect(got.shas).toEqual(PYTHON.unreachableSha)
-      expect(got.pop).toEqual(PYTHON.unreachablePop)
+    it('到達できる見込みのあるセル(coverable)と、ダイヤと関係なく外れるセルの数・推計人口が一致する', () => {
+      const got = coverableDigest(result)
+      expect(got.coverable).toEqual(PYTHON.coverable)
+      expect(got.nonCoverable).toEqual(PYTHON.nonCoverable)
     })
 
-    it('1時間ごと(18 の時間帯)でも、出発の数と、到達できないセルの集合・推計人口が一致する', () => {
-      const bands = makeBands(1)
-      const { sha, totals } = departureDigest(departureCountsByBand(feed, services(feed), bands).counts, bands.length)
-      expect(sha).toBe(PYTHON.hourly.stopCountsSha)
-      expect(totals).toEqual(PYTHON.hourly.bandTotals)
-      const hourly = computeReach(inputFor(bands))
-      expect(hourly.cells).toEqual(result.cells)
-      const got = unreachableDigest(hourly)
-      expect(got.counts).toEqual(PYTHON.hourly.unreachableCounts)
-      expect(got.shaAll).toBe(PYTHON.hourly.unreachableShaAll)
-      expect(got.pop).toEqual(PYTHON.hourly.unreachablePop)
-    }, 60_000)
-
-    it('駅の徒歩圏に入るセルの数と、駅だけで調べるセルに入ったセルの数が一致する', () => {
+    it('駅の徒歩圏に入るセルと、駅だけで coverable になったセルの数が一致する', () => {
       const rail = Object.fromEntries(
         Object.entries(DEFAULT_REACH_PARAMS.walkMinutes).map(([c, m]) => [c, m.rail * DEFAULT_REACH_PARAMS.speedMPerMin]),
       ) as Record<string, number>
-      const byRail = result.cells.filter((cell, i) => ref.stations.some((s) => distanceM(meshCenter(cell), s) <= rail[result.classes[i]]))
-      expect(byRail).toHaveLength(PYTHON.railCells)
-      // 停留所から 1,600m 以内のセルに入らないものは、駅だけで調べるセルに入った
-      const nearStops = new Set(cellsWithinRadius(input.stops, 1600))
-      const stationOnly = result.cells.map((_, i) => i).filter((i) => !nearStops.has(result.cells[i]))
-      expect(stationOnly).toHaveLength(PYTHON.stationOnlyCells)
-      expect(stationOnly.reduce((s, i) => s + result.cellPopulation[i], 0)).toBe(PYTHON.stationOnlyPop)
+      const bus = Object.fromEntries(
+        Object.entries(DEFAULT_REACH_PARAMS.walkMinutes).map(([c, m]) => [c, m.bus * DEFAULT_REACH_PARAMS.speedMPerMin]),
+      ) as Record<string, number>
+      const byRail = result.cells.map((cell, i) => ref.stations.some((s) => distanceM(meshCenter(cell), s) <= rail[result.classes[i]]))
+      expect(byRail.filter(Boolean)).toHaveLength(PYTHON.railCells)
+      // 駅の徒歩圏に入るが、区分のバス停の距離に起点が無いセル
+      const railOnly = result.cells.filter(
+        (cell, i) => byRail[i] && !input.stops.some((s) => distanceM(meshCenter(cell), s) <= bus[result.classes[i]]),
+      )
+      expect(railOnly).toHaveLength(PYTHON.railOnlyCoverable)
     })
+
+    it('6 つの時間帯それぞれで、外れるセル(coverable の中)の集合と推計人口が一致する', () => {
+      const got = outDigest(result)
+      expect(got.counts).toEqual(PYTHON.outCounts)
+      expect(got.shas).toEqual(PYTHON.outSha)
+      expect(got.pop).toEqual(PYTHON.outPop)
+    })
+
+    it('1時間ごと(18 の時間帯)でも、出発の数と、外れるセルの集合・推計人口が一致する', () => {
+      const bands = makeBands(1)
+      const { sha, totals } = departureDigest(departureCountsByBand(feed, servicesFor(feed, DATE), bands).counts, bands.length)
+      expect(sha).toBe(PYTHON.hourly.stopCountsSha)
+      expect(totals).toEqual(PYTHON.hourly.bandTotals)
+      const hourly = computeReach(inputFor(bands))
+      // 調べるセル・区分・coverable は時間帯の分け方によらない
+      expect(hourly.cells).toEqual(result.cells)
+      expect(hourly.classes).toEqual(result.classes)
+      expect(hourly.coverable).toEqual(result.coverable)
+      const got = outDigest(hourly)
+      expect(got.counts).toEqual(PYTHON.hourly.outCounts)
+      expect(got.shaAll).toBe(PYTHON.hourly.outShaAll)
+      expect(got.pop).toEqual(PYTHON.hourly.outPop)
+    }, 60_000)
   })
 
   it.skipIf(FINGERPRINT_AFTER !== PYTHON.after.fingerprint)(
-    '減便後の GTFS でも、出発の数と、到達できないセルの集合・推計人口が Python で計算した値と一致する(3時間ごと)',
+    '減便後の GTFS(2026-11-04)でも、調べるセル・coverable・外れるセルの集合と推計人口が Python で計算した値と一致する(3時間ごと)',
     async () => {
-      const buf = readFileSync(DOHOKU_GTFS_AFTER)
-      const after = await loadGtfsZip(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
+      const after = await loadFeed(DOHOKU_GTFS_AFTER)
       const bands = makeBands(3)
-      const counts = departureCountsByBand(after, services(after), bands).counts
+      const services = servicesFor(after, DATE_AFTER)
+      expect([...services.today]).toEqual(['01'])
+      expect([...services.yesterday]).toEqual(['06'])
+      const counts = departureCountsByBand(after, services, bands).counts
       const { sha, totals } = departureDigest(counts, bands.length)
       expect(sha).toBe(PYTHON.after.stopCountsSha)
       expect(totals).toEqual(PYTHON.after.bandTotals)
+
+      const afterOrigins = originStops(after)
+      expect(afterOrigins).toHaveLength(PYTHON.after.originStops)
+      // 起点の範囲を 2,800m 広げた範囲の 1次メッシュは、6 つの参照データのファイルに収まる
+      expect(mesh1Around(afterOrigins, REF_MARGIN_M).every((m) => REF_MESH1.includes(m))).toBe(true)
+
       const zeros = new Array<number>(bands.length).fill(0)
-      const stops = toStops(after).stops.map((s) => ({ lat: s.lat, lon: s.lon, bandCounts: counts.get(s.id) ?? zeros }))
-      const result = computeReach({ stops, ref, fallbackClass: 'suburban', params: DEFAULT_REACH_PARAMS, bandCount: bands.length })
-      // 停留所は減便前と同じなので、調べるセルも同じ
-      expect(result.cells).toEqual(computeReach(inputFor(bands)).cells)
-      const got = unreachableDigest(result)
-      expect(got.counts).toEqual(PYTHON.after.unreachableCounts)
-      expect(got.shaAll).toBe(PYTHON.after.unreachableShaAll)
-      expect(got.pop).toEqual(PYTHON.after.unreachablePop)
+      const stops = afterOrigins.map((s) => ({ lat: s.lat, lon: s.lon, bandCounts: counts.get(s.id) ?? zeros }))
+      const { result, best } = timed(
+        { stops, ref, fallbackClass: 'suburban', params: DEFAULT_REACH_PARAMS, bandCount: bands.length },
+        3,
+      )
+      expect(best).toBeLessThan(2000)
+
+      const cells = cellDigest(result)
+      expect(cells.cells).toBe(PYTHON.after.cells)
+      expect(cells.cellsSha).toBe(PYTHON.after.cellsSha)
+      expect(cells.classCount).toEqual(PYTHON.after.classCount)
+      expect(cells.classesSha).toBe(PYTHON.after.classesSha)
+      expect(cells.populationSha).toBe(PYTHON.after.populationSha)
+      expect(cells.populationTimes4).toBe(PYTHON.after.populationTimes4)
+
+      const cov = coverableDigest(result)
+      expect(cov.coverable).toEqual(PYTHON.after.coverable)
+      expect(cov.nonCoverable).toEqual(PYTHON.after.nonCoverable)
+
+      const got = outDigest(result)
+      expect(got.counts).toEqual(PYTHON.after.outCounts)
+      expect(got.shaAll).toBe(PYTHON.after.outShaAll)
+      expect(got.pop).toEqual(PYTHON.after.outPop)
     },
     60_000,
   )
@@ -484,6 +631,34 @@ describe('候補の箱が取りこぼさない(高緯度・赤道近くで、半
         expect(reachOf(run(R + 1e-4), cell)).toEqual([false, false])
       }
     }, 60_000)
+
+    it(`${label}:駅だけで到達できる見込み(coverable)になるかも、北東・北西などの向きで ${R}m の 0.1mm で分かれる`, () => {
+      // セルを DID(都市部)にし、都市部のバス停は 8,000m、駅は 10,000m、中山間・地方のバス停は 9,000m にする。
+      // 起点はセルから南へ 8,500m(都市部のバス停の距離の外、調べるセルの半径 9,000m の内)に置き、駅だけで coverable が決まるようにする
+      const params: ReachParams = {
+        ...DEFAULT_REACH_PARAMS,
+        walkMinutes: { urban: { bus: 100, rail: 125 }, suburban: { bus: 100, rail: 125 }, rural: { bus: 112.5, rail: 125 } },
+      }
+      const stop = pointAt(center, 180, 8500)
+      const didRef = refOf({ [parentCode(cell, 10)]: 100 }, [cell])
+      for (const b of [0, 45, 60, 85, 275, 315]) {
+        const run = (stationD: number) => {
+          const result = computeReach({
+            stops: [{ lat: stop.lat, lon: stop.lon, bandCounts: [1] }],
+            ref: { ...didRef, stations: [pointAt(center, b, stationD)] },
+            fallbackClass: 'suburban',
+            params,
+            bandCount: 1,
+          })
+          const i = result.cells.indexOf(cell)
+          if (i < 0) throw new Error(`${cell} は調べたセルに入っていません`)
+          expect(result.classes[i]).toBe('urban')
+          return { coverable: result.coverable[i], reachable: result.reachable[0][i] }
+        }
+        expect(run(R - 1e-4)).toEqual({ coverable: true, reachable: true })
+        expect(run(R + 1e-4)).toEqual({ coverable: false, reachable: false })
+      }
+    }, 60_000)
   }
 })
 
@@ -531,11 +706,23 @@ describe('境目と入力の形(検証担当)', () => {
     const result = computeReach(base({ params }))
     expect(result.cells).toEqual([T])
     expect(reachOf(result, T)).toEqual([true, false])
+    expect(result.coverable).toEqual([true])
   })
 
-  it('駅は時刻表が無いので、bandCount が 0 でも例外にならず、時間帯の無い結果を返す', () => {
+  it('駅は時刻表が無いので、bandCount が 0 でも例外にならず、時間帯の無い結果を返す(coverable は出す)', () => {
     const result = computeReach(base({ bandCount: 0, ref: refOf({ [P]: 100 }, [T], [C]) }))
     expect(result.reachable).toEqual([])
     expect(result.cells).toContain(T)
+    expect(result.coverable[result.cells.indexOf(T)]).toBe(true)
+  })
+
+  it('bandCount が 0 でも、駅の無いセルの coverable は、区分のバス停の距離以内の起点で決まる', () => {
+    // 都市部(T)はバス停 400m。起点は T の中心にあるので coverable。都市部でない隣のセルも郊外の 800m 以内で coverable
+    const result = computeReach(base({ bandCount: 0, ref: refOf({ [P]: 100 }, [T]) }))
+    expect(result.coverable.every(Boolean)).toBe(true)
+    // 起点が 1,000m 先なら、T(都市部 400m)は coverable でない
+    const far = pointAt(C, 0, 1000)
+    const away = computeReach(base({ bandCount: 0, stops: [{ lat: far.lat, lon: far.lon, bandCounts: [] }], ref: refOf({ [P]: 100 }, [T]) }))
+    expect(away.coverable[away.cells.indexOf(T)]).toBe(false)
   })
 })

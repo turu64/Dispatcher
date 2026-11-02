@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { makeBands } from '@/gtfs/departures'
+import type { GtfsFeed, GtfsRow } from '@/gtfs/load'
+import { toStops } from '@/gtfs/parse'
 import {
   bandIndexForHour,
   buildReachStops,
   cloneParams,
-  maxWalkRadiusM,
+  originStops,
   parseDensityThreshold,
   parseWalkMinutes,
+  refMarginM,
 } from './input'
 import { DEFAULT_REACH_PARAMS } from './reach'
 
@@ -21,15 +24,82 @@ describe('cloneParams', () => {
   })
 })
 
-describe('maxWalkRadiusM', () => {
-  it('既定では中山間・地方の駅 20分 × 80m = 1,600m', () => {
-    expect(maxWalkRadiusM(DEFAULT_REACH_PARAMS)).toBe(1600)
+describe('refMarginM', () => {
+  it('既定では、バス停の距離の最大 15分 × 80m = 1,200m と、駅の距離の最大 20分 × 80m = 1,600m の和 2,800m', () => {
+    expect(refMarginM(DEFAULT_REACH_PARAMS)).toBe(2800)
   })
 
-  it('バス停の分数が最大ならそれを使う', () => {
+  it('バス停と駅の最大は、別々の区分から取る(6つの値の最大ではない)', () => {
     const p = cloneParams(DEFAULT_REACH_PARAMS)
     p.walkMinutes.urban.bus = 30
-    expect(maxWalkRadiusM(p)).toBe(2400)
+    // バス停の最大は都市部の 30分、駅の最大は中山間・地方の 20分
+    expect(refMarginM(p)).toBe((30 + 20) * 80)
+    p.walkMinutes.suburban.rail = 40
+    expect(refMarginM(p)).toBe((30 + 40) * 80)
+  })
+
+  it('分速を掛ける', () => {
+    const p = cloneParams(DEFAULT_REACH_PARAMS)
+    p.speedMPerMin = 60
+    expect(refMarginM(p)).toBe((15 + 20) * 60)
+  })
+
+  it('すべて 0 分なら 0m', () => {
+    const p = cloneParams(DEFAULT_REACH_PARAMS)
+    for (const c of ['urban', 'suburban', 'rural'] as const) p.walkMinutes[c] = { bus: 0, rail: 0 }
+    expect(refMarginM(p)).toBe(0)
+  })
+})
+
+describe('originStops', () => {
+  function feedOf(stops: GtfsRow[], stopTimes: GtfsRow[] | null): GtfsFeed {
+    const tables = new Map([['stops', { fileName: 'stops.txt', fields: Object.keys(stops[0] ?? {}), rows: stops }]])
+    if (stopTimes) tables.set('stop_times', { fileName: 'stop_times.txt', fields: ['trip_id', 'stop_id'], rows: stopTimes })
+    return { tables, warnings: [] }
+  }
+
+  const STOPS: GtfsRow[] = [
+    { stop_id: 'A', stop_name: 'A', stop_lat: '43.70', stop_lon: '142.30', location_type: '' },
+    { stop_id: 'B', stop_name: 'B', stop_lat: '43.71', stop_lon: '142.31', location_type: '0' },
+    { stop_id: 'C', stop_name: '使われない', stop_lat: '43.72', stop_lon: '142.32' },
+    { stop_id: 'S', stop_name: '駅舎', stop_lat: '43.73', stop_lon: '142.33', location_type: '1' },
+    { stop_id: 'E', stop_name: '出入口', stop_lat: '43.74', stop_lon: '142.34', location_type: '2', parent_station: 'S' },
+    { stop_id: 'D', stop_name: '列の無い停留所', stop_lat: '43.75', stop_lon: '142.35' },
+  ]
+
+  it('stop_times に出てくる、location_type が 0 か空の停留所だけを stops の並びのまま選ぶ', () => {
+    const feed = feedOf(STOPS, [
+      { trip_id: 'T', stop_id: 'B' },
+      { trip_id: 'T', stop_id: 'A' },
+      { trip_id: 'T', stop_id: 'S' },
+      { trip_id: 'T', stop_id: 'D' },
+    ])
+    const r = originStops(feed, toStops(feed).stops)
+    expect(r.stops.map((s) => s.id)).toEqual(['A', 'B', 'D'])
+    expect(r.unused).toBe(1)
+    // 駅舎(1)と出入口(2)。駅舎は stop_times に出てきても起点にしない
+    expect(r.nonStop).toBe(2)
+  })
+
+  it('stop_id は前後の空白を取って照合する', () => {
+    const feed = feedOf(
+      [{ stop_id: ' A ', stop_name: 'A', stop_lat: '43.70', stop_lon: '142.30' }],
+      [{ trip_id: 'T', stop_id: 'A  ' }],
+    )
+    expect(originStops(feed, toStops(feed).stops).stops.map((s) => s.id)).toEqual(['A'])
+  })
+
+  it('stop_times.txt が無ければ起点は無い(すべて「使われない」)', () => {
+    const feed = feedOf(STOPS, null)
+    const r = originStops(feed, toStops(feed).stops)
+    expect(r.stops).toEqual([])
+    expect(r.unused).toBe(4)
+    expect(r.nonStop).toBe(2)
+  })
+
+  it('stop_id が空の行は照合しない', () => {
+    const feed = feedOf([{ stop_id: '', stop_name: '空', stop_lat: '43.70', stop_lon: '142.30' }], [{ trip_id: 'T', stop_id: ' ' }])
+    expect(originStops(feed, toStops(feed).stops)).toEqual({ stops: [], unused: 1, nonStop: 0 })
   })
 })
 
@@ -90,28 +160,39 @@ describe('bandIndexForHour', () => {
 })
 
 describe('parseWalkMinutes', () => {
-  it('0〜60 の数を読む(小数・全角も読む)', () => {
+  it('0〜60 の整数を読む(全角・前後の空白も読む)', () => {
     expect(parseWalkMinutes('5')).toEqual({ ok: true, value: 5 })
-    expect(parseWalkMinutes(' 12.5 ')).toEqual({ ok: true, value: 12.5 })
+    expect(parseWalkMinutes(' 12 ')).toEqual({ ok: true, value: 12 })
     expect(parseWalkMinutes('０')).toEqual({ ok: true, value: 0 })
     expect(parseWalkMinutes('１５')).toEqual({ ok: true, value: 15 })
     expect(parseWalkMinutes('60')).toEqual({ ok: true, value: 60 })
+    expect(parseWalkMinutes('007')).toEqual({ ok: true, value: 7 })
+  })
+
+  it('小数は整数を入れるよう理由を返す', () => {
+    expect(parseWalkMinutes('12.5')).toEqual({ ok: false, message: '整数を入れてください' })
+    expect(parseWalkMinutes('１２．５')).toEqual({ ok: false, message: '整数を入れてください' })
+    expect(parseWalkMinutes('5.0')).toEqual({ ok: false, message: '整数を入れてください' })
   })
 
   it('空・負・数でない値・上限を超える値は理由を返す', () => {
     expect(parseWalkMinutes('')).toEqual({ ok: false, message: '数を入れてください' })
-    expect(parseWalkMinutes('-1')).toEqual({ ok: false, message: '0 以上の数を入れてください' })
+    expect(parseWalkMinutes('-1')).toEqual({ ok: false, message: '0 以上の整数を入れてください' })
     expect(parseWalkMinutes('1e2')).toMatchObject({ ok: false })
     expect(parseWalkMinutes('0x10')).toMatchObject({ ok: false })
     expect(parseWalkMinutes('abc')).toMatchObject({ ok: false })
+    expect(parseWalkMinutes('.5')).toMatchObject({ ok: false })
     expect(parseWalkMinutes('61')).toEqual({ ok: false, message: '60分以下にしてください' })
   })
 })
 
 describe('parseDensityThreshold', () => {
-  it('0〜100,000 の数を読む', () => {
+  it('0〜100,000 の数を読む(小数も読む)', () => {
     expect(parseDensityThreshold('1000')).toEqual({ ok: true, value: 1000 })
     expect(parseDensityThreshold('0')).toEqual({ ok: true, value: 0 })
+    expect(parseDensityThreshold('1000.5')).toEqual({ ok: true, value: 1000.5 })
+    expect(parseDensityThreshold('100000')).toEqual({ ok: true, value: 100000 })
+    expect(parseDensityThreshold('-1')).toEqual({ ok: false, message: '0 以上の数を入れてください' })
   })
 
   it('上限を超えれば理由を返す', () => {

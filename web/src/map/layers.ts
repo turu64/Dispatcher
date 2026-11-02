@@ -2,7 +2,9 @@
  * 到達圏の地図のレイヤー(セル・停留所・鉄道駅)。
  *
  * - データ(GeoJSON)は計算の結果が変わったときだけ入れ直す
- * - 時間帯の切り替えは、paint の式で見る properties の名前(b0, b1, …)を差し替えるだけにする
+ * - 時間帯の切り替えは、paint の式を差し替えるだけにする。セルは整数 m のビット(時間帯 b は 2^b)を式で取り出し、
+ *   停留所は見る properties の名前(b0, b1, …)を差し替える
+ * - 到達できる見込みの無いセルは GeoJSON に入れない(塗らない)
  *
  * MapLibre の Map のうち使う部分だけを LayerMap として受け取る(テストでは偽物を渡す)。
  */
@@ -32,19 +34,32 @@ export interface LayerMap {
   getStyle(): { layers?: { id: string; type: string }[] } | undefined
 }
 
-/** 時間帯 band の値を読む式。時間帯が無い(-1)ときは、どの地物にも無い名前を読む(null になる) */
+/** 停留所の時間帯 band の出発の数を読む式。時間帯が無い(-1)ときは、どの地物にも無い名前を読む(null になる) */
 function bandValue(band: number): unknown[] {
   return ['get', band >= 0 ? bandProperty(band) : '_none']
 }
 
+/**
+ * セルの時間帯 band のビット(到達できれば 1、外れれば 0)を取り出す式。
+ * docs/interfaces-1103.md の追記2の形:["%", ["floor", ["/", ["get", "m"], 2^b]], 2]
+ */
+export function cellBandBit(band: number): unknown[] {
+  return ['%', ['floor', ['/', ['get', 'm'], 2 ** band]], 2]
+}
+
+/** セルが時間帯 band に到達できるかの式。時間帯が無い(-1)ときは、どのセルも外れるとする */
+function cellReachable(band: number): unknown {
+  return band >= 0 ? ['==', cellBandBit(band), 1] : false
+}
+
 /** セルの塗りの色:その時間帯に到達できれば青、外れれば橙 */
 export function cellFillColor(band: number): unknown[] {
-  return ['case', ['==', bandValue(band), 1], REACH_COLORS.reachable, REACH_COLORS.unreachable]
+  return ['case', cellReachable(band), REACH_COLORS.reachable, REACH_COLORS.unreachable]
 }
 
 /** セルの塗りの不透明度:到達できるセルは薄く、外れるセルは濃く */
 export function cellFillOpacity(band: number): unknown[] {
-  return ['case', ['==', bandValue(band), 1], REACH_FILL_OPACITY_REACHABLE, REACH_FILL_OPACITY]
+  return ['case', cellReachable(band), REACH_FILL_OPACITY_REACHABLE, REACH_FILL_OPACITY]
 }
 
 /** 停留所の塗り:その時間帯に出発があれば黒、無ければ白(白抜き) */

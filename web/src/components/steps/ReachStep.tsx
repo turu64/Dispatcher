@@ -3,10 +3,17 @@ import { SELECTED_TOGGLE_CLASS } from '@/components/selectedToggle'
 import StepSection from '@/components/StepSection'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { formatDateJa } from '@/lib/dates'
-import { bandIndexForHour, parseDensityThreshold, parseWalkMinutes, REGION_CLASSES, REGION_LABELS } from '@/reach/input'
+import {
+  bandIndexForHour,
+  MAX_WALK_MINUTES,
+  parseDensityThreshold,
+  parseWalkMinutes,
+  REGION_CLASSES,
+  REGION_LABELS,
+} from '@/reach/input'
 import type { ReachParams, RegionClass } from '@/reach/reach'
 import { formatCount, formatPercent } from '@/reach/summary'
 import { useGtfsStore } from '@/store/gtfs'
@@ -137,7 +144,10 @@ function Percent({ value }: { value: string }) {
   return <span className="ml-0.5 inline-block text-xs text-muted-foreground">({value})</span>
 }
 
-/** 時間帯ごとの「徒歩圏から外れるセル」と推計人口。地図に出している時間帯の行を強調する */
+/**
+ * 時間帯ごとの「徒歩圏から外れるセル」と推計人口。地図に出している時間帯の行を強調する。
+ * 割合の分母は到達できる見込みのあるセル。ダイヤと関係なく外れるセルは、表の最後の別の行に出す(docs/interfaces-1103.md の追記2)
+ */
 export function ReachSummaryTable({
   snapshot,
   selectedHour,
@@ -148,21 +158,44 @@ export function ReachSummaryTable({
   /** stops.txt の緯度経度が読めず、toStops で除いた停留所の数 */
   invalidStops: number
 }) {
-  const { summary, bands, result } = snapshot
+  const { summary, bands, result, origin } = snapshot
   const hasPopulation = !result.usedFallback
   const selected = bandIndexForHour(bands, selectedHour)
   const { cellsByClass } = summary
+  const popText = (n: number) => (hasPopulation ? <>、推計人口 {formatCount(n)} 人</> : null)
 
   return (
     <div className="flex flex-col gap-2">
       <p className="text-sm">
-        {formatDateJa(snapshot.date)}、{snapshot.stepHours}時間ごと。調べたセル(125m){' '}
-        <span className="tabular-nums">{formatCount(summary.totalCells)}</span>
-        (都市部 {formatCount(cellsByClass.urban)}・郊外 {formatCount(cellsByClass.suburban)}・中山間・地方{' '}
-        {formatCount(cellsByClass.rural)})
-        {hasPopulation && <>、推計人口 {formatCount(summary.totalPopulation)} 人</>}。除いた停留所{' '}
-        {formatCount(invalidStops + result.excludedStops)} 件。
+        {formatDateJa(snapshot.date)}、{snapshot.stepHours}時間ごと。起点の停留所{' '}
+        <span className="tabular-nums">{formatCount(origin.origins)}</span> 件(stop_times.txt に出てこない{' '}
+        {formatCount(origin.unused)} 件
+        {origin.nonStop > 0 && <>と、駅舎・出入口などの {formatCount(origin.nonStop)} 件</>}
+        は除く)。除いた停留所 {formatCount(invalidStops + result.excludedStops)} 件。
       </p>
+      <dl className="flex flex-col gap-0.5 text-sm" aria-label="調べたセルの内訳">
+        <div>
+          <dt className="inline">調べたセル(125m):</dt>
+          <dd className="inline tabular-nums">
+            {formatCount(summary.totalCells)}(都市部 {formatCount(cellsByClass.urban)}・郊外 {formatCount(cellsByClass.suburban)}
+            ・中山間・地方 {formatCount(cellsByClass.rural)}){popText(summary.totalPopulation)}
+          </dd>
+        </div>
+        <div className="pl-3">
+          <dt className="inline">到達できる見込みのあるセル:</dt>
+          <dd className="inline tabular-nums">
+            {formatCount(summary.coverableCells)}
+            {popText(summary.coverablePopulation)}(表の割合の分母)
+          </dd>
+        </div>
+        <div className="pl-3">
+          <dt className="inline">ダイヤと関係なく外れるセル:</dt>
+          <dd className="inline tabular-nums">
+            {formatCount(summary.nonCoverableCells)}
+            {popText(summary.nonCoverablePopulation)}
+          </dd>
+        </div>
+      </dl>
       <Table>
         <TableHeader>
           <TableRow>
@@ -185,23 +218,37 @@ export function ReachSummaryTable({
                 <TableCell className="px-1.5 tabular-nums">{b.label}</TableCell>
                 <TableCell className={CELL_CLASS}>
                   {formatCount(s.unreachableCells)}
-                  <Percent value={formatPercent(s.unreachableCells, summary.totalCells)} />
+                  <Percent value={formatPercent(s.unreachableCells, summary.coverableCells)} />
                 </TableCell>
                 {hasPopulation && (
                   <TableCell className={CELL_CLASS}>
                     {formatCount(s.unreachablePopulation)}人
-                    <Percent value={formatPercent(s.unreachablePopulation, summary.totalPopulation)} />
+                    <Percent value={formatPercent(s.unreachablePopulation, summary.coverablePopulation)} />
                   </TableCell>
                 )}
               </TableRow>
             )
           })}
         </TableBody>
+        <TableFooter className="bg-transparent font-normal">
+          <TableRow data-non-coverable="true">
+            <TableCell className="px-1.5 whitespace-normal">ダイヤと関係なく外れる</TableCell>
+            <TableCell className={CELL_CLASS}>{formatCount(summary.nonCoverableCells)}</TableCell>
+            {hasPopulation && <TableCell className={CELL_CLASS}>{formatCount(summary.nonCoverablePopulation)}人</TableCell>}
+          </TableRow>
+        </TableFooter>
       </Table>
-      <p className="text-xs text-muted-foreground">
-        外れるセル:その時間帯に出発がある停留所と鉄道駅のどれも、区分ごとの徒歩圏に無いセル。推計人口は 250m メッシュの人口を
-        4 等分した値です。
-      </p>
+      <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+        <p>
+          外れるセル:到達できる見込みのあるセルのうち、その時間帯に出発がある停留所と鉄道駅のどれも、区分ごとの徒歩圏に無いセル。
+          割合の分母は、到達できる見込みのあるセル(区分ごとの徒歩圏に、停留所(出発の有無は問わない)か鉄道駅があるセル)です。
+        </p>
+        <p>
+          ダイヤと関係なく外れるセル:停留所から調べる範囲には入るものの、そのセルの区分の徒歩圏に停留所も鉄道駅も無いセル。
+          どの時間帯でも外れるので、時間帯ごとの数と割合には含めず、地図にも塗りません。
+        </p>
+        {hasPopulation && <p>推計人口は 250m メッシュの人口を 4 等分した値です。</p>}
+      </div>
     </div>
   )
 }
@@ -279,7 +326,8 @@ export function ReachConditions({
                 label="バス停"
                 value={params.walkMinutes[c].bus}
                 unit="分"
-                max={60}
+                max={MAX_WALK_MINUTES}
+                integer
                 parse={parseWalkMinutes}
                 onCommit={(v) => onMinutes(c, 'bus', v)}
               />
@@ -288,7 +336,8 @@ export function ReachConditions({
                 label="鉄道駅"
                 value={params.walkMinutes[c].rail}
                 unit="分"
-                max={60}
+                max={MAX_WALK_MINUTES}
+                integer
                 parse={parseWalkMinutes}
                 onCommit={(v) => onMinutes(c, 'rail', v)}
               />
@@ -296,7 +345,7 @@ export function ReachConditions({
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          徒歩は分速 {params.speedMPerMin}m、距離は直線で測ります。分数は 0〜60 分。
+          徒歩は分速 {params.speedMPerMin}m、距離は直線で測ります。分数は 0〜{MAX_WALK_MINUTES} 分の整数。
         </p>
         <Button type="button" variant="outline" size="sm" className="self-start" onClick={onReset}>
           既定値に戻す

@@ -1,8 +1,11 @@
 /**
  * 地図に描く GeoJSON を作る。
  *
- * 時間帯ごとの値は、地物の properties に b0, b1, … として入れる。
- * 時間帯を切り替えるときは、地図の paint の式で見る名前(bandProperty)を差し替えるだけにし、データは入れ直さない。
+ * - セル:時間帯ごとの到達の可否を、properties の整数 m 1つにまとめる(時間帯 b に到達できれば 2^b のビットを立てる。
+ *   docs/interfaces-1103.md の追記2)。到達できる見込みの無いセル(coverable でないセル)は地図に塗らないので、地物にしない
+ * - 停留所:時間帯ごとの出発の数を、properties に b0, b1, … として入れる
+ *
+ * 時間帯を切り替えるときは、地図の paint の式を差し替えるだけにし、データは入れ直さない。
  */
 import { meshBounds } from './mesh'
 import type { ReachResult } from './reach'
@@ -26,28 +29,56 @@ export interface FeatureCollection<F> {
   features: F[]
 }
 
-/** 時間帯 i の値を入れる properties の名前 */
+/** 停留所の時間帯 i の出発の数を入れる properties の名前 */
 export function bandProperty(i: number): string {
   return `b${i}`
 }
 
-/** セルの properties。b0, b1, … は到達できれば 1、外れれば 0 */
-export type CellProperties = { code: string; cls: string; pop: number } & Record<string, number | string>
+/**
+ * m に入れられる時間帯の数の上限。m は浮動小数(倍精度)の整数として地図の式で割り算するので、
+ * 2^53 未満(52 個の時間帯まで)なら誤差なく扱える。画面の時間帯は最大 18(1時間ごと)
+ */
+export const MAX_MASK_BANDS = 52
 
 /**
- * 到達圏のセルを面(セルの四隅)にする。
- * properties:code(11 桁)、cls(区分)、pop(推計人口)、b{時間帯}(到達できれば 1、外れれば 0)。
+ * セルの properties。
+ * m は時間帯ごとの到達の可否(時間帯 b に到達できれば 2^b のビットが立つ。すべての時間帯で外れれば 0)
+ */
+export interface CellProperties {
+  /** 8分の1地域メッシュ(11 桁) */
+  code: string
+  /** 区分(urban・suburban・rural) */
+  cls: string
+  /** 推計人口 */
+  pop: number
+  m: number
+}
+
+/** 時間帯ごとの可否(reachable[b][i])を、セル i の整数 m にまとめる。ビット演算(32 ビット)は使わず、2^b を足す */
+export function reachMask(reachable: readonly (readonly boolean[])[], i: number): number {
+  let m = 0
+  for (let b = 0; b < reachable.length; b++) if (reachable[b][i]) m += 2 ** b
+  return m
+}
+
+/**
+ * 到達圏のセルのうち、到達できる見込みのあるもの(coverable)を面(セルの四隅)にする。
+ * 見込みの無いセル(ダイヤと関係なく外れるセル)は地図に塗らないので入れない(数は凡例と表に出す)。
+ * properties:code(11 桁)、cls(区分)、pop(推計人口)、m(時間帯ごとの到達の可否のビット)。
  */
 export function cellsToGeoJson(result: ReachResult): FeatureCollection<PolygonFeature<CellProperties>> {
   const bandCount = result.reachable.length
-  const features = result.cells.map((code, i) => {
+  if (bandCount > MAX_MASK_BANDS) {
+    throw new RangeError(`地図に出せる時間帯は ${MAX_MASK_BANDS} 個までです:${bandCount}`)
+  }
+  const features: PolygonFeature<CellProperties>[] = []
+  result.cells.forEach((code, i) => {
+    if (!result.coverable[i]) return
     const { south, west, north, east } = meshBounds(code)
-    const properties: CellProperties = { code, cls: result.classes[i], pop: result.cellPopulation[i] ?? 0 }
-    for (let b = 0; b < bandCount; b++) properties[bandProperty(b)] = result.reachable[b][i] ? 1 : 0
-    return {
-      type: 'Feature' as const,
+    features.push({
+      type: 'Feature',
       geometry: {
-        type: 'Polygon' as const,
+        type: 'Polygon',
         coordinates: [
           [
             [west, south],
@@ -55,11 +86,11 @@ export function cellsToGeoJson(result: ReachResult): FeatureCollection<PolygonFe
             [east, north],
             [west, north],
             [west, south],
-          ] as [number, number][],
+          ],
         ],
       },
-      properties,
-    }
+      properties: { code, cls: result.classes[i], pop: result.cellPopulation[i] ?? 0, m: reachMask(result.reachable, i) },
+    })
   })
   return { type: 'FeatureCollection', features }
 }

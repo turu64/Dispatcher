@@ -25,20 +25,23 @@ function snapshotOf(result: ReachResult, extra: Partial<ReachSnapshot['departure
     result,
     summary: summarizeReach(result),
     params: cloneParams(DEFAULT_REACH_PARAMS),
+    origin: { origins: 1460, unused: 122, nonStop: 0 },
   }
 }
 
+// 4つ目のセルは、ダイヤと関係なく外れる(到達できる見込みが無い。どの時間帯でも到達できない)
 const RESULT: ReachResult = {
   cells: ['65420000111', '65420000112', '65420000113', '65420000114'],
   classes: ['urban', 'suburban', 'rural', 'rural'],
   reachable: [
+    [true, true, false, false],
+    [true, false, false, false],
     [true, true, true, false],
-    [true, false, true, false],
-    [true, true, true, true],
     [false, false, false, false],
-    [true, true, true, true],
+    [true, true, true, false],
     [false, false, false, false],
   ],
+  coverable: [true, true, true, false],
   usedFallback: false,
   excludedStops: 0,
   cellPopulation: [100, 50, 30, 20],
@@ -53,15 +56,40 @@ function textOf(html: string): string {
 }
 
 describe('ReachSummaryTable', () => {
-  it('時間帯ごとの外れるセルと推計人口、その割合を出す', () => {
+  it('時間帯ごとの外れるセルと推計人口を出し、割合の分母は到達できる見込みのあるセルにする', () => {
     const text = textOf(renderToString(<ReachSummaryTable snapshot={snapshotOf({ ...RESULT, excludedStops: 2 })} selectedHour={9} invalidStops={1} />))
     expect(text).toContain('2026年11月4日(水)、3時間ごと')
-    expect(text).toContain('都市部 1・郊外 1・中山間・地方 2')
-    expect(text).toContain('推計人口 200 人')
     expect(text).toContain('除いた停留所 3 件')
-    expect(text).toContain('|6〜9時|1|(25.0%)|20人|(10.0%)|')
-    expect(text).toContain('|9〜12時|2|(50.0%)|70人|(35.0%)|')
-    expect(text).toContain('|15〜18時|4|(100.0%)|200人|(100.0%)|')
+    // 分母は見込みのある 3 セル(推計人口 180 人)。4つ目のセルは分子にも分母にも入れない
+    expect(text).toContain('|6〜9時|1|(33.3%)|30人|(16.7%)|')
+    expect(text).toContain('|9〜12時|2|(66.7%)|80人|(44.4%)|')
+    expect(text).toContain('|12〜15時|0|(0.0%)|0人|(0.0%)|')
+    expect(text).toContain('|15〜18時|3|(100.0%)|180人|(100.0%)|')
+  })
+
+  it('ダイヤと関係なく外れるセルの数と推計人口を、時間帯の行とは別の行に出す', () => {
+    const html = renderToString(<ReachSummaryTable snapshot={snapshotOf(RESULT)} selectedHour={6} invalidStops={0} />)
+    const row = html.match(/<tfoot[^>]*>.*?<\/tfoot>/)?.[0] ?? ''
+    expect(textOf(row)).toContain('|ダイヤと関係なく外れる|1|20人|')
+    // 時間帯の行(tbody)には入れない
+    const body = html.match(/<tbody[^>]*>.*?<\/tbody>/)?.[0] ?? ''
+    expect(textOf(body)).not.toContain('ダイヤと関係なく')
+    expect(textOf(html)).toContain('どの時間帯でも外れるので、時間帯ごとの数と割合には含めず、地図にも塗りません')
+  })
+
+  it('調べたセルの内訳(区分、到達できる見込みのあるセル、ダイヤと関係なく外れるセル)と起点の停留所の数を出す', () => {
+    const text = textOf(renderToString(<ReachSummaryTable snapshot={snapshotOf(RESULT)} selectedHour={6} invalidStops={0} />))
+    expect(text).toContain('起点の停留所 |1,460| 件(stop_times.txt に出てこない 122 件は除く)')
+    expect(text).not.toContain('駅舎・出入口')
+    expect(text).toContain('|調べたセル(125m):|4(都市部 1・郊外 1・中山間・地方 2)、推計人口 200 人|')
+    expect(text).toContain('|到達できる見込みのあるセル:|3、推計人口 180 人(表の割合の分母)|')
+    expect(text).toContain('|ダイヤと関係なく外れるセル:|1、推計人口 20 人|')
+  })
+
+  it('駅舎・出入口などを除いたときは、その数も出す', () => {
+    const snapshot = { ...snapshotOf(RESULT), origin: { origins: 10, unused: 0, nonStop: 3 } }
+    const text = textOf(renderToString(<ReachSummaryTable snapshot={snapshot} selectedHour={6} invalidStops={0} />))
+    expect(text).toContain('stop_times.txt に出てこない 0 件と、駅舎・出入口などの 3 件は除く')
   })
 
   it('地図に出している時間帯の行を強調する', () => {
@@ -75,8 +103,9 @@ describe('ReachSummaryTable', () => {
   it('参照データが無い(fallback)ときは、推計人口の列を出さない', () => {
     const fallback = { ...RESULT, usedFallback: true, cellPopulation: [0, 0, 0, 0] }
     const text = textOf(renderToString(<ReachSummaryTable snapshot={snapshotOf(fallback)} selectedHour={6} invalidStops={0} />))
-    expect(text).not.toContain('推計人口 ')
-    expect(text).toContain('|6〜9時|1|(25.0%)|')
+    expect(text).not.toContain('推計人口')
+    expect(text).toContain('|6〜9時|1|(33.3%)|')
+    expect(text).toContain('|ダイヤと関係なく外れる|1|')
     expect(text).not.toContain('人|(')
   })
 })
@@ -170,5 +199,16 @@ describe('ReachConditions', () => {
     expect(html).toMatch(/id="reach-rural-rail"[^>]*value="20"/)
     expect(textOf(html)).toContain('都市部 5/10分、郊外 10/18分、中山間・地方 15/20分')
     expect(textOf(html)).toContain('既定値に戻す')
+  })
+
+  it('分数の欄は 0〜60 の整数(数字のキーボード、上限 60)', () => {
+    const html = renderToString(
+      <ReachConditions params={cloneParams(DEFAULT_REACH_PARAMS)} onThreshold={() => {}} onMinutes={() => {}} onReset={() => {}} />,
+    )
+    const minutes = html.match(/<input[^>]*id="reach-urban-bus"[^>]*>/)?.[0] ?? ''
+    expect(minutes).toContain('inputMode="numeric"')
+    expect(minutes).toContain('max="60"')
+    expect(minutes).toContain('step="1"')
+    expect(textOf(html)).toContain('分数は 0〜60 分の整数')
   })
 })

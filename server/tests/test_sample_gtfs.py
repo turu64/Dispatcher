@@ -11,7 +11,7 @@ client = TestClient(app)
 
 @pytest.fixture
 def sample_zip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "dohoku-bus.zip"
+    path = tmp_path / "sample.zip"
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("agency.txt", "agency_id,agency_name\n1,テストバス\n")
     monkeypatch.setenv("DISPATCHER_SAMPLE_GTFS", str(path))

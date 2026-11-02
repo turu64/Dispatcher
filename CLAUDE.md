@@ -103,7 +103,7 @@ cd data && uv run pytest -q
 ### サンプル GTFS(道北バス)
 
 - 画面の「サンプルを読み込む」で道北バスの GTFS を開ける。ファイル選択と同じ読み込み処理(`web/src/gtfs/load.ts` の `loadGtfsZip`)を通す。読み込んだら出典を画面に出す
-- ZIP は利用者が利用フォームに記入してから `data/raw/gtfs/dohoku-bus.zip` に置く(コミットしない)。サーバーが `GET /api/sample-gtfs`(有無と出典)と `GET /api/sample-gtfs/download` で配信する
+- ZIP は利用者が利用フォームに記入してから `data/raw/gtfs/dohoku_bus_減便前.zip`(9/17 作成の版)に置く。比較用に `dohoku_bus_減便後.zip`(10/29 作成の版)も置ける。どちらもコミットしない。サーバーが `GET /api/sample-gtfs`(有無と出典)と `GET /api/sample-gtfs/download` で配信する
 - 本番は環境変数 `DISPATCHER_SAMPLE_GTFS` でファイルの場所を渡す(Docker ではボリュームでマウント)
 - 開発中は Vite が `/api` を `127.0.0.1:8000` に中継する
 

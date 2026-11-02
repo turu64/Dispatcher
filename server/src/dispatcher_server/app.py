@@ -11,9 +11,10 @@ app = FastAPI(title="Dispatcher server")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # サンプル GTFS(道北バス)。利用者が北海道オープンデータプラットフォームの利用フォームに
-# 記入してから、data/raw/gtfs/dohoku-bus.zip に置く。本番では環境変数で置き場所を渡す
+# 記入してから、data/raw/gtfs/dohoku_bus_減便前.zip に置く(9/17 作成の版。減便を当てる前のダイヤ)。
+# 本番では環境変数で置き場所を渡す
 # (Docker ではこのファイルをボリュームでマウントする)。
-DEFAULT_SAMPLE_GTFS = REPO_ROOT / "data" / "raw" / "gtfs" / "dohoku-bus.zip"
+DEFAULT_SAMPLE_GTFS = REPO_ROOT / "data" / "raw" / "gtfs" / "dohoku_bus_減便前.zip"
 
 SAMPLE_GTFS_INFO = {
     "name": "道北バス",
@@ -42,6 +43,6 @@ def sample_gtfs_download() -> FileResponse:
     if not path.is_file():
         raise HTTPException(
             status_code=404,
-            detail="サンプル GTFS が見つかりません。data/raw/gtfs/dohoku-bus.zip に置いてください。",
+            detail="サンプル GTFS が見つかりません。data/raw/gtfs/dohoku_bus_減便前.zip に置いてください。",
         )
-    return FileResponse(path, media_type="application/zip", filename="dohoku-bus.zip")
+    return FileResponse(path, media_type="application/zip", filename="dohoku_bus.zip")

@@ -22,6 +22,8 @@ __pycache__/
 
 # 参照データ:元データ(利用者が手で入手)と加工結果は大きいためコミットしない
 data/raw/*
+# GTFS などの ZIP は、どこに置いてもコミットしない
+*.zip
 !data/raw/README.md
 data/out/*
 !data/out/.gitkeep

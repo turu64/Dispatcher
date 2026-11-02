@@ -141,15 +141,22 @@ describe('loadGtfsZip', () => {
   })
 })
 
-// 道北バスの GTFS(data/raw/gtfs/dohoku-bus.zip)が置かれているときだけ走る
-const samplePath = fileURLToPath(new URL('../../../data/raw/gtfs/dohoku-bus.zip', import.meta.url))
+// 道北バスの GTFS(data/raw/gtfs/ に置く。コミットしない)。ファイルがあるときだけ走る
+const SAMPLES = [
+  { file: 'dohoku_bus_減便前.zip', version: '202609171038' },
+  { file: 'dohoku_bus_減便後.zip', version: '202610291429' },
+].map((s) => ({ ...s, path: fileURLToPath(new URL(`../../../data/raw/gtfs/${s.file}`, import.meta.url)) }))
 
-describe.skipIf(!existsSync(samplePath))('サンプル(道北バス)', () => {
-  it('必須のファイルを読める', async () => {
-    const buf = readFileSync(samplePath)
-    const feed = await loadGtfsZip(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
-    for (const name of ['agency', 'stops', 'routes', 'trips', 'stop_times']) {
-      expect(feed.tables.get(name)?.rows.length, name).toBeGreaterThan(0)
-    }
+for (const sample of SAMPLES) {
+  describe.skipIf(!existsSync(sample.path))(`道北バス(${sample.file})`, () => {
+    it('必須のファイルを警告なしで読める', async () => {
+      const buf = readFileSync(sample.path)
+      const feed = await loadGtfsZip(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
+      for (const name of ['agency', 'stops', 'routes', 'trips', 'stop_times', 'calendar', 'feed_info']) {
+        expect(feed.tables.get(name)?.rows.length, name).toBeGreaterThan(0)
+      }
+      expect(feed.tables.get('feed_info')?.rows[0]?.feed_version).toBe(sample.version)
+      expect(feed.warnings).toEqual([])
+    })
   })
-})
+}

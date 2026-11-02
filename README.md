@@ -28,6 +28,8 @@ cd server
 uv run dispatcher-server
 ```
 
+「サンプルを読み込む」ボタンを使うには、北海道オープンデータプラットフォームの利用フォームに記入してから、道北バスの GTFS を `data/raw/gtfs/dohoku-bus.zip` に置いてください(`data/raw/README.md`)。
+
 ## リポジトリの構成
 
 | ディレクトリ | 中身 |

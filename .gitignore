@@ -1,0 +1,34 @@
+# MCP 設定(Notion トークンを含むためコミットしない)
+.mcp.json
+
+# Claude Code の個人設定
+.claude/settings.local.json
+
+# APIキーなどの秘密情報
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 参照データ:元データ(利用者が手で入手)と加工結果は大きいためコミットしない
+data/raw/*
+!data/raw/README.md
+data/out/*
+!data/out/.gitkeep
+
+# サーバーの SQLite(Web 調査結果のキャッシュ)
+server/*.sqlite3
+server/*.db
+
+# OS
+.DS_Store

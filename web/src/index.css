@@ -1,0 +1,27 @@
+/* 仮のスタイル。11/3 に Tailwind CSS と shadcn/ui に置き換える。 */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  height: 100%;
+}
+
+.steps {
+  padding: 16px;
+  border-right: 1px solid #ddd;
+  overflow-y: auto;
+}
+
+.map {
+  background: #eef0f2;
+}

@@ -6,6 +6,7 @@
   - 1次メッシュ全体の総当たりと did_cells の突き合わせ
   - 秘匿処理で人口総数が合算されていないことを、年齢別の列から確かめる
   - 駅のまとめ方が線の順に左右されないこと
+  - 廃止された駅(closed_stations.csv)が入らないこと、一覧の行がすべて N02 の線に一致すること
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import pytest
 import shapely
 
 from dispatcher_data import main
-from dispatcher_data.build import MissingSourceError, build_refs, find_sources
+from dispatcher_data.build import MissingSourceError, build_refs, find_sources, load_stations
 from dispatcher_data.did import did_cells, load_did_geojson
 from dispatcher_data.estat import parse_population, read_population
 from dispatcher_data.mesh import (
@@ -33,7 +34,13 @@ from dispatcher_data.mesh import (
     mesh_bounds,
     mesh_code,
 )
-from dispatcher_data.stations import distance_m, load_station_parts, merge_stations
+from dispatcher_data.stations import (
+    distance_m,
+    exclude_closed,
+    load_closed_stations,
+    load_station_parts,
+    merge_stations,
+)
 
 REAL_RAW = Path(__file__).resolve().parents[1] / "raw"
 
@@ -238,13 +245,24 @@ def test_駅のまとめ方は線の順に左右されない(sources):
                 assert d > 1000, key
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="留萌線 深川〜石狩沼田は 2026-03-31 に廃止されたが、N02-25(2025-12-31 時点)に残っている。扱いは指示役が決める",
-)
 def test_2026年4月より前に廃止された駅は入らない(sources, did_areas):
+    # 留萌線(深川〜石狩沼田)は 2026-04-01 に廃止されたが、N02-25(2025-12-31 時点)に残っている。closed_stations.csv で除く
     tables = [read_population(_population_file(sources, m)) for m in ("6541", "6542")]
-    stations = merge_stations(load_station_parts(sources.station_file))
+    stations, _ = load_stations(sources.station_file)
     refs = build_refs(tables, did_areas, stations, ["6541", "6542"])
     names = {s["name"] for ref in refs.values() for s in ref["stations"]}
     assert not names & {"石狩沼田", "秩父別", "北秩父別", "北一已"}
+    # 深川は函館線だけの駅として残る(留萌線の線だけを除く)
+    fukagawa = [s for s in refs["6542"]["stations"] if s["name"] == "深川" and s["operator"] == "北海道旅客鉄道"]
+    assert len(fukagawa) == 1
+    assert fukagawa[0]["line"] == "函館線"
+    assert distance_m((fukagawa[0]["lat"], fukagawa[0]["lon"]), (43.7219, 142.0436)) < 300
+
+
+def test_廃止駅の一覧のすべての行がN02の線に一致する(sources):
+    # 駅名・事業者・路線名の書き間違いを見つける。N02-26 以降で線が消えたら、この行を一覧から外す
+    closed = load_closed_stations()
+    result = exclude_closed(load_station_parts(sources.station_file), closed)
+    assert result.unmatched == []
+    # 一覧の1行につき、除く線は1本(留萌線の深川も、函館線の深川とは別の線)
+    assert len(result.removed) == len(closed)

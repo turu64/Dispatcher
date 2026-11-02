@@ -89,3 +89,33 @@ def test_コマンド_元データが無いと1を返す(tmp_path: Path, capsys:
 def test_コマンド_1次メッシュの形を確かめる(fixture_raw: Path, tmp_path: Path):
     with pytest.raises(SystemExit):
         main(["--raw", str(fixture_raw), "--out", str(tmp_path), "--mesh1", "65a2"])
+
+
+def test_廃止駅の線を除いてから駅をまとめる(fixture_raw: Path, tmp_path: Path):
+    closed_csv = tmp_path / "closed.csv"
+    closed_csv.write_text(
+        "駅名,事業者,路線,廃止日,出典URL\n"
+        "旭川,北海道旅客鉄道,函館線,2026-04-01,https://example.com/a\n"
+        "存在しない,北海道旅客鉄道,函館線,2026-04-01,https://example.com/b\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    report = run(fixture_raw, out, closed_csv=closed_csv)
+    assert report.closed_removed == 1
+    assert report.closed_unmatched == ["函館線 存在しない"]
+    ref = json.loads((out / "6542.json").read_text(encoding="utf-8"))
+    jr = [s for s in ref["stations"] if s["operator"] == "北海道旅客鉄道"]
+    assert [s["line"] for s in jr] == ["宗谷線・富良野線"]
+
+
+def test_既定の廃止駅の一覧は手作りの元データに一致しない(fixture_raw: Path, tmp_path: Path):
+    report = run(fixture_raw, tmp_path)
+    assert report.closed_removed == 0
+    assert len(report.closed_unmatched) == 7
+
+
+def test_実行時に廃止駅の件数を表示する(fixture_raw: Path, tmp_path: Path, capsys):
+    assert main(["--raw", str(fixture_raw), "--out", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "廃止された駅:N02 の線 0 本を除きました" in out
+    assert "留萌線 深川" in out

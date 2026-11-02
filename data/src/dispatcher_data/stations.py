@@ -11,17 +11,26 @@
 ただし同じ名前・同じ会社でも離れた別の駅(JR東日本の大久保は東京と秋田にある)をまとめないように、
 既にまとめた駅のどれかから MERGE_DISTANCE_M 以内のものだけをまとめる。
 全国のデータで、同じ駅の線どうしの距離は最大 515m(土合)、同名の別の駅は 78km 以上離れている(2025年度版で確認)。
+
+廃止された駅は、まとめる前に線の単位で除く(closed_stations.csv)。N02-25 は 2025年12月31日時点で、
+2026年3月に廃止された函館線の仁山・二股や、2026年4月1日に廃止された留萌線(深川〜石狩沼田)の線が残っている。
+除く単位は N02 の線(feature)なので、深川の留萌線の線だけを除けば、深川は函館線だけの駅として残る。
 """
 
 from __future__ import annotations
 
+import csv
 import json
 import math
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 MERGE_DISTANCE_M = 1000.0
+# 廃止された駅の一覧(パッケージの中にある)
+CLOSED_STATIONS_CSV = Path(__file__).with_name("closed_stations.csv")
+CLOSED_STATIONS_HEADER = ["駅名", "事業者", "路線", "廃止日", "出典URL"]
 _EARTH_RADIUS_M = 6_371_008.8
 
 
@@ -56,6 +65,31 @@ class Station:
     @property
     def lon(self) -> float:
         return sum(p[1] for p in self.points) / len(self.points)
+
+
+@dataclass(frozen=True)
+class ClosedStation:
+    """廃止された駅の線1本(closed_stations.csv の1行)。N02 の事業者(N02_004)・路線名(N02_003)・駅名(N02_005)で照合する。"""
+
+    name: str
+    operator: str
+    line: str
+    closed_on: date
+    source_url: str
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        return (self.operator, self.line, self.name)
+
+
+@dataclass
+class ClosedResult:
+    """廃止駅を除いた結果。"""
+
+    kept: list[StationPart]
+    removed: list[StationPart]
+    # どの線にも一致しなかった CSV の行(新しい版の N02 で既に消えているか、書き間違い)
+    unmatched: list[ClosedStation]
 
 
 def distance_m(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -147,3 +181,54 @@ def merge_stations(parts: list[StationPart], merge_distance_m: float = MERGE_DIS
         if part.line and part.line not in target.lines:
             target.lines.append(part.line)
     return [s for group in groups.values() for s in group]
+
+
+def load_closed_stations(path: Path = CLOSED_STATIONS_CSV) -> list[ClosedStation]:
+    """廃止駅の一覧(UTF-8、見出しつき)を読む。形が違えば ValueError。
+
+    各欄の前後の空白は取る。空行は飛ばす。廃止日は YYYY-MM-DD。同じ(事業者・路線・駅名)が2行あればエラー。
+    廃止日は記録で、除くかどうかの判定には使わない(一覧にある線はすべて除く)。
+    """
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None or [h.strip() for h in header] != CLOSED_STATIONS_HEADER:
+            raise ValueError(f"{path.name} の見出しが {','.join(CLOSED_STATIONS_HEADER)} ではありません")
+        closed: list[ClosedStation] = []
+        seen: set[tuple[str, str, str]] = set()
+        for number, row in enumerate(reader, start=2):
+            cells = [c.strip() for c in row]
+            if not any(cells):
+                continue
+            if len(cells) != len(CLOSED_STATIONS_HEADER) or not all(cells):
+                raise ValueError(f"{path.name} の {number} 行目は {len(CLOSED_STATIONS_HEADER)} 列すべてを埋めてください: {row}")
+            name, operator, line, closed_on, source_url = cells
+            try:
+                # 'YYYY-MM-DD' だけを許す(fromisoformat は 'YYYYMMDD' なども読むため桁を確かめる)
+                if len(closed_on) != 10:
+                    raise ValueError(closed_on)
+                day = date.fromisoformat(closed_on)
+            except ValueError:
+                raise ValueError(f"{path.name} の {number} 行目の廃止日が YYYY-MM-DD ではありません: {closed_on}") from None
+            item = ClosedStation(name, operator, line, day, source_url)
+            if item.key in seen:
+                raise ValueError(f"{path.name} の {number} 行目が重複しています: {operator} {line} {name}")
+            seen.add(item.key)
+            closed.append(item)
+    return closed
+
+
+def exclude_closed(parts: list[StationPart], closed: list[ClosedStation]) -> ClosedResult:
+    """事業者・路線・駅名がすべて一致する線を除く(駅をまとめる前に呼ぶ)。順序は保つ。"""
+    keys = {c.key: c for c in closed}
+    matched: set[tuple[str, str, str]] = set()
+    kept: list[StationPart] = []
+    removed: list[StationPart] = []
+    for part in parts:
+        key = (part.operator, part.line, part.name)
+        if key in keys:
+            matched.add(key)
+            removed.append(part)
+        else:
+            kept.append(part)
+    return ClosedResult(kept=kept, removed=removed, unmatched=[c for c in closed if c.key not in matched])

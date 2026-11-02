@@ -21,7 +21,15 @@ from typing import Any
 from .did import DidArea, did_cells, load_did_geojson
 from .estat import PopulationTable, read_population
 from .mesh import mesh_code
-from .stations import Station, load_station_parts, merge_stations
+from .stations import (
+    CLOSED_STATIONS_CSV,
+    ClosedResult,
+    Station,
+    exclude_closed,
+    load_closed_stations,
+    load_station_parts,
+    merge_stations,
+)
 
 SOURCES = [
     "令和2年国勢調査 地域メッシュ統計(e-Stat)を加工して作成",
@@ -54,6 +62,9 @@ class BuildReport:
     population_rows: int = 0
     non_numeric: int = 0
     bad_key: int = 0
+    # 廃止駅として除いた駅の線の数(N02 の線の単位)と、どの線にも一致しなかった廃止駅の行(「路線 駅名」)
+    closed_removed: int = 0
+    closed_unmatched: list[str] = field(default_factory=list)
     files: list[tuple[str, Path, int, dict[str, int]]] = field(default_factory=list)
 
 
@@ -76,6 +87,12 @@ def find_sources(raw: Path) -> Sources:
     if missing or did is None or station is None:
         raise MissingSourceError("元データがありません。次のファイルを展開して置いてください:\n- " + "\n- ".join(missing))
     return Sources(population_files=population, did_file=did, station_file=station)
+
+
+def load_stations(station_file: Path, closed_csv: Path = CLOSED_STATIONS_CSV) -> tuple[list[Station], ClosedResult]:
+    """N02 の駅を読み、廃止された駅の線を除いてから、駅をまとめる。"""
+    closed = exclude_closed(load_station_parts(station_file), load_closed_stations(closed_csv))
+    return merge_stations(closed.kept), closed
 
 
 def station_json(s: Station) -> dict[str, Any]:
@@ -142,17 +159,24 @@ def write_refs(refs: dict[str, dict[str, Any]], out_dir: Path) -> list[tuple[str
     return written
 
 
-def run(raw: Path, out_dir: Path, mesh1_list: list[str] | None = None) -> BuildReport:
+def run(
+    raw: Path,
+    out_dir: Path,
+    mesh1_list: list[str] | None = None,
+    closed_csv: Path = CLOSED_STATIONS_CSV,
+) -> BuildReport:
     """元データを読んで、参照データを書き出す。"""
     src = find_sources(raw)
     tables = [read_population(p) for p in src.population_files]
     did_areas = load_did_geojson(src.did_file)
-    stations = merge_stations(load_station_parts(src.station_file))
+    stations, closed = load_stations(src.station_file, closed_csv)
     refs = build_refs(tables, did_areas, stations, mesh1_list)
     report = BuildReport(
         population_rows=sum(t.rows for t in tables),
         non_numeric=sum(t.non_numeric for t in tables),
         bad_key=sum(t.bad_key for t in tables),
+        closed_removed=len(closed.removed),
+        closed_unmatched=[f"{c.line} {c.name}" for c in closed.unmatched],
     )
     for mesh1, path, size in write_refs(refs, out_dir):
         ref = refs[mesh1]

@@ -47,6 +47,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"人口メッシュ:{report.population_rows} 行(人口総数が数値でない行 {report.non_numeric}、コードが不正な行 {report.bad_key})")
+    print(f"廃止された駅:N02 の線 {report.closed_removed} 本を除きました(closed_stations.csv)")
+    if report.closed_unmatched:
+        print(f"  どの線にも一致しなかった行(新しい版の N02 で既に消えているか、書き間違い):{'、'.join(report.closed_unmatched)}")
     for mesh1, path, size, c in report.files:
         print(
             f"{mesh1}: 人口セル {c['pop250']}(計 {c['人口']} 人)、DID セル {c['did125']}、駅 {c['stations']} → {path}({size:,} バイト)"

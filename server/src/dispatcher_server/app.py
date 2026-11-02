@@ -1,8 +1,10 @@
 import os
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from starlette.convertors import Convertor, register_url_convertor
 
 app = FastAPI(title="Dispatcher server")
 
@@ -22,9 +24,23 @@ SAMPLE_GTFS_INFO = {
     "license": "CC BY 4.0",
 }
 
+# 参照データ(1次メッシュごとの JSON)。data/ が data/out/ref/ に書き出し、web/ が読む。
+# 本番では環境変数 DISPATCHER_REF_DIR で置き場所を渡す。
+DEFAULT_REF_DIR = REPO_ROOT / "data" / "out" / "ref"
+
+# 1次メッシュコードは数字4桁だけを受け付ける。パスを組み立てる前に検査する。
+# \d は全角数字などにも一致し、$ は末尾の改行にも一致するため、[0-9] と fullmatch を使う。
+MESH1_PATTERN = re.compile(r"[0-9]{4}")
+
 
 def sample_gtfs_path() -> Path:
     return Path(os.environ.get("DISPATCHER_SAMPLE_GTFS", DEFAULT_SAMPLE_GTFS))
+
+
+def ref_dir_path() -> Path:
+    # 空文字の環境変数(compose で未設定の変数を渡した場合など)は未設定として扱う。
+    # Path("") は現在のディレクトリになり、そこの 6542.json などを配ってしまう。
+    return Path(os.environ.get("DISPATCHER_REF_DIR") or DEFAULT_REF_DIR)
 
 
 @app.get("/api/health")
@@ -46,3 +62,50 @@ def sample_gtfs_download() -> FileResponse:
             detail="サンプル GTFS が見つかりません。data/raw/gtfs/dohoku_bus_減便前.zip に置いてください。",
         )
     return FileResponse(path, media_type="application/zip", filename="dohoku_bus.zip")
+
+
+REF_MESH1_ERROR = "1次メッシュのコードは数字4桁で指定してください。"
+
+
+@app.get("/api/ref/{mesh1}")
+def ref_data(mesh1: str) -> FileResponse:
+    if not MESH1_PATTERN.fullmatch(mesh1):
+        raise HTTPException(status_code=404, detail=REF_MESH1_ERROR)
+    path = ref_dir_path() / f"{mesh1}.json"
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"1次メッシュ {mesh1} の参照データが見つかりません。data/ の加工で data/out/ref に作ってください。",
+        )
+    return FileResponse(
+        path,
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+class AnyPathConvertor(Convertor[str]):
+    """改行を含むすべての文字に一致する経路の型。
+
+    Starlette 標準の path は「.*」で、改行に一致しない。「a/b」と改行が混ざった入力は
+    どの経路にも一致せず、英語の Not Found になってしまう。
+    """
+
+    regex = r"[\s\S]*"
+
+    def convert(self, value: str) -> str:
+        return str(value)
+
+    def to_string(self, value: str) -> str:
+        return str(value)
+
+
+register_url_convertor("anypath", AnyPathConvertor())
+
+
+# 「../」などの区切り文字を含む入力は {mesh1} の経路に届かない(FastAPI の英語の Not Found になる)。
+# ここで同じ日本語の 404 を返す。{mesh1:path} を主経路にしないのは、Starlette の正規表現が
+# 末尾の改行を読み飛ばし、「6542%0A」を 6542 として通してしまうため。
+@app.get("/api/ref/{rest:anypath}", include_in_schema=False)
+def ref_data_rejected(rest: str) -> None:
+    raise HTTPException(status_code=404, detail=REF_MESH1_ERROR)

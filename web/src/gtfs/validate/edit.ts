@@ -65,7 +65,7 @@ const STRUCTURAL_RULES: StructuralRule[] = [
   {
     code: 'tripWithoutStopTimes',
     file: 'trips.txt',
-    message: (n) => `stop_times.txt に1行も無い便があります(${n} 便)。`,
+    message: (n) => `stop_times.txt に1行もない便があります(${n} 便)。`,
     targets: (feed) => {
       const withRows = new Set(rowsOf(feed, 'stop_times').map((r) => trimmed(r.trip_id)))
       return new Set(rowsOf(feed, 'trips').map((t) => trimmed(t.trip_id)).filter((id) => !withRows.has(id)))
@@ -74,7 +74,7 @@ const STRUCTURAL_RULES: StructuralRule[] = [
   {
     code: 'stopTimesUnknownTrip',
     file: 'stop_times.txt',
-    message: (n) => `stop_times.txt に、trips.txt に無い trip_id があります(${n} 件)。`,
+    message: (n) => `stop_times.txt に、trips.txt にない trip_id があります(${n} 件)。`,
     targets: (feed) => {
       const trips = new Set(rowsOf(feed, 'trips').map((t) => trimmed(t.trip_id)))
       return new Set(rowsOf(feed, 'stop_times').map((r) => trimmed(r.trip_id)).filter((id) => !trips.has(id)))
@@ -256,7 +256,7 @@ function tripIdReusedIssue(base: GtfsFeed, result: Form2Result): ValidationIssue
     severity: 'info',
     code: 'tripIdReused',
     file: 'trips.txt',
-    message: `編集後の便のうち ${reused.length} 便の trip_id は、入力では別の便(停留所か時刻が違う便)を指していました。trip_id だけで前後の便を比べないでください。`,
+    message: `減便後の便のうち ${reused.length} 便の trip_id は、読み込んだ GTFS では別の便(停留所か時刻が違う便)を指していました。trip_id だけで前後の便を比べないでください。`,
     count: reused.length,
     examples: reused.slice(0, MAX_EXAMPLES),
   }
@@ -331,7 +331,7 @@ function calendarIssues(base: GtfsFeed, result: Form2Result, holidays: HolidayLi
         severity: 'warning',
         code: 'holidayNotCovered',
         file: '',
-        message: `${formatDate(range.start)}〜${formatDate(range.end)} の祝日は、内閣府の一覧にまだ無いため確かめていません。`,
+        message: `${formatDate(range.start)}〜${formatDate(range.end)} の祝日は、内閣府の一覧にまだないため確かめていません。`,
         count: dayNumber(range.end) - dayNumber(range.start) + 1,
         examples: [range.start, range.end],
       })
@@ -391,7 +391,7 @@ function calendarIssues(base: GtfsFeed, result: Form2Result, holidays: HolidayLi
       severity: 'info',
       code: 'weekdayNotRunning',
       file: 'calendar_dates.txt',
-      message: `新しい有効期間の平日(月〜金)のうち ${notRunning.length} 日は、平日ダイヤ(${wk})が走らないため、方針の対象になりません(${detail.join('、')}${rest})。`,
+      message: `新しい有効期間の平日(月〜金)のうち ${notRunning.length} 日は、平日ダイヤ(${wk})が走らないため、減便の対象になりません(${detail.join('、')}${rest})。`,
       count: notRunning.length,
       examples: notRunning.slice(0, MAX_EXAMPLES),
     })
@@ -530,20 +530,20 @@ export function form2Texts(result: Form2Result, today: string): Form2Texts {
   }
   if (plan.period.end !== null) {
     texts.push(
-      `${formatDate(addDays(validity.end, 1))} 以降は出力に含まれず、経路検索に便が出なくなります。その前に、元のダイヤに戻す版を公開してください。元の ZIP は保存しておいてください(公開先の元データは減便版で置き換わります)。`,
+      `${formatDate(addDays(validity.end, 1))} 以降は出力に含まれず、経路検索に便が出なくなります。その前に、元のダイヤに戻す版を公開してください。公開先の元データは減便版で置き換わるため、元の ZIP は保存しておいてください。`,
     )
   } else {
-    texts.push(`出力の有効期間は ${formatDate(inputValidity.end)}(入力の GTFS の末日)までです。減便が続くときは、次の版にも同じ方針を適用してください。`)
+    texts.push(`出力の有効期間は ${formatDate(inputValidity.end)}(入力の GTFS の末日)までです。減便が続くときは、次の版でも同じ減便の方針を承認してください。`)
   }
 
   const label = plan.kind === 'weekdayToSaturday' ? '土曜' : '日祝'
   const n = weekdayServiceDays(result).length
   const changes = [
-    `期間の中で平日ダイヤが走る日(${n}日。祝日などの例外の日を除く)は、すべて${label}ダイヤ(足し戻した便と、除外した系統の便を除く)で走ります。`,
+    `期間の中で平日ダイヤが走る日(${n}日。祝日などの例外の日を除く)は、すべて${label}ダイヤ(平日に戻した便と、除外した系統の便を除く)で走ります。`,
     '出力した GTFS だけでは元に戻せません。元に戻すのは、この画面の編集の履歴と、読み込んだ元の GTFS で行います。',
   ]
   if (result.report.tripIds.addedBack.length > 0) {
-    changes.push('足し戻した便は学校の休業日にも走ります。休校日運休の便は GTFS では表せないため、変更指示書と周知文で補ってください。')
+    changes.push('平日に戻した便は学校の休業日にも走ります。休校日運休の便は GTFS では表せないため、変更指示書と周知文で補ってください。')
   }
   changes.push(
     '次に運行管理システムや時刻表ソフトから GTFS を出力するときは、システム側のダイヤにも減便を反映してから出力してください。反映しないと、GTFS だけが減便前のダイヤに戻ります。',

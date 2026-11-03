@@ -121,8 +121,8 @@ describe('loadGtfsZip', () => {
   it('列数が見出しと合わない行は警告に出し、余分な値は表に残さない', async () => {
     const feed = await loadGtfsZip(await makeZip({ 'stops.txt': 'stop_id,stop_name\nA\nB,駅前,余分\n' }))
     expect(feed.warnings).toEqual([
-      { file: 'stops.txt', line: 2, message: '列が見出しより少ない行があります' },
-      { file: 'stops.txt', line: 3, message: '列が見出しより多い行があります' },
+      { file: 'stops.txt', line: 2, message: '列が見出しより少ない行があります。' },
+      { file: 'stops.txt', line: 3, message: '列が見出しより多い行があります。' },
     ])
     expect(feed.tables.get('stops')?.rows).toEqual([{ stop_id: 'A' }, { stop_id: 'B', stop_name: '駅前' }])
   })
@@ -137,7 +137,7 @@ describe('loadGtfsZip', () => {
     const sjis = new Uint8Array([...new TextEncoder().encode('stop_name\n'), 0x83, 0x65, 0x83, 0x58, 0x83, 0x67, 0x0a])
     const feed = await loadGtfsZip(await makeZip({ 'stops.txt': sjis }))
     expect(feed.warnings).toEqual([
-      { file: 'stops.txt', message: 'UTF-8 として読めない文字があります(GTFS-JP は UTF-8 が必須です)' },
+      { file: 'stops.txt', message: 'UTF-8 として読めない文字があります(GTFS-JP は UTF-8 が必須です)。' },
     ])
   })
 

@@ -43,7 +43,7 @@ export const RESEARCH_DEMO_LOADING = '保存済みの結果を読み込んでい
 export const RESEARCH_DEMO_NOTE = 'AI も Web 検索も使わずに、保存済みの調査の結果(デモ用)を出し、その対象を選びます。'
 export const RESEARCH_DEMO_NONE = 'この GTFS の停留所の周りには、保存済みの結果(デモ)がありません。'
 export const RESEARCH_SAVED_NOTE = '保存済みの対象は調べ直さず(Web 検索をせず)、その結果を使います。'
-export const RESEARCH_RESULT_NOTE = '結果は AI が Web で調べたものです。確認日時の後に変わっていることがあるので、出典を開いて確かめてください。'
+export const RESEARCH_RESULT_NOTE = '結果は AI が Web で調べたものです。確認日時のあとに変わっていることがあります。出典を開いて確かめてください。'
 export const OWN_OPERATOR = '読み込んだ GTFS の事業者'
 export const CLOSED_SCHOOL = '休校中か不明'
 
@@ -54,8 +54,8 @@ export const NO_BUSSTOP_DATA = '周辺の事業者の停留所の参照データ
 export const MOVEMENT_NOT_RESEARCHED = '減便・ダイヤ改正・運休の動きは、まだ調べていません。'
 // 見出し(label)で絞った結果だけを言う。廃止など、絞り込みの語に当たらない事実がありうるため「動きがない」とは書かない
 export const MOVEMENT_NONE = '調べた結果に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、下の「調査の結果」で、ほかの事実と出典を確かめてください。'
-export const REDUCED_AFTER_POLICY = '「減便の方針」を承認すると、減便で発車が減る・なくなる停留所の近くにある数も出します。'
-export const REDUCED_NO_DATE = '減便の期間に元の平日ダイヤが走る日がないため、減便で発車が減る・なくなる停留所の近くにある数は数えていません。'
+export const REDUCED_AFTER_POLICY = '「減便の方針」を承認すると、発車が減る・なくなる停留所のうち、ほかの事業者の停留所が近くにある数も表示します。'
+export const REDUCED_NO_DATE = '減便の期間に元の平日ダイヤが走る日がないため、発車が減る・なくなる停留所のうち、ほかの事業者の停留所が近くにある数は数えていません。'
 
 /** 事業者の行の重なりの文 */
 function overlapText(ownStops: number, otherStops: number, routes: readonly string[]): string {
@@ -107,7 +107,7 @@ export function PriorityList() {
       <summary className="cursor-pointer px-2 py-1.5 font-medium">重要拠点の優先順位{changed ? '(変更あり)' : ''}</summary>
       <div className="flex flex-col gap-1.5 px-2 pb-2">
         <p className="text-muted-foreground">
-          上ほど優先します。調べる対象の既定の選び方と、足し戻しの手がかりの並びに使います。データの無い種類は選べません。
+          上ほど優先します。調べる対象の既定の選び方と、便を平日に戻す判断材料の並びに使います。データのない種類は選べません。
         </p>
         <ol className="flex flex-col gap-1" aria-label="重要拠点の優先順位">
           {order.map((key, i) => {
@@ -610,7 +610,7 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
     <>
       <p className="text-sm text-muted-foreground">
         停留所の分布の外周に 2km の余白を足した範囲から、周辺のバス事業者・学校・病院を洗い出します。調べる対象を選び、AI に Web
-        で調べてもらうと、通学・通院の時刻などの手がかりが出典つきで集まります。この手順を飛ばして、次の「減便の方針」へ進めます。
+        で調べてもらうと、通学・通院の時刻などの判断材料が出典つきで集まります。この手順を飛ばして、次の「減便の方針」へ進めます。
       </p>
 
       <PriorityList />
@@ -624,7 +624,7 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
           </Button>
         </div>
       )}
-      {stops.length === 0 && <p className="text-sm text-muted-foreground">乗れる停留所が無いため、施設を探す範囲を決められません。</p>}
+      {stops.length === 0 && <p className="text-sm text-muted-foreground">乗れる停留所がないため、施設を探す範囲を決められません。</p>}
 
       {facilities.status === 'ready' && (
         <>
@@ -650,8 +650,7 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
               </div>
               {isDefault && (
                 <p className="text-xs text-muted-foreground">
-                  既定では、重要拠点の優先順位の高い種類から1件ずつ順に(停留所から {DEFAULT_SELECT_WALK_M.toLocaleString('ja-JP')}m 以内の施設を、病院は病床の多い順、ほかは停留所に近い順に)、最後に周辺のバス事業者(読み込んだ
-                  GTFS の事業者を除き、こちらの停留所の近くに停留所がある事業者を、その停留所の多い順に)を、{maxTargets} 件まで選んでいます。
+                  既定では、重要拠点の優先順位の高い種類から1件ずつ順に、停留所から {DEFAULT_SELECT_WALK_M.toLocaleString('ja-JP')}m 以内の施設を選んでいます(病院は病床の多い順、ほかは停留所に近い順)。最後に、周辺のバス事業者から選んでいます。対象は、読み込んだ GTFS の事業者を除き、こちらの停留所の近くに停留所がある事業者で、その停留所の多い順です。全体で {maxTargets} 件までです。
                 </p>
               )}
               {limitNote && (
@@ -664,7 +663,7 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
           )}
 
           <div className="flex flex-col gap-1.5 rounded-md border px-2 py-2">
-            <p className="text-xs text-muted-foreground">{RESEARCH_SEND_NOTE}。GTFS のファイルは送りません。</p>
+            <p className="text-xs text-muted-foreground">{RESEARCH_SEND_NOTE}GTFS のファイルは送りません。</p>
             {cachedSelected > 0 && <p className="text-xs text-muted-foreground">{RESEARCH_SAVED_NOTE}</p>}
             <div className="flex flex-wrap gap-2">
               <Button

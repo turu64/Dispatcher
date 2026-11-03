@@ -50,6 +50,19 @@ function selectedText(name: '開始日' | '終了日'): string {
 }
 
 describe('PolicyStep', () => {
+  it('GTFS を読み込む前は、手順の名前で読み込みを案内する', () => {
+    act(() => useEditStore.getState().setBase(null))
+    render(<PolicyStep />)
+    expect(screen.getByText('手順「読み込み」で GTFS を読み込むと、減便の方針を選べます。')).toBeTruthy()
+  })
+
+  it('入力の欄の名前:ダイヤの入れ替え方と、減便の理由(補足は欄外)', () => {
+    render(<PolicyStep />)
+    expect(screen.getByRole('group', { name: 'ダイヤの入れ替え方' })).toBeTruthy()
+    const reason = screen.getByRole('group', { name: '減便の理由' })
+    expect(reason.textContent).toContain('変更指示書に載せます。入力は任意です。')
+  })
+
   it('祝日一覧が無ければ、祝日の確認をしていないと出し、読み込み直すボタンで読み直す', () => {
     const load = vi.fn(async () => {})
     useHolidayStore.setState({ load })
@@ -75,19 +88,19 @@ describe('PolicyStep', () => {
     render(<PolicyStep />)
     fireEvent.click(screen.getByRole('checkbox', { name: '3(R3)を入れ替えから外す' }))
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
-    const review = screen.getByRole('region', { name: '対象便の確かめ' })
+    const review = screen.getByRole('region', { name: '対象便の確認' })
     const counts = within(review).getByLabelText('平日便の件数').textContent ?? ''
     expect(counts).toContain('除外した系統:1 系統')
     expect(counts).toContain('全曜日で便がなくなる系統:0 系統')
     // 全曜日で便がなくなる系統が無ければ、確かめのチェックなしで進める
     expect(within(review).queryByLabelText('全曜日で便がなくなる系統があることを確かめました')).toBeNull()
-    expect(within(review).getByRole('button', { name: 'この内容で進める' })).toHaveProperty('disabled', false)
+    expect(within(review).getByRole('button', { name: '承認する' })).toHaveProperty('disabled', false)
     expect(review.querySelector('[data-route="R3"]')?.textContent).toContain('除')
   })
 
   it('画面で選んだ service を、チャットのツールに渡し、入力欄を閉じたら既定に戻す', () => {
     const { unmount } = render(<PolicyStep />)
-    fireEvent.change(screen.getByLabelText('平日のダイヤ(入れ替える側)'), { target: { value: 'SU' } })
+    fireEvent.change(screen.getByLabelText('入れ替え元のダイヤ(平日)'), { target: { value: 'SU' } })
     expect(chatToolDeps.policyServices(null)?.weekday).toBe('SU')
     // 期間を渡しても、利用者が選んだ役割はそのまま
     expect(chatToolDeps.policyServices({ start: '20261109', end: '20270331' })?.weekday).toBe('SU')
@@ -98,12 +111,12 @@ describe('PolicyStep', () => {
   it('平日の service が新しい有効期間の中で1日も走らない期間は、方針の確かめに誤りとして出て、「対象便を確かめる」を押せない', () => {
     render(<PolicyStep />)
     // 平日の service を利用者が選んだままにする(選ばないと、走らない service は推定の候補から外れ、service が決まらない)
-    fireEvent.change(screen.getByLabelText('平日のダイヤ(入れ替える側)'), { target: { value: 'WK' } })
+    fireEvent.change(screen.getByLabelText('入れ替え元のダイヤ(平日)'), { target: { value: 'WK' } })
     // 2026-11-07(土)〜11-08(日)。平日 WK の calendar とは重なるが、月〜金の日が1日も無い
     pickDay('開始日', 7, 1)
     fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
     pickDay('終了日', 8)
-    const check = screen.getByRole('region', { name: '方針の確かめ' })
+    const check = screen.getByRole('region', { name: '減便内容の確認' })
     const issue = check.querySelector('[data-code="weekdayNotActive"]')
     expect(issue?.getAttribute('data-severity')).toBe('error')
     // 文言は checkPolicy(ops.ts)が持つ。画面は code ごとの文言の表を持たず、そのまま出す
@@ -116,11 +129,11 @@ describe('PolicyStep', () => {
     // 全曜日で便がなくなる系統(R3)を外して、確かめのチェックなしで進められるようにする
     fireEvent.click(screen.getByRole('checkbox', { name: '3(R3)を入れ替えから外す' }))
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
-    const review = screen.getByRole('region', { name: '対象便の確かめ' })
+    const review = screen.getByRole('region', { name: '対象便の確認' })
     // 下書きを作ったときは祝日一覧が無い
     expect(review.querySelector('[data-code="holidayListMissing"]')).not.toBeNull()
     expect(review.querySelector('[data-code="holidayWithoutException"]')).toBeNull()
-    expect(within(review).getByRole('button', { name: 'この内容で進める' })).toHaveProperty('disabled', false)
+    expect(within(review).getByRole('button', { name: '承認する' })).toHaveProperty('disabled', false)
 
     act(() =>
       useHolidayStore.setState({
@@ -140,7 +153,7 @@ describe('PolicyStep', () => {
     expect(review.querySelector('[data-code="holidayWithoutException"]')?.textContent).toContain('20261123')
     // 祝日の注意は warning・info なので、承認を止めない
     expect(review.querySelector('[data-severity="error"]')).toBeNull()
-    const proceed = within(review).getByRole('button', { name: 'この内容で進める' })
+    const proceed = within(review).getByRole('button', { name: '承認する' })
     expect(proceed).toHaveProperty('disabled', false)
     fireEvent.click(proceed)
     expect(useEditStore.getState().history).toHaveLength(1)
@@ -150,7 +163,7 @@ describe('PolicyStep', () => {
     render(<PolicyStep />)
     fireEvent.click(screen.getByRole('checkbox', { name: '2(R2)を入れ替えから外す' }))
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
-    const review = screen.getByRole('region', { name: '対象便の確かめ' })
+    const review = screen.getByRole('region', { name: '対象便の確認' })
     // R3 は平日だけの系統なので、入れ替えると全曜日で便がなくなる。R2 は外した系統
     for (const [route, mark] of [['R3', '全曜日で便なし'], ['R2', '除']] as const) {
       const cell = review.querySelector(`[data-route="${route}"] summary > span:first-child`)!
@@ -173,13 +186,14 @@ describe('PolicyStep', () => {
       useEditStore.getState().commit()
     })
     render(<PolicyStep />)
-    const summary = screen.getByRole('region', { name: '適用した方針' })
+    const summary = screen.getByRole('region', { name: '承認した減便の方針' })
     expect(summary.textContent).toContain('運転士の一時的な欠員(欠員 2 名)')
-    fireEvent.click(within(summary).getByRole('button', { name: '方針を変える' }))
+    expect(summary.textContent).toContain('承認した減便の方針:平日を土曜ダイヤに')
+    fireEvent.click(within(summary).getByRole('button', { name: '減便の方針を変える' }))
     expect(selectedText('開始日')).toContain('11月1日')
     expect(screen.getByLabelText('理由のメモ')).toHaveProperty('value', '欠員 2 名')
     fireEvent.click(screen.getByRole('button', { name: '変えずに戻る' }))
-    expect(screen.getByRole('region', { name: '適用した方針' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: '承認した減便の方針' })).toBeTruthy()
   })
 
   it('カレンダーは入力の有効期間の外の日を選べない。外の日の方針(Claude などが出したもの)でも「対象便を確かめる」が止まらず、期間を入力の端にそろえる警告が届く', () => {
@@ -190,7 +204,7 @@ describe('PolicyStep', () => {
       useEditStore.getState().commit()
     })
     render(<PolicyStep />)
-    fireEvent.click(screen.getByRole('button', { name: '方針を変える' }))
+    fireEvent.click(screen.getByRole('button', { name: '減便の方針を変える' }))
     const form = screen.getByRole('form', { name: '減便の方針' }) as HTMLFormElement
     // ブラウザ標準の範囲検証では止めない(範囲外の日付は、アプリ側の確かめが警告で知らせる)
     expect(form.noValidate).toBe(true)
@@ -200,14 +214,14 @@ describe('PolicyStep', () => {
     expect(within(end).getByRole('button', { name: '次の月へ' }).getAttribute('aria-disabled')).toBe('true')
 
     // アプリ側の確かめ(checkPolicy)の警告が出る
-    const check = screen.getByRole('region', { name: '方針の確かめ' })
+    const check = screen.getByRole('region', { name: '減便内容の確認' })
     expect(check.querySelector('[data-code="periodStartClamped"]')?.textContent).toContain('入力の開始日(2026年10月1日)にそろえます')
     expect(check.querySelector('[data-code="periodEndClamped"]')?.textContent).toContain('入力の末日(2026年11月30日)にそろえます')
 
     // 押すと下書きができ、対象便の確かめに進む
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
     expect(useEditStore.getState().draft?.kind).toBe('op')
-    const review = screen.getByRole('region', { name: '対象便の確かめ' })
+    const review = screen.getByRole('region', { name: '対象便の確認' })
     expect(review.querySelector('[data-code="form2.periodStartClamped"]')).not.toBeNull()
     expect(review.querySelector('[data-code="form2.periodEndClamped"]')).not.toBeNull()
     expect(review.textContent).toContain('出力する GTFS の有効期間は 2026年10月1日〜2026年11月30日')
@@ -230,17 +244,17 @@ describe('PolicyStep', () => {
     fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
     pickDay('開始日', 7, 1)
     pickDay('終了日', 3)
-    const reason = screen.getByRole('group', { name: '期間の確かめ' })
+    const reason = screen.getByRole('group', { name: '期間の確認' })
     const issue = reason.querySelector('[data-code="badPeriod"]')
     expect(issue?.getAttribute('data-severity')).toBe('error')
     expect(issue?.textContent).toContain('終了日(2026年11月3日)が開始日(2026年11月7日)より前です')
     // 理由は期間の欄の下だけに出し、「方針の確かめ」には重ねない
     expect(screen.getByText('期間', { selector: 'legend' }).closest('fieldset')!.contains(reason)).toBe(true)
-    expect(screen.queryByRole('region', { name: '方針の確かめ' })?.querySelector('[data-code="badPeriod"]') ?? null).toBeNull()
+    expect(screen.queryByRole('region', { name: '減便内容の確認' })?.querySelector('[data-code="badPeriod"]') ?? null).toBeNull()
     expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', true)
     // 終了日を直すと理由が消える
     pickDay('終了日', 20)
-    expect(screen.queryByRole('group', { name: '期間の確かめ' })).toBeNull()
+    expect(screen.queryByRole('group', { name: '期間の確認' })).toBeNull()
     expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', false)
   })
 
@@ -253,7 +267,7 @@ describe('PolicyStep', () => {
         initialReason={null}
       />,
     )
-    const reason = screen.getByRole('group', { name: '期間の確かめ' })
+    const reason = screen.getByRole('group', { name: '期間の確認' })
     const issue = reason.querySelector('[data-code="emptyValidity"]')
     expect(issue?.getAttribute('data-severity')).toBe('error')
     expect(issue?.textContent).toContain('入力の有効期間(2026年10月1日〜2026年11月30日)と重なりません')
@@ -266,8 +280,8 @@ describe('PolicyStep', () => {
     wk.start_date = '20261332'
     act(() => useEditStore.getState().setBase({ feed, zip: new ArrayBuffer(0), label: 'test.zip', sample: null }))
     render(<PolicyStep />)
-    fireEvent.change(screen.getByLabelText('平日のダイヤ(入れ替える側)'), { target: { value: 'WK' } })
-    const issue = screen.getByRole('region', { name: '方針の確かめ' }).querySelector('[data-code="weekdayNotActive"]')
+    fireEvent.change(screen.getByLabelText('入れ替え元のダイヤ(平日)'), { target: { value: 'WK' } })
+    const issue = screen.getByRole('region', { name: '減便内容の確認' }).querySelector('[data-code="weekdayNotActive"]')
     expect(issue?.textContent).toContain('1日も走りません')
     expect(issue?.textContent).toContain('日付の正しくない calendar の行は数えていません')
     expect(issue?.textContent).toContain('日付の正しくない行が 1 行あります')
@@ -275,13 +289,23 @@ describe('PolicyStep', () => {
 
   it('日付が正しい calendar の行だけなら、weekdayNotActive の文に日付の注意を足さない', () => {
     render(<PolicyStep />)
-    fireEvent.change(screen.getByLabelText('平日のダイヤ(入れ替える側)'), { target: { value: 'WK' } })
+    fireEvent.change(screen.getByLabelText('入れ替え元のダイヤ(平日)'), { target: { value: 'WK' } })
     fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
     pickDay('開始日', 7, 1)
     pickDay('終了日', 8)
-    const issue = screen.getByRole('region', { name: '方針の確かめ' }).querySelector('[data-code="weekdayNotActive"]')
+    const issue = screen.getByRole('region', { name: '減便内容の確認' }).querySelector('[data-code="weekdayNotActive"]')
     expect(issue?.textContent).toContain('1日も走りません')
     expect(issue?.textContent).not.toContain('日付の正しくない')
+  })
+
+  it('AI の方針の下書きは、見出しに「下書き #n・AI の提案」と出す', () => {
+    act(() => {
+      useEditStore.getState().propose(policy(), 'claude')
+    })
+    render(<PolicyStep />)
+    const draftId = useEditStore.getState().draft!.id
+    const review = screen.getByRole('region', { name: '対象便の確認' })
+    expect(within(review).getByRole('heading', { name: `対象便を確かめる(下書き #${draftId}・AI の提案)` })).toBeTruthy()
   })
 
   it('Claude の下書きがあるときに方針を確かめると、画面の中で捨ててよいかを先に確かめる(「やめる」なら何も変わらない)', () => {
@@ -292,12 +316,12 @@ describe('PolicyStep', () => {
     })
     const browserConfirm = vi.spyOn(window, 'confirm')
     render(<PolicyStep />)
-    fireEvent.click(screen.getByRole('button', { name: '方針を変える' }))
+    fireEvent.click(screen.getByRole('button', { name: '減便の方針を変える' }))
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
     const draftId = useEditStore.getState().draft!.id
     // ブラウザ標準の確認ダイアログは使わず、押したボタンの場所に確認が出る(ボタンは確認に置き換わる)
-    const box = screen.getByRole('group', { name: 'Claude の下書きを捨てる確認' })
-    expect(box.textContent).toContain(`Claude の下書き ${draftId} を捨てて、この操作をしますか。`)
+    const box = screen.getByRole('group', { name: 'AI の下書きを破棄する確認' })
+    expect(box.textContent).toContain(`AI の下書き #${draftId} を破棄して、この操作をしますか。`)
     expect(screen.queryByRole('button', { name: '対象便を確かめる' })).toBeNull()
     expect(browserConfirm).not.toHaveBeenCalled()
     // まだ何も変えていない
@@ -305,22 +329,22 @@ describe('PolicyStep', () => {
 
     // 「やめる」なら Claude の下書きは残り、確認は消えて元のボタンに戻る
     fireEvent.click(within(box).getByRole('button', { name: 'やめる' }))
-    expect(screen.queryByRole('group', { name: 'Claude の下書きを捨てる確認' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'AI の下書きを破棄する確認' })).toBeNull()
     expect(useEditStore.getState().draft?.id).toBe(draftId)
     const kept = useEditStore.getState().draft
     expect(kept?.kind === 'op' && kept.record.by).toBe('claude')
     expect(screen.getByRole('button', { name: '対象便を確かめる' })).toBeTruthy()
-    expect(screen.queryByRole('region', { name: '対象便の確かめ' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '対象便の確認' })).toBeNull()
 
     // 「捨てて続ける」なら Claude の下書きを捨て、利用者の方針の下書きになる
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
-    fireEvent.click(within(screen.getByRole('group', { name: 'Claude の下書きを捨てる確認' })).getByRole('button', { name: '捨てて続ける' }))
+    fireEvent.click(within(screen.getByRole('group', { name: 'AI の下書きを破棄する確認' })).getByRole('button', { name: '破棄して続ける' }))
     const draft = useEditStore.getState().draft
     expect(draft?.id).not.toBe(draftId)
     expect(draft?.kind === 'op' && draft.record.by).toBe('user')
     expect(draft?.kind === 'op' && draft.record.op.type).toBe('applyPolicy')
     expect(useEditStore.getState().draftNotices).toEqual([expect.objectContaining({ draftId, result: 'replaced' })])
-    expect(screen.getByRole('region', { name: '対象便の確かめ' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: '対象便の確認' })).toBeTruthy()
     expect(browserConfirm).not.toHaveBeenCalled()
   })
 
@@ -381,7 +405,7 @@ describe('PolicyStep', () => {
       // 確認は1つだけ(「下書きを捨てるか」と「すべて戻すか」を続けて聞かない)
       const box = history().getByRole('group', { name: 'すべて戻す確認' })
       expect(history().getAllByRole('group')).toHaveLength(1)
-      expect(box.textContent).toContain(`Claude の下書き ${draftId} も捨てます`)
+      expect(box.textContent).toContain(`AI の下書き #${draftId} も破棄します`)
       fireEvent.click(within(box).getByRole('button', { name: 'やめる' }))
       expect(useEditStore.getState().draft?.id).toBe(draftId)
       expect(useEditStore.getState().history).toHaveLength(2)
@@ -460,14 +484,14 @@ describe('PolicyStep', () => {
       const draftId = useEditStore.getState().draft!.id
       render(<PolicyStep />)
       fireEvent.click(history().getByRole('button', { name: '元に戻す' }))
-      const box = history().getByRole('group', { name: 'Claude の下書きを捨てる確認' })
-      expect(box.textContent).toContain(`Claude の下書き ${draftId} を捨てて、この操作をしますか。`)
+      const box = history().getByRole('group', { name: 'AI の下書きを破棄する確認' })
+      expect(box.textContent).toContain(`AI の下書き #${draftId} を破棄して、この操作をしますか。`)
       fireEvent.click(within(box).getByRole('button', { name: 'やめる' }))
       expect(useEditStore.getState().draft?.id).toBe(draftId)
       expect(useEditStore.getState().history).toHaveLength(2)
 
       fireEvent.click(history().getByRole('button', { name: '元に戻す' }))
-      fireEvent.click(within(history().getByRole('group', { name: 'Claude の下書きを捨てる確認' })).getByRole('button', { name: '捨てて続ける' }))
+      fireEvent.click(within(history().getByRole('group', { name: 'AI の下書きを破棄する確認' })).getByRole('button', { name: '破棄して続ける' }))
       expect(useEditStore.getState().history).toHaveLength(1)
       expect(useEditStore.getState().draft).toBeNull()
     })
@@ -479,7 +503,7 @@ describe('PolicyStep', () => {
       })
       render(<PolicyStep />)
       fireEvent.click(history().getByRole('button', { name: '元に戻す' }))
-      expect(history().getByRole('group', { name: 'Claude の下書きを捨てる確認' })).toBeTruthy()
+      expect(history().getByRole('group', { name: 'AI の下書きを破棄する確認' })).toBeTruthy()
 
       // 足し戻しの手順などで下書きを「やめる」。確認は消える
       act(() => useEditStore.getState().discard())
@@ -498,8 +522,8 @@ describe('PolicyStep', () => {
 
       // 押し直せば、次の下書きについて確かめる
       fireEvent.click(history().getByRole('button', { name: '元に戻す' }))
-      const box = history().getByRole('group', { name: 'Claude の下書きを捨てる確認' })
-      expect(box.textContent).toContain(`Claude の下書き ${next} を捨てて、この操作をしますか。`)
+      const box = history().getByRole('group', { name: 'AI の下書きを破棄する確認' })
+      expect(box.textContent).toContain(`AI の下書き #${next} を破棄して、この操作をしますか。`)
     })
   })
 })

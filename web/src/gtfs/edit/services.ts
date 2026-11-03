@@ -317,7 +317,7 @@ export function guessServiceChoice(
   if (sundays.length === 1) sundayHoliday = sundays[0].serviceId
   else if (sundays.length > 1) {
     if (sundays.some((s) => s.addedOnHolidays === null)) {
-      notes.push('祝日一覧を読めないため、日祝のダイヤを決められません')
+      notes.push('祝日一覧を読めないため、日祝のダイヤを決められません。')
     } else {
       const onHolidays = sundays.filter((s) => s.addedOnHolidays === true)
       if (onHolidays.length === 1) sundayHoliday = onHolidays[0].serviceId

@@ -61,17 +61,17 @@ export function generatedAtText(generatedAt: string): string {
   return `${Number(m[1])}年${Number(m[2])}月${Number(m[3])}日 ${m[4]}:${m[5]}`
 }
 
-export const ACTOR_LABELS = { user: '利用者', claude: 'Claude(承認済み)' } as const
+export const ACTOR_LABELS = { user: '利用者', claude: 'AI(承認済み)' } as const
 
 /** 履歴の1件の説明 */
 export function describeRecord(record: EditRecord): string {
   const op = record.op
   if (op.type === 'applyPolicy') {
     const s = op.settings
-    return `方針:${POLICY_KIND_LABELS[s.kind]}(${periodText(s.period.start, s.period.end)}${s.excludedRoutes.length > 0 ? `、${s.excludedRoutes.length} 系統を除外` : ''})`
+    return `減便の方針:${POLICY_KIND_LABELS[s.kind]}(${periodText(s.period.start, s.period.end)}${s.excludedRoutes.length > 0 ? `、${s.excludedRoutes.length} 系統を除外` : ''})`
   }
-  if (op.type === 'addBack') return `足し戻し:${op.items.length} 便`
-  return `足し戻しの取り消し:${op.tripIds.length} 便`
+  if (op.type === 'addBack') return `平日に戻した便:${op.items.length} 便`
+  return `平日に戻す操作の取り消し:${op.tripIds.length} 便`
 }
 
 /** 足し戻しの分類(§5.3)ごとの、受け付けなかった理由 */
@@ -82,15 +82,15 @@ export function addBackRejections(
   const label = REPLACEMENT_LABELS[kind]
   return [
     ...report.duplicate.map((tripId) => ({ tripId, reason: '同じ便を2回選んでいます(2回目は数えません)。' })),
-    ...report.notFound.map((tripId) => ({ tripId, reason: '基準の GTFS にこの便がありません。' })),
+    ...report.notFound.map((tripId) => ({ tripId, reason: '減便前の GTFS にこの便がありません。' })),
     ...report.notWeekday.map((tripId) => ({ tripId, reason: '平日ダイヤの便ではありません。' })),
     ...report.ignoredExcludedRoute.map((tripId) => ({
       tripId,
-      reason: '入れ替えから外した系統の便なので、平日のダイヤのまま残っています。',
+      reason: '入れ替えから外した系統の便のため、平日ダイヤのまま残っています。',
     })),
     ...report.ignoredAlreadyPresent.map(({ tripId, sameAs }) => ({
       tripId,
-      reason: `${label}ダイヤに同じ時刻の便(${sameAs})があるため、足し戻す必要がありません。`,
+      reason: `${label}ダイヤに同じ時刻の便(${sameAs})があるため、平日に戻す必要がありません。`,
     })),
   ]
 }
@@ -121,21 +121,21 @@ export function restoreTotalsText(t: {
   const range =
     t.earliestStart && t.latestEnd ? `最も早い始発 ${t.earliestStart}、最も遅い終着 ${t.latestEnd}` : '始発・終着の時刻なし'
   const unknown = t.unknownDuration > 0 ? `。時刻が読めず合計に入れなかった便 ${t.unknownDuration} 便` : ''
-  return `足し戻した便 ${t.trips} 便、営業運行時間の合計 ${h}時間${m}分(始発から終着まで。回送・待機・点呼は含まず、必要な運転士の人数ではありません。${range})${unknown}`
+  return `平日に戻した便 ${t.trips} 便、営業運行時間の合計 ${h}時間${m}分(始発から終着まで。回送・待機・点呼は含まず、必要な運転士の人数ではありません。${range})${unknown}。`
 }
 
 export const RESTORE_DUTY_NOTE =
-  '足し戻した便を担う運転士の勤務(休息期間は継続 11 時間以上を与えるよう努めることを基本とし、継続 9 時間を下回らないこと。1日の拘束は 13 時間以内(最大 15 時間、14 時間を超えるのは週 3 回までが目安)。連続運転は 4 時間まで)は、運行管理者が乗務割で確かめてください。Dispatcher は運転士ごとの勤務を判定しません。'
+  '平日に戻した便を担当する運転士の勤務は、運行管理者が乗務割で確かめてください(休息期間は継続 11 時間以上を与えるよう努めることを基本とし、継続 9 時間を下回らないこと。1日の拘束は 13 時間以内［最大 15 時間、14 時間を超えるのは週 3 回までが目安］。連続運転は 4 時間まで)。Dispatcher は運転士ごとの勤務を判定しません。'
 
 export const SCHOOL_HOLIDAY_NOTE =
-  '足し戻した便は学校の休業日にも走ります。休校日運休の便は GTFS では表せないため、変更指示書と周知文で補ってください。'
+  '平日に戻した便は学校の休業日にも走ります。休校日運休の便は GTFS では表せないため、変更指示書と周知文で補ってください。'
 
 export const UNDO_NOTE =
-  '出力した GTFS だけでは元に戻せません。元に戻せるのは、この画面の編集の履歴と、読み込んだ元の GTFS を持っている間だけです(読み込み直すと履歴は消えます)。'
+  '出力した GTFS だけでは元に戻せません。元に戻せるのは、この画面に編集の履歴と読み込んだ元の GTFS が残っている間だけです。GTFS を読み込み直すと、履歴は消えます。'
 
 /** 「外れた場所が戻る」の手がかりの表示(戻るセルの数と、そこの推計人口) */
 export function lostCellsText(lost: { cells: number; population: number }): string {
-  return `外れたセルが戻る(${lost.cells.toLocaleString('ja-JP')} セル、約 ${Math.round(lost.population).toLocaleString('ja-JP')} 人)`
+  return `到達圏が戻る(${lost.cells.toLocaleString('ja-JP')} 区画、約 ${Math.round(lost.population).toLocaleString('ja-JP')} 人)`
 }
 
 /**

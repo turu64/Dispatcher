@@ -39,7 +39,7 @@ export function AskRestoreButton({ blocked = null, store = useChatStore }: { blo
       {note ? (
         <p className="text-xs text-muted-foreground">{note}</p>
       ) : (
-        <p className="text-xs text-muted-foreground">手がかりと停留所名から、足し戻したほうがよい便を選んで、理由つきの下書きにします。承認はあなたが押します。</p>
+        <p className="text-xs text-muted-foreground">AI が、判断材料と停留所名から平日に戻したほうがよい便を選び、理由つきの下書きにします。承認は利用者が押します。</p>
       )}
     </div>
   )

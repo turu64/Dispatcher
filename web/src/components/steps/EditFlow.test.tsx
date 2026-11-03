@@ -77,7 +77,7 @@ function openStep(key: StepKey, title: string): HTMLElement {
 
 const POLICY = '3. 減便の方針'
 const REACH = '4. 影響(到達圏)'
-const RESTORE = '5. 足し戻し'
+const RESTORE = '5. 平日便を戻す'
 /** 出力の手順の中の GTFS のタブ(タブの中の見出しには番号を付けない) */
 const EXPORT = 'GTFS を出力'
 
@@ -123,18 +123,18 @@ describe('編集の画面の流れ', () => {
 
     // ---- 方針:service は曜日の列から推定し、既定の期間は今日から当面の間 ----
     const policy = openStep('policy', POLICY)
-    expect(within(policy).getByLabelText('平日のダイヤ(入れ替える側)')).toHaveProperty('value', 'WK')
-    expect(within(policy).getByLabelText('土曜のダイヤ(写す元)')).toHaveProperty('value', 'SA')
+    expect(within(policy).getByLabelText('入れ替え元のダイヤ(平日)')).toHaveProperty('value', 'WK')
+    expect(within(policy).getByLabelText('入れ替えに使うダイヤ(土曜)')).toHaveProperty('value', 'SA')
     // 開始日はカレンダーで選ぶ。選んでいる日は、カレンダーの下の文で確かめる
     expect(within(within(policy).getByRole('group', { name: '開始日' })).getByTestId('selected-date').textContent).toContain('10月20日')
     expect(within(policy).getByText(/期間の中の祝日:/).textContent).toContain('勤労感謝の日')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
 
     // ---- 対象便を確かめる(下書き)。全曜日で便がなくなる系統(R3)があるので、確かめのチェックまで進めない ----
-    const review = within(policy).getByRole('region', { name: '対象便の確かめ' })
-    expect(within(review).getByRole('heading', { name: (n) => n.startsWith('対象便を確かめる(下書き d') })).toBeTruthy()
+    const review = within(policy).getByRole('region', { name: '対象便の確認' })
+    expect(within(review).getByRole('heading', { name: (n) => n.startsWith('対象便を確かめる(下書き #') })).toBeTruthy()
     const counts = within(review).getByLabelText('平日便の件数').textContent ?? ''
-    expect(counts).toContain('消える 3 便・入る 3 便・残る 1 便')
+    expect(counts).toContain('なくなる便 3 便・加わる便 3 便・同じ便 1 便')
     expect(counts).toContain('全曜日で便がなくなる系統:1 系統')
     expect(review.textContent).toContain('出力する GTFS の有効期間は 2026年10月20日〜2026年11月30日(42日)です。')
     // 祝日(11/23)に減便後の平日ダイヤが走る警告と、実施日までの日数の注意
@@ -146,7 +146,7 @@ describe('編集の画面の流れ', () => {
     // 方針の手順に戻っても、下書きの確かめはそのまま残る(手順は消さずに隠しているため)
     openStep('policy', POLICY)
 
-    const proceed = within(review).getByRole('button', { name: 'この内容で進める' })
+    const proceed = within(review).getByRole('button', { name: '承認する' })
     expect(proceed).toHaveProperty('disabled', true)
     fireEvent.click(within(review).getByLabelText('全曜日で便がなくなる系統があることを確かめました'))
     expect(proceed).toHaveProperty('disabled', false)
@@ -154,7 +154,7 @@ describe('編集の画面の流れ', () => {
 
     // ---- 承認したあと:適用した方針と件数 ----
     expect(useEditStore.getState().history).toHaveLength(1)
-    const summary = within(policy).getByRole('region', { name: '適用した方針' })
+    const summary = within(policy).getByRole('region', { name: '承認した減便の方針' })
     expect(summary.textContent).toContain('平日を土曜ダイヤに')
     expect(summary.textContent).toContain('2026年10月20日(火)〜当面の間')
 
@@ -162,9 +162,9 @@ describe('編集の画面の流れ', () => {
     const reach = openStep('reach', REACH)
     await waitFor(() => expect(within(reach).getByRole('heading', { name: '減便の前後' })).toBeTruthy())
     expect(within(reach).queryByText('下書き')).toBeNull()
-    const zero = within(reach).getByRole('region', { name: '運行がゼロになる場所' })
+    const zero = within(reach).getByRole('region', { name: '到達できなくなる区画・発車がなくなる停留所・便がなくなる系統' })
     expect(zero.textContent).toContain('学校前')
-    expect(zero.textContent).toContain('運行がゼロになる系統:1 系統')
+    expect(zero.textContent).toContain('便がなくなる系統:1 系統')
     // 日付は出力の有効期間の中だけ。選べる範囲は減便後の GTFS の運行期間(期間の開始日から)で、比較する日付もその中にある。
     // 範囲の文は地図の操作盤の Popover に出る(map/BandControl.test.tsx が確かめる)。手順の側には今の設定の1行が出る
     const selectable = selectablePeriod(useReachStore.getState())
@@ -177,7 +177,7 @@ describe('編集の画面の流れ', () => {
     // ---- 足し戻し:候補は手がかりの多い順(平日だけの系統 R3 が先頭)----
     const restore = openStep('restore', RESTORE)
     // 候補は系統ごとにたたんで出る。先頭の系統(全便が消える R3)を開いて、先頭の便を選ぶ
-    const candidates = within(restore).getByRole('group', { name: '足し戻す便の候補' })
+    const candidates = within(restore).getByRole('group', { name: '平日に戻す便の候補' })
     const r3 = within(candidates).getAllByRole('region')[0]
     fireEvent.click(within(r3).getByRole('button', { expanded: false }))
     const first = within(r3).getAllByRole('listitem')[0]
@@ -186,17 +186,17 @@ describe('編集の画面の流れ', () => {
     fireEvent.click(within(first).getByRole('checkbox'))
     // 休校日運休(学)の印は、足し戻した便の一覧に出る(GTFS には入れない)
     fireEvent.click(within(restore).getByLabelText('R3_0730_WK を休校日運休(学)にする'))
-    fireEvent.change(within(restore).getByLabelText(/足し戻す理由/), { target: { value: '高校の通学' } })
-    fireEvent.click(within(restore).getByRole('button', { name: '選んだ 1 便を足し戻す' }))
+    fireEvent.change(within(restore).getByLabelText(/平日に戻す理由/), { target: { value: '高校の通学' } })
+    fireEvent.click(within(restore).getByRole('button', { name: '選んだ 1 便を平日に戻す' }))
 
     expect(useEditStore.getState().history).toHaveLength(2)
-    const added = within(restore).getByRole('region', { name: '足し戻した便' })
-    expect(added.textContent).toContain('足し戻した便(1 便)')
+    const added = within(restore).getByRole('region', { name: '平日に戻した便' })
+    expect(added.textContent).toContain('平日に戻した便(1 便)')
     expect(added.textContent).toContain('理由:高校の通学')
     expect(added.textContent).toContain('休校日運休(学)')
-    expect(added.textContent).toContain('足し戻した便 1 便、営業運行時間の合計 0時間20分')
+    expect(added.textContent).toContain('平日に戻した便 1 便、営業運行時間の合計 0時間20分')
     // 足し戻すと、S9 は運行がゼロの停留所でなくなる
-    await waitFor(() => expect(within(openStep('reach', REACH)).getByRole('region', { name: '運行がゼロになる場所' }).textContent).toContain('運行がゼロになる停留所:0 件'))
+    await waitFor(() => expect(within(openStep('reach', REACH)).getByRole('region', { name: '到達できなくなる区画・発車がなくなる停留所・便がなくなる系統' }).textContent).toContain('発車がなくなる停留所:0 件'))
 
     // ---- 元に戻す:足し戻しの前(方針だけ)に戻る ----
     openStep('policy', POLICY)
@@ -205,7 +205,7 @@ describe('編集の画面の流れ', () => {
     fireEvent.click(within(history).getByRole('button', { name: '元に戻す' }))
     expect(useEditStore.getState().history).toHaveLength(1)
     openStep('restore', RESTORE)
-    expect(within(restore).queryByRole('region', { name: '足し戻した便' })).toBeNull()
+    expect(within(restore).queryByRole('region', { name: '平日に戻した便' })).toBeNull()
 
     // ---- 出力:承認済みの計画で作り直して ZIP に書く ----
     const exportStep = openStep('output', EXPORT)
@@ -230,7 +230,7 @@ describe('編集の画面の流れ', () => {
     renderSteps()
     const policy = openStep('policy', POLICY)
     fireEvent.click(within(policy).getByLabelText('平日を日祝ダイヤに'))
-    expect(within(policy).getByLabelText('日祝のダイヤ(写す元)')).toHaveProperty('value', 'SU')
+    expect(within(policy).getByLabelText('入れ替えに使うダイヤ(日祝)')).toHaveProperty('value', 'SU')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
     fireEvent.click(within(policy).getByRole('button', { name: 'やめる' }))
     expect(useEditStore.getState().draft).toBeNull()
@@ -249,11 +249,11 @@ describe('編集の画面の流れ', () => {
     if (!day24) throw new Error('11月24日のボタンがありません')
     fireEvent.click(day24)
     expect(within(startCalendar).getByTestId('selected-date').textContent).toContain('11月24日')
-    expect(within(policy).getByRole('region', { name: '方針の確かめ' }).textContent).toContain('このままでは出力できません')
+    expect(within(policy).getByRole('region', { name: '減便内容の確認' }).textContent).toContain('このままでは出力できません')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
-    const review = within(policy).getByRole('region', { name: '対象便の確かめ' })
+    const review = within(policy).getByRole('region', { name: '対象便の確認' })
     fireEvent.click(within(review).getByLabelText('全曜日で便がなくなる系統があることを確かめました'))
-    fireEvent.click(within(review).getByRole('button', { name: 'この内容で進める' }))
+    fireEvent.click(within(review).getByRole('button', { name: '承認する' }))
     expect(useEditStore.getState().history).toHaveLength(1)
 
     const exportStep = openStep('output', EXPORT)

@@ -49,8 +49,8 @@ const BOM_CHAR = '\uFEFF'
 const REPLACEMENT_CHAR = '\uFFFD'
 
 const WARNING_MESSAGES: Record<string, string> = {
-  TooFewFields: '列が見出しより少ない行があります',
-  TooManyFields: '列が見出しより多い行があります',
+  TooFewFields: '列が見出しより少ない行があります。',
+  TooManyFields: '列が見出しより多い行があります。',
 }
 
 /**
@@ -86,7 +86,7 @@ export async function loadGtfsZip(data: Blob | ArrayBuffer): Promise<GtfsFeed> {
     const format = formatOf(entry.name, raw)
     const text = raw.replace(BOM, '').replace(/\r\n?/g, '\n')
     if (text.includes(REPLACEMENT_CHAR)) {
-      warnings.push({ file: fileName, message: 'UTF-8 として読めない文字があります(GTFS-JP は UTF-8 が必須です)' })
+      warnings.push({ file: fileName, message: 'UTF-8 として読めない文字があります(GTFS-JP は UTF-8 が必須です)。' })
     }
 
     const parsed = Papa.parse<GtfsRow>(text, {
@@ -106,12 +106,12 @@ export async function loadGtfsZip(data: Blob | ArrayBuffer): Promise<GtfsFeed> {
         const quoteLine = err.index === undefined ? line : text.slice(0, err.index).split('\n').length
         throw new Error(`${fileName} の ${quoteLine ?? '?'} 行目付近に、閉じていない引用符(")があります。`)
       }
-      warnings.push({ file: fileName, line, message: WARNING_MESSAGES[err.code] ?? `読み取りに問題があります(${err.code})` })
+      warnings.push({ file: fileName, line, message: WARNING_MESSAGES[err.code] ?? `読み取りに問題があります(${err.code})。` })
     }
 
     const renamed = parsed.meta.renamedHeaders
     if (renamed && Object.keys(renamed).length > 0) {
-      warnings.push({ file: fileName, line: 1, message: `同じ列名が複数あります(${Object.values(renamed).join('、')})` })
+      warnings.push({ file: fileName, line: 1, message: `同じ列名が複数あります(${Object.values(renamed).join('、')})。` })
     }
 
     // 列が多い行に付く __parsed_extra は表に残さない(警告には出している)

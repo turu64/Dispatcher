@@ -7,7 +7,7 @@
  * - 足し戻しと取り消しは、ボタンを押したことを承認とみなし、propose のあとすぐ commit する
  */
 import type { EditOp } from '@/gtfs/edit/ops'
-import { useEditStore, type Draft } from '@/store/edit'
+import { draftName, useEditStore, type Draft } from '@/store/edit'
 
 export function draftActor(draft: Draft): 'user' | 'claude' {
   return draft.kind === 'op' ? draft.record.by : draft.by
@@ -21,7 +21,7 @@ export function claudeDraftToReplace(): Draft | null {
 
 /** Claude の下書きを捨ててよいかの確かめの文 */
 export function replaceClaudeDraftMessage(draft: Pick<Draft, 'id'>): string {
-  return `Claude の下書き ${draft.id} を捨てて、この操作をしますか。`
+  return `AI の${draftName(draft.id)} を破棄して、この操作をしますか。`
 }
 
 /**

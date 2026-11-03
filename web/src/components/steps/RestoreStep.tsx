@@ -19,7 +19,7 @@ import { overlapLongBreaks } from '@/gtfs/edit/facilityHours'
 import { createRouteDirectionTimeline } from '@/gtfs/edit/stopDiff'
 import { activeServiceIds } from '@/gtfs/calendar'
 import { formatDateJa } from '@/lib/dates'
-import { diffOf, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
+import { diffOf, draftName, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
 import { usePriorityStore } from '@/store/priority'
 import { useReachStore } from '@/store/reach'
 import { useResearchStore, type FacilityState } from '@/store/research'
@@ -43,17 +43,17 @@ import { TripLine } from './restore/TripLine'
 
 /** 到達圏を使う2つの手がかりの説明(date は比較の日付 'YYYYMMDD') */
 function reachHintNote(date: string): string {
-  return `「停留所で唯一の便」と「外れたセルが戻る」は、${formatDateJa(date)}の到達圏の前後の比較から出しています。「外れたセルが戻る」の数は、この便だけを足し戻したときの値です(ほかの便の足し戻しとの重なりは考えていません)。`
+  return `「停留所で唯一の便」と「到達圏が戻る」は、${formatDateJa(date)}の到達圏の前後の比較から出しています。「到達圏が戻る」の数は、この便だけを平日に戻したときの値です(ほかの便を平日に戻したときとの重なりは考えていません)。`
 }
 
 /** 到達圏を使う2つの手がかりを出していない理由 */
 const REACH_HINTS_ABSENT = {
-  error: '到達圏の計算に失敗したので、「停留所で唯一の便」と「外れたセルが戻る」は出していません。',
-  draft: '下書きを確かめている間は、「停留所で唯一の便」と「外れたセルが戻る」を出しません(地図と到達圏は下書きの結果のため)。承認するか、やめると出します。',
-  computing: '到達圏を計算しているので、「停留所で唯一の便」と「外れたセルが戻る」は、計算が終わってから出します。',
-  none: '到達圏の前後の比較ができると、「停留所で唯一の便」と「外れたセルが戻る」も出します。',
+  error: '到達圏の計算に失敗したため、「停留所で唯一の便」と「到達圏が戻る」は出していません。',
+  draft: '承認待ちの下書きがある間は、「停留所で唯一の便」と「到達圏が戻る」を出しません。地図と到達圏が、下書きの結果になるためです。「承認する」か「やめる」を押すと出します。',
+  computing: '到達圏を計算しているため、「停留所で唯一の便」と「到達圏が戻る」は、計算が終わってから出します。',
+  none: '到達圏の前後の比較ができると、「停留所で唯一の便」と「到達圏が戻る」も出します。',
   notRunning: (date: string) =>
-    `到達圏を比べる日(${formatDateJa(date)})は平日ダイヤの運行日ではないので、「停留所で唯一の便」と「外れたセルが戻る」は出していません。比べる日を平日にすると出します。`,
+    `比較する日付(${formatDateJa(date)})は平日ダイヤの運行日ではないため、「停留所で唯一の便」と「到達圏が戻る」は出していません。比較する日付を、地図の下の操作盤で平日にすると出します。`,
 } as const
 
 /**
@@ -76,15 +76,15 @@ function reachHintStatus(o: {
 
 /** 学校・病院の手がかりの説明(施設を読めていて、到達圏の比較があるとき) */
 const FACILITY_HINT_NOTE =
-  '「学校・病院の近く」は、停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)にある中学校・高校・大学など・入院設備のある病院(国土数値情報)に、学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発で当たる便です。'
+  '「学校・病院の近く」は、停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)にある、中学校・高校・大学などの学校と入院設備のある病院(国土数値情報)に当たる便です。当たる時間帯は、手順「前提情報」で調べた始業・終業や外来の受付時間を読めた施設ではその時刻から決め、読めない施設(着・発の片方だけ読めないときはその向き)では既定の時間帯(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)を使います。'
 
 /** 学校・病院の手がかりの状態の文。出していれば説明、出していなければ理由 */
 function facilityHintStatus(ctx: RestoreHintContext | null, facilities: FacilityState): string {
-  if (!ctx) return '「学校・病院の近く」も、到達圏の前後の比較ができてから出します(徒歩圏の距離に到達圏の条件を使うため)。'
+  if (!ctx) return '「学校・病院の近く」も、到達圏の前後の比較ができてから出します。徒歩圏の距離に、到達圏の条件を使うためです。'
   if (ctx.facilities) return FACILITY_HINT_NOTE
   if (facilities.status === 'loading') return '前提情報の学校・病院を読み込んでいます。読み込むと「学校・病院の近く」も出します。'
   if (facilities.status === 'error')
-    return '前提情報の学校・病院の参照データを読み込めなかったので、「学校・病院の近く」は出していません。手順「前提情報」で読み込み直せます。'
+    return '前提情報の学校・病院の参照データを読み込めなかったため、「学校・病院の近く」は出していません。手順「前提情報」で読み込み直せます。'
   return '手順「前提情報」で学校・病院を読み込むと、「学校・病院の近く」も出します。'
 }
 
@@ -130,11 +130,11 @@ export default function RestoreStep() {
   const version = lastVersion({ versions })
 
   return (
-    <StepSection title="5. 足し戻し" id={STEP_IDS.restore}>
+    <StepSection title="5. 平日便を戻す" id={STEP_IDS.restore}>
       {!base ? (
-        <p className="text-sm text-muted-foreground">GTFS を読み込み、減便の方針を承認すると、足し戻す便を選べます。</p>
+        <p className="text-sm text-muted-foreground">GTFS を読み込み、減便の方針を承認すると、平日に戻す便を選べます。</p>
       ) : !plan || !version ? (
-        <p className="text-sm text-muted-foreground">減便の方針を承認すると、消える平日便から足し戻す便を選べます。</p>
+        <p className="text-sm text-muted-foreground">減便の方針を承認すると、なくなる平日便から戻す便を選べます。</p>
       ) : (
         <RestorePanel base={base} plan={plan} version={version} draft={draft} />
       )}
@@ -305,9 +305,9 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   const confirmBox = (from: 'add' | 'withdraw') =>
     confirming && confirming.from === from ? (
       <InlineConfirm
-        label="Claude の下書きを捨てる確認"
+        label="AI の下書きを破棄する確認"
         message={replaceClaudeDraftMessage({ id: confirming.draftId })}
-        confirmLabel="捨てて続ける"
+        confirmLabel="破棄して続ける"
         onConfirm={() => {
           if (run(confirming.op, confirming.done, from, true) && from === 'add') clearSelection()
         }}
@@ -324,7 +324,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
     if (selectedNow.length === 0) return
     const done = run(
       { type: 'addBack', items: selectedNow.map((tripId) => ({ tripId, reason: reason.trim(), schoolDaysOnly: schoolSet.has(tripId) })) },
-      `${selectedNow.length} 便を足し戻しました。`,
+      `${selectedNow.length} 便を平日に戻しました。`,
       'add',
     )
     // 確かめの途中(まだ足し戻していない)なら、選んだ便は残す
@@ -335,8 +335,8 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
     <div className="flex min-w-0 flex-col gap-3">
       {claudeDraft && <ClaudeDraftBanner draft={claudeDraft} />}
       <p className="text-sm">
-        消える平日便 <span className="tabular-nums">{candidates.length}</span> 便から選びます。系統ごとにまとめ、全曜日で便がなくなる系統を先に出します。
-        系統を開くと、手がかりのある便を方向ごとに時刻の順に出します。
+        なくなる平日便 <span className="tabular-nums">{candidates.length}</span> 便から選びます。系統ごとにまとめ、全曜日で便がなくなる系統を先に出します。
+        系統を開くと、判断材料のある便を方向ごとに時刻の順に出します。
       </p>
       <AskRestoreButton blocked={policyDraft ? '減便の方針の下書きを承認するか、やめてから聞いてください。' : null} />
       <AiPicks picks={aiPicks} selected={selectedSet} onSelect={select} />
@@ -375,7 +375,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         </div>
         <div className="flex min-w-0 flex-col gap-1">
           <Label htmlFor="restore-hint" className="text-xs">
-            手がかり
+            判断材料
           </Label>
           <select
             id="restore-hint"
@@ -395,8 +395,8 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
 
       <p className="text-xs text-muted-foreground">
         {compareDate && editedTimeline
-          ? `編集後の最大間隔は、到達圏を比べる日(${formatDateJa(compareDate)})の、承認済みの編集後の便で数えています。`
-          : '到達圏を比べる日が決まると、方向ごとに編集後の最大間隔を出します。'}
+          ? `減便後の最大間隔は、比較する日付(${formatDateJa(compareDate)})の、承認済みの減便後の便で数えています。比較する日付は、地図の下の操作盤で変えられます。`
+          : '比較する日付が決まると、方向ごとに減便後の最大間隔を出します。比較する日付は、地図の下の操作盤で選べます。'}
       </p>
       <CandidateGroups
         groups={groups}
@@ -414,7 +414,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       {(reachStatus.kind === 'absent' || hintsPresent.includes('onlyServiceAtStop') || hintsPresent.includes('restoresLostCells')) &&
         candidates.length > 0 && <p className="text-xs text-muted-foreground">{reachStatus.text}</p>}
       {candidates.length > 0 && (
-        <section className="flex flex-col gap-0.5 text-xs text-muted-foreground" aria-label="学校・病院の手がかり">
+        <section className="flex flex-col gap-0.5 text-xs text-muted-foreground" aria-label="学校・病院の判断材料">
           <p>{facilityStatus}</p>
           {ctx?.facilities &&
             (tally.list.length > 0 ? (
@@ -440,14 +440,17 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="restore-reason" className="text-xs">
-          足し戻す理由(選んだ便すべてに入れる。任意)
+          平日に戻す理由
         </Label>
-        <Input id="restore-reason" placeholder="例:高校の通学" value={reason} onChange={(e) => setReason(e.target.value)} />
+        <Input id="restore-reason" placeholder="例:高校の通学" value={reason} onChange={(e) => setReason(e.target.value)} aria-describedby="restore-reason-note" />
+        <p id="restore-reason-note" className="text-xs text-muted-foreground">
+          選んだ便すべてに入れます。入力は任意です。
+        </p>
       </div>
-      {policyDraft && <p className="text-sm text-destructive">減便の方針の下書きを承認するか、やめてから足し戻してください。</p>}
+      {policyDraft && <p className="text-sm text-destructive">減便の方針の下書きを承認するか、やめてから便を平日に戻してください。</p>}
       {confirmBox('add') ?? (
         <Button type="button" className="self-start" disabled={selectedNow.length === 0 || policyDraft} onClick={addBack}>
-          選んだ {selectedNow.length} 便を足し戻す
+          選んだ {selectedNow.length} 便を平日に戻す
         </Button>
       )}
       {message && (
@@ -462,9 +465,9 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         reasons={addBackReasons(history)}
         disabled={policyDraft}
         confirm={confirmBox('withdraw')}
-        onWithdraw={(tripId) => run({ type: 'withdrawAddBack', tripIds: [tripId] }, '足し戻しを取り消しました。', 'withdraw')}
+        onWithdraw={(tripId) => run({ type: 'withdrawAddBack', tripIds: [tripId] }, '平日に戻す操作を取り消しました。', 'withdraw')}
       />
-      <NoteList items={[SCHOOL_HOLIDAY_NOTE, RESTORE_DUTY_NOTE]} label="足し戻しの注意" />
+      <NoteList items={[SCHOOL_HOLIDAY_NOTE, RESTORE_DUTY_NOTE]} label="便を平日に戻すときの注意" />
     </div>
   )
 }
@@ -510,7 +513,7 @@ function SelectedFacilityReasons({ trips, onUse }: { trips: readonly Candidate[]
       <h3 className="font-medium">選んだ便の近くの学校・病院</h3>
       {!single && (
         <p className="text-muted-foreground">
-          足し戻す理由は選んだ便すべてに入るので、この文を理由の欄に入れる「理由に使う」は、1便だけ選んだときに使えます。
+          平日に戻す理由は、選んだ便すべてに入ります。この文を理由の欄に入れる「理由に使う」は、1便だけ選んだときに使えます。
         </p>
       )}
       <ul className="flex flex-col divide-y rounded-md border">
@@ -579,8 +582,8 @@ function AddedBackList({
   if (version.plan.addBackTripIds.length === 0) return null
 
   return (
-    <section className="flex flex-col gap-2 border-t pt-2" aria-label="足し戻した便">
-      <h3 className="text-sm font-medium">足し戻した便({report.accepted.length} 便)</h3>
+    <section className="flex flex-col gap-2 border-t pt-2" aria-label="平日に戻した便">
+      <h3 className="text-sm font-medium">平日に戻した便({report.accepted.length} 便)</h3>
       {confirm}
       <p className="text-xs">{restoreTotalsText(totals)}</p>
       <ul className="flex flex-col divide-y rounded-md border text-xs">
@@ -598,7 +601,7 @@ function AddedBackList({
                   </span>
                 )}
               </span>
-              <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onWithdraw(id)} aria-label={`${id} の足し戻しを取り消す`}>
+              <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onWithdraw(id)} aria-label={`${id} を平日に戻す操作を取り消す`}>
                 取り消す
               </Button>
             </li>
@@ -630,11 +633,11 @@ function AddedBackList({
 function ClaudeDraftBanner({ draft }: { draft: Extract<Draft, { kind: 'op' }> }) {
   const [message, setMessage] = useState<string | null>(null)
   const op = draft.record.op
-  const what = op.type === 'addBack' ? `便を ${op.items.length} 本足し戻す` : op.type === 'withdrawAddBack' ? `足し戻しを ${op.tripIds.length} 便取り消す` : ''
+  const what = op.type === 'addBack' ? `${op.items.length} 便を平日に戻す` : op.type === 'withdrawAddBack' ? `${op.tripIds.length} 便を平日に戻す操作を取り消す` : ''
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-dashed px-2 py-1.5 text-xs">
       <p>
-        下書き {draft.id}(Claude の提案):{what}。地図と表は、この下書きの結果を「下書き」として出しています。
+        {draftName(draft.id)}(AI の提案):{what}。地図と表は、この下書きの結果を「下書き」として出しています。
       </p>
       {!draft.outcome.ok && <p className="text-destructive">{draft.outcome.message}</p>}
       {message && <p className="text-destructive">{message}</p>}

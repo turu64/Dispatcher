@@ -60,7 +60,7 @@ function FeedSummary({ feed }: { feed: GtfsFeed }) {
         <dt className="inline">有効期間:</dt>
         <dd className="inline">
           {validity ? `${formatDateJa(validity.start)}〜${formatDateJa(validity.end)}` : '(求められません)'}
-          {validity && !fromInfo && '(feed_info に無いため、calendar・calendar_dates から求めました)'}
+          {validity && !fromInfo && '(feed_info にないため、calendar・calendar_dates から求めました)'}
         </dd>
       </div>
       <div>

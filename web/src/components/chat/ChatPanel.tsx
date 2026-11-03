@@ -126,7 +126,7 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
         <div ref={listRef} role="log" aria-label="AI との会話" aria-live="polite" className="min-h-16 flex-1 overflow-y-auto overscroll-contain">
           {s.items.length === 0 && !checking && !unavailable && !statusFailed && (
             <p className="text-xs text-muted-foreground">
-              減便の方針の指示や、質問を送れます。{EXAMPLE}。AI は GTFS を書き換えません。下書きを作るので、承認はあなたが押します。
+              減便の方針の指示や質問を送れます。{EXAMPLE}。AI は GTFS を直接書き換えず、下書きを作成します。内容を確かめてから「承認する」を押してください。
             </p>
           )}
           <ChatMessages items={s.items} />
@@ -158,7 +158,7 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
           {unavailable && (
             <p role="status" className="text-xs">
               <span aria-hidden="true">! </span>
-              {CLAUDE_UNAVAILABLE}。ほかの手順は、すべてボタンで使えます。
+              {CLAUDE_UNAVAILABLE}ほかの手順はすべてボタンで使えます。
             </p>
           )}
           {status.state === 'error' && (
@@ -173,9 +173,9 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
             </div>
           )}
           {(needToken || s.tokenError) && status.state === 'ready' && status.tokenRequired && (
-            <form className="flex flex-col gap-1.5" onSubmit={onToken} aria-label="合言葉の入力">
+            <form className="flex flex-col gap-1.5" onSubmit={onToken} aria-label="認証コードの入力">
               <Label htmlFor="chat-token" className="text-xs">
-                合言葉
+                認証コード
               </Label>
               <div className="flex gap-2">
                 <Input
@@ -202,7 +202,7 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
 
           {s.budgetReached ? (
             <div className="flex flex-col gap-1.5">
-              <p className="text-xs text-muted-foreground">この会話には、もう送れません。</p>
+              <p className="text-xs text-muted-foreground">この会話にはもう送れません。</p>
               <Button type="button" size="sm" className="self-start" onClick={() => s.startOver()}>
                 新しく始める
               </Button>
@@ -250,7 +250,7 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
           {s.usage && (
             <p className="text-[11px] text-muted-foreground">
               {usageText(s.usage)}
-              <span className="block">定価で数えた額で、請求額とは違うことがあります</span>
+              <span className="block">定価で数えた額で、請求額とは違うことがあります。</span>
             </p>
           )}
           <SentLog entries={s.sentLog} />

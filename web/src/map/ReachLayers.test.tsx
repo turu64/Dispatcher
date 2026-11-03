@@ -137,11 +137,11 @@ describe('地図の操作盤(ReachLayers)', () => {
   it('押すと表示する時間帯(store の selectedHour)が変わり、凡例の見出しと表の強調行も付いてくる。計算し直しはしない', () => {
     render(<ReachLayers />)
     const before = useReachStore.getState().snapshot
-    expect(within(screen.getByRole('region', { name: '凡例' })).getByText(/6〜9時の徒歩圏/)).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '凡例' })).getByText(/6〜9時の到達圏/)).toBeTruthy()
     fireEvent.click(within(screen.getByRole('radiogroup', { name: '地図に出す時間帯' })).getByRole('radio', { name: '18〜21時' }))
     expect(useReachStore.getState().selectedHour).toBe(18)
     expect(useReachStore.getState().snapshot).toBe(before)
-    expect(within(screen.getByRole('region', { name: '凡例' })).getByText(/18〜21時の徒歩圏/)).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '凡例' })).getByText(/18〜21時の到達圏/)).toBeTruthy()
     expect(screen.getByRole('radio', { name: '18〜21時' }).getAttribute('aria-checked')).toBe('true')
 
     // 影響(到達圏)の表は、同じ selectedHour の行を強調する

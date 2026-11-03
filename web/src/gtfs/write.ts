@@ -154,7 +154,7 @@ export async function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob> {
     if (name !== null && baseTable) {
       if (name === 'trips') tripsFolder = folderOf(entry.name)
       const editedTable = input.edited.tables.get(name)
-      if (!editedTable) throw new Error(`編集後の GTFS に ${baseTable.fileName} がありません。基準にある表はすべて出力します。`)
+      if (!editedTable) throw new Error(`出力する GTFS に ${baseTable.fileName} がありません。読み込んだ GTFS にある表はすべて出力します。`)
       written.add(name)
       if (editedTable !== baseTable) {
         out.file(entry.name, serializeTable(editedTable), options)

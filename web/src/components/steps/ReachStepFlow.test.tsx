@@ -85,7 +85,7 @@ function openReach(): HTMLElement {
 
 describe('手順の一覧', () => {
   it('手順「日付と時間帯」は無く、到達圏の手順が「影響(到達圏)」になる', () => {
-    expect(STEPS.map((s) => s.title)).toEqual(['読み込み', '前提情報', '減便の方針', '影響(到達圏)', '足し戻し', '出力'])
+    expect(STEPS.map((s) => s.title)).toEqual(['読み込み', '前提情報', '減便の方針', '影響(到達圏)', '平日便を戻す', '出力'])
     expect(useStepStore.getState().order).not.toContain('dateBand')
     expect(STEPS.find((s) => s.key === 'reach')?.showMap).toBe(true)
   })

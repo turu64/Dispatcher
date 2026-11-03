@@ -66,11 +66,11 @@ describe('StopChangesTable', () => {
     expect(screen.queryByRole('table')).toBeNull()
   })
 
-  it('比べる日を出し、停留所ごとに本数・始発・最終便・最大間隔を前→後で並べる', () => {
+  it('比較する日付を出し、停留所ごとに本数・始発・最終便・最大間隔を前→後で並べる', () => {
     render(<StopChangesTable />)
     expect(screen.getByText('2026年11月4日(水)')).toBeTruthy()
-    // 比べる日を選ぶ場所は、手順の名前で案内する(番号は書かない)
-    expect(screen.getByText(/「影響\(到達圏\)」の手順の上で選んでいる日付です/)).toBeTruthy()
+    // 比較する日付を選ぶ場所は、手順の名前で案内する(番号は書かない)
+    expect(screen.getByText(/手順「影響\(到達圏\)」で、地図の下の操作盤に選んでいる日付です/)).toBeTruthy()
     const a = within(rowOf('駅前'))
     expect(a.getByText('4 → 3')).toBeTruthy()
     expect(a.getByText('07:00 → 07:00')).toBeTruthy()
@@ -90,25 +90,25 @@ describe('StopChangesTable', () => {
     const item = (label: string) => within(counts).getByText(label).parentElement as HTMLElement
     expect(item('掲示を差し替える停留所').textContent).toContain('3件')
     expect(item('掲示を差し替える停留所').textContent).toContain('全3件中')
-    expect(item('発車がすべて無くなる停留所').textContent).toContain('1件')
-    expect(item('新しく生じる発車時刻がある停留所').textContent).toContain('2件')
-    expect(item('無くなる発車時刻がある停留所').textContent).toContain('2件')
+    expect(item('発車がすべてなくなる停留所').textContent).toContain('1件')
+    expect(item('新しく加わる発車時刻がある停留所').textContent).toContain('2件')
+    expect(item('なくなる発車時刻がある停留所').textContent).toContain('2件')
     expect(screen.getByText(/掲示より早い発車は早発になりえます/)).toBeTruthy()
   })
 
-  it('新しく生じる発車時刻と無くなる発車時刻を、停留所ごとに開いて系統別に見られる', () => {
+  it('新しく加わる発車時刻となくなる発車時刻を、停留所ごとに開いて系統別に見られる', () => {
     render(<StopChangesTable />)
     const button = screen.getByRole('button', { name: '駅前(A)の発車時刻の入れ替えを見る' })
-    expect(button.textContent).toBe('新2・無3')
+    expect(button.textContent).toBe('加わる 2・なくなる 3')
     expect(button.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(button)
     const open = screen.getByRole('button', { name: '駅前(A)の発車時刻の入れ替えを閉じる' })
     expect(open.getAttribute('aria-expanded')).toBe('true')
     const detail = document.getElementById(open.getAttribute('aria-controls') ?? '') as HTMLElement
-    const added = within(detail).getByText('新しく生じる発車時刻(2本)').parentElement as HTMLElement
+    const added = within(detail).getByText('新しく加わる発車時刻(2本)').parentElement as HTMLElement
     expect(added.textContent).toContain('系統 1: 08:05')
     expect(added.textContent).toContain('系統 2: 10:00')
-    const removed = within(detail).getByText('無くなる発車時刻(3本)').parentElement as HTMLElement
+    const removed = within(detail).getByText('なくなる発車時刻(3本)').parentElement as HTMLElement
     expect(removed.textContent).toContain('系統 1: 08:00')
     expect(removed.textContent).toContain('系統 2: 09:00')
     expect(removed.textContent).toContain('系統 3: 07:30')
@@ -175,11 +175,11 @@ describe('StopChangesTable', () => {
     expect(screen.getByRole('button', { name: '駅前(A2)の発車時刻の入れ替えを見る' })).toBeTruthy()
   })
 
-  it('承認前の下書きで比べているときは、そう知らせる', () => {
+  it('承認待ちの下書きで比べているときは、そう知らせる', () => {
     const base = smallFeed()
     setReach(base, editedOf(base), '20261104', true)
     render(<StopChangesTable />)
-    expect(screen.getByText(/承認前の下書きで比べています/)).toBeTruthy()
+    expect(screen.getByText(/承認待ちの下書きで比べています/)).toBeTruthy()
   })
 
   it('行が多いときは先頭の100件だけ出し、「さらに表示」で足す', () => {

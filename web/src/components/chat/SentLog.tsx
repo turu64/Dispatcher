@@ -3,7 +3,7 @@ import type { SentLogEntry, SentPart } from '@/store/chat'
 function partLabel(p: SentPart): string {
   switch (p.kind) {
     case 'user':
-      return 'あなたの文'
+      return '利用者の文'
     case 'screen':
       return '画面の状態・操作の行'
     case 'tool_result':

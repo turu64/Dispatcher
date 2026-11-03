@@ -36,14 +36,14 @@ export function ServiceDayInfo({ day }: { day: ServiceDay }) {
       )}
       {day.exceptionApplied ? (
         <p className="text-amber-900 dark:text-amber-300">
-          calendar_dates.txt が効いています(祝日などの特別ダイヤ)。
+          calendar_dates.txt が適用されています(祝日などの特別ダイヤ)。
           {day.added.length > 0 && <>追加:<span className="font-mono">{day.added.join('、')}</span>。</>}
           {day.removed.length > 0 && <>運休:<span className="font-mono">{day.removed.join('、')}</span>。</>}
         </p>
       ) : (
         <p className="text-muted-foreground">calendar_dates.txt による変更はありません(calendar.txt のとおり)。</p>
       )}
-      <p className="text-xs text-muted-foreground">前日の便の 24時を超える出発も、この日の早朝として数えます。</p>
+      <p className="text-xs text-muted-foreground">前日の便の 24時を超える発車も、この日の早朝として数えます。</p>
     </div>
   )
 }

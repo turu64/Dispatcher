@@ -633,7 +633,7 @@ export function buildAnnouncement(input: AnnouncementInput): AnnouncementItem[] 
   const planParts = [`平日ダイヤで運行する日(祝日など平日ダイヤが走らない日を除く)は、${input.replacementLabel}ダイヤの時刻で運行します。停留所ごとの時刻は、各停留所の掲示をご覧ください。`]
   if (input.addedBackTrips > 0) {
     planParts.push(
-      `通勤・通学・通院などのため、${input.addedBackTrips} 便は平日の時刻のまま運行します${input.schoolTrips > 0 ? `(うち ${input.schoolTrips} 便は学校の休業日は運休します。時刻表では(学)の印を付けています)` : ''}。`,
+      `通勤・通学・通院などのため、${input.addedBackTrips} 便は平日の時刻のまま運行します。${input.schoolTrips > 0 ? `うち ${input.schoolTrips} 便は学校の休業日は運休します。時刻表では(学)の印を付けています。` : ''}`,
     )
   }
   if (input.excludedRouteNames.length > 0) {
@@ -663,7 +663,7 @@ export function buildAnnouncement(input: AnnouncementInput): AnnouncementItem[] 
       label: '代わりに使える運行系統・他の運送事業',
       text:
         input.alternativesNote.trim() ||
-        `${BLANK}(同じ停留所と近くの停留所に残る自社の便は、停留所ごとの掲示に載せています。他事業者の運行系統や他の運送事業は、事業者が確かめて記入してください)`,
+        `${BLANK}\n同じ停留所と近くの停留所に残る自社の便は、停留所ごとの掲示に載せています。他事業者の運行系統や他の運送事業は、事業者が確かめて記入してください。`,
     },
   ]
 }

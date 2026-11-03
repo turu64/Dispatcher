@@ -39,7 +39,7 @@ const NO_DATA = 'データ未対応'
 /** 既定の優先順位(1 が最も高い)。利用者が画面で並べ替えられる */
 export const DEFAULT_PRIORITY: readonly PriorityCategory[] = [
   { key: 'inpatient_hospital', label: '入院設備のある病院', data: 'research', dataNote: `${RESEARCH_NOTE_MEDICAL}。病床 20 床以上` },
-  { key: 'station_airport', label: '鉄道駅・空港', data: 'map', dataNote: '鉄道駅は到達圏の地図に出す(調査の対象外)。空港はデータ未対応' },
+  { key: 'station_airport', label: '鉄道駅・空港', data: 'map', dataNote: '鉄道駅は到達圏の地図に表示します(調査の対象外)。空港はデータ未対応です。' },
   { key: 'high_school', label: '高校・特別支援学校', data: 'research', dataNote: `${RESEARCH_NOTE_SCHOOL}。中等教育学校を含む` },
   { key: 'higher_education', label: '大学・高専・専修学校', data: 'research', dataNote: `${RESEARCH_NOTE_SCHOOL}。短期大学・各種学校を含む` },
   { key: 'welfare', label: '介護・福祉施設', data: 'none', dataNote: NO_DATA },

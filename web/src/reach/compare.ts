@@ -39,7 +39,7 @@ function sameArray<T>(a: readonly T[], b: readonly T[]): boolean {
 }
 
 const MISMATCH =
-  '減便の前後で、到達圏を調べたセルが一致しません。前後とも基準の GTFS の起点と同じ条件で計算してください(docs/interfaces-1103.md の追記3)。'
+  '減便の前後で、到達圏を調べた区画が一致しません。前後とも減便前の GTFS の起点と同じ条件で計算してください(docs/interfaces-1103.md の追記3)。'
 
 /**
  * 基準(before)と編集後(after)の到達圏を比べる。

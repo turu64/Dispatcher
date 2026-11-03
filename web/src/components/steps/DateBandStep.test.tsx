@@ -36,7 +36,7 @@ describe('ServiceDayInfo', () => {
       ),
     )
     expect(text).toContain('2026年11月3日(火)')
-    expect(text).toContain('calendar_dates.txt が効いています')
+    expect(text).toContain('calendar_dates.txt が適用されています')
     expect(text).toContain('追加:|06|。運休:|01|。')
   })
 

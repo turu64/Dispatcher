@@ -10,7 +10,7 @@ import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
 import { useReachStore } from '@/store/reach'
 import { useResearchStore } from '@/store/research'
-import { FacilityLayer, OTHER_STOPS_LEGEND } from './FacilityLayer'
+import { FacilityLayer, OTHER_STOPS_LEGEND, OTHER_STOPS_LEGEND_NOTE } from './FacilityLayer'
 import {
   FACILITIES_HIGHLIGHT_LAYER,
   FACILITIES_HIGHLIGHT_RING,
@@ -372,7 +372,7 @@ describe('facilitiesToGeoJson(事業者)', () => {
 })
 
 describe('FacilityLayer の事業者と強調', () => {
-  it('重なるほかの事業者の停留所を出し、凡例に「ほかの事業者の停留所(こちらの停留所から 300m 以内)N か所」を出す', async () => {
+  it('重なるほかの事業者の停留所を出し、凡例に「ほかの事業者の停留所 N か所(こちらの停留所から 300m 以内・独自の記号)」を出す', async () => {
     loadOperatorFile()
     const { layers, sources } = fakeMap()
     render(<FacilityLayer visible />)
@@ -384,8 +384,10 @@ describe('FacilityLayer の事業者と強調', () => {
       ['P11:となりバス', 'となり2'],
     ])
     const legend = screen.getByRole('group', { name: '施設の凡例' })
-    expect(legend.textContent).toContain(`${OTHER_STOPS_LEGEND}2 か所`)
-    expect(OTHER_STOPS_LEGEND).toBe('ほかの事業者の停留所(こちらの停留所から 300m 以内)')
+    expect(legend.textContent).toContain(`${OTHER_STOPS_LEGEND} 2 か所`)
+    expect(legend.textContent).toContain(OTHER_STOPS_LEGEND_NOTE)
+    expect(OTHER_STOPS_LEGEND).toBe('ほかの事業者の停留所')
+    expect(OTHER_STOPS_LEGEND_NOTE).toBe('(こちらの停留所から 300m 以内・独自の記号)')
     // 事業者そのものは施設の種類として数えない
     expect(legend.textContent).not.toContain('バス事業者')
   })

@@ -46,6 +46,7 @@ export default function ReachStep() {
 
   return (
     <StepSection title="4. 影響(到達圏)">
+      <p className="text-xs text-muted-foreground">到達圏は、その時間帯に発車がある停留所・鉄道駅へ歩いて行ける範囲です。</p>
       {!feed ? (
         <p className="text-sm text-muted-foreground">GTFS を読み込むと、選んだ日付・時間帯の到達圏を計算します。</p>
       ) : (
@@ -79,7 +80,7 @@ export default function ReachStep() {
         </>
       )}
       <p className="text-xs text-muted-foreground">
-        鉄道駅は時刻表データが無いため、6〜24時のすべての時間帯で使えるものとみなしています。
+        鉄道駅は時刻表データがないため、6〜24時のすべての時間帯で使えるものとみなしています。
       </p>
     </StepSection>
   )
@@ -153,13 +154,13 @@ export function RefStatus({
         <AlertDescription className="text-amber-950">
           <p>{r.message}</p>
           <p>
-            参照データが無いため、すべてのセルを下で選ぶ区分とみなし、鉄道駅は無いものとして計算しています。推計人口は出せません。
+            参照データがないため、すべての区画を下で選ぶ区分とみなし、鉄道駅はないものとして計算しています。推計人口は出せません。
           </p>
         </AlertDescription>
       </Alert>
       <div className="flex flex-col gap-1.5">
         <span className="text-sm font-medium" id="reach-fallback-label">
-          参照データが無いときの区分
+          参照データがないときの区分
         </span>
         <ToggleGroup
           type="single"
@@ -205,7 +206,7 @@ export function OriginSummary({ snapshot, invalidStops }: { snapshot: ReachSnaps
   const { origin, result } = snapshot
   const excluded: string[] = []
   if (origin.unused > 0) excluded.push(`stop_times.txt に出てこない ${formatCount(origin.unused)} 件`)
-  if (origin.noBoarding > 0) excluded.push(`乗れる行が無い(すべて終点か pickup_type が 1。降車専用)${formatCount(origin.noBoarding)} 件`)
+  if (origin.noBoarding > 0) excluded.push(`乗れる行がない(すべて終点か pickup_type が 1。降車専用)${formatCount(origin.noBoarding)} 件`)
   if (origin.nonStop > 0) excluded.push(`駅舎・出入口など(location_type が 0・空以外)${formatCount(origin.nonStop)} 件`)
   if (invalidStops > 0) excluded.push(`stops.txt の緯度経度が読めない ${formatCount(invalidStops)} 件`)
   return (
@@ -214,7 +215,7 @@ export function OriginSummary({ snapshot, invalidStops }: { snapshot: ReachSnaps
         {formatDateJa(snapshot.date)}、{snapshot.stepHours}時間ごと。起点の停留所{' '}
         <span className="tabular-nums">{formatCount(origin.origins)}</span> 件
         {result.excludedStops > 0 && (
-          <>(うち、緯度経度が地域メッシュの範囲外((0, 0) など)で計算から除いた {formatCount(result.excludedStops)} 件)</>
+          <>(うち、緯度経度が地域メッシュの範囲外［(0, 0) など］のため計算から除いた停留所 {formatCount(result.excludedStops)} 件)</>
         )}
         。
       </p>
@@ -249,16 +250,16 @@ export function ReachSummaryTable({
   return (
     <div className="flex flex-col gap-2">
       <OriginSummary snapshot={snapshot} invalidStops={invalidStops} />
-      <dl className="flex flex-col gap-0.5 text-sm" aria-label="調べたセルの内訳">
+      <dl className="flex flex-col gap-0.5 text-sm" aria-label="調べた区画の内訳">
         <div>
-          <dt className="inline">調べたセル(125m):</dt>
+          <dt className="inline">調べた区画(125m 四方のセル):</dt>
           <dd className="inline tabular-nums">
             {formatCount(summary.totalCells)}(都市部 {formatCount(cellsByClass.urban)}・郊外 {formatCount(cellsByClass.suburban)}
             ・中山間・地方 {formatCount(cellsByClass.rural)}){popText(summary.totalPopulation)}
           </dd>
         </div>
         <div className="pl-3">
-          <dt className="inline">到達できる見込みのあるセル:</dt>
+          <dt className="inline">徒歩圏に停留所・駅がある区画(セル):</dt>
           <dd className="inline tabular-nums">
             {formatCount(summary.coverableCells)}
             {popText(summary.coverablePopulation)}(表の割合の分母)
@@ -266,7 +267,7 @@ export function ReachSummaryTable({
         </div>
         {hasPopulation && (
           <div className="pl-3">
-            <dt className="inline">ダイヤと関係なく外れるセル:</dt>
+            <dt className="inline">徒歩圏に停留所・駅がない区画(セル):</dt>
             <dd className="inline tabular-nums">
               {formatCount(summary.nonCoverableCells)}
               {popText(summary.nonCoverablePopulation)}
@@ -281,13 +282,13 @@ export function ReachSummaryTable({
       )}
       <div className="flex flex-col gap-1 text-xs text-muted-foreground">
         <p>
-          外れるセル:到達できる見込みのあるセルのうち、その時間帯に出発がある停留所と鉄道駅のどれも、区分ごとの徒歩圏に無いセル。
-          割合の分母は、到達できる見込みのあるセル(区分ごとの徒歩圏に、停留所(出発の有無は問わない)か鉄道駅があるセル)です。
+          到達圏から外れる区画:徒歩圏に停留所・駅がある区画のうち、その時間帯に発車がある停留所と鉄道駅のどれも、区分ごとの徒歩圏にない区画です。
+          割合の分母は、徒歩圏に停留所・駅がある区画(区分ごとの徒歩圏に、発車の有無を問わず停留所または鉄道駅がある区画)です。
         </p>
         {hasPopulation && (
           <p>
-            ダイヤと関係なく外れるセル:停留所から調べる範囲には入るものの、そのセルの区分の徒歩圏に停留所も鉄道駅も無いセル。
-            どの時間帯でも外れるので、時間帯ごとの数と割合には含めず、地図にも塗りません。
+            徒歩圏に停留所・駅がない区画:停留所の周辺として調べる範囲には入るものの、区分ごとの徒歩圏に停留所も鉄道駅もない区画です。
+            ダイヤにかかわらず到達できないため、時間帯ごとの数と割合には含めず、地図にも塗りません。
           </p>
         )}
         {hasPopulation && <p>推計人口は 250m メッシュの人口を 4 等分した値です。</p>}
@@ -314,7 +315,7 @@ function SingleTable({ snapshot, selectedHour }: { snapshot: ReachSnapshot; sele
       <TableHeader>
         <TableRow>
           <TableHead className="px-1.5">時間帯</TableHead>
-          <TableHead className="px-1.5 text-right">外れるセル</TableHead>
+          <TableHead className="px-1.5 text-right">到達圏外の区画</TableHead>
           {hasPopulation && <TableHead className="px-1.5 text-right">推計人口</TableHead>}
         </TableRow>
       </TableHeader>
@@ -341,7 +342,7 @@ function SingleTable({ snapshot, selectedHour }: { snapshot: ReachSnapshot; sele
       {hasPopulation && (
         <TableFooter className="bg-transparent font-normal">
           <TableRow data-non-coverable="true">
-            <TableCell className="px-1.5 whitespace-normal">ダイヤと関係なく外れる</TableCell>
+            <TableCell className="px-1.5 whitespace-normal">徒歩圏に停留所・駅なし</TableCell>
             <TableCell className={CELL_CLASS}>{formatCount(summary.nonCoverableCells)}</TableCell>
             <TableCell className={CELL_CLASS}>{formatCount(summary.nonCoverablePopulation)}人</TableCell>
           </TableRow>
@@ -372,10 +373,10 @@ function CompareTable({ snapshot, selectedHour }: { snapshot: ReachSnapshot; sel
         <TableHeader>
           <TableRow>
             <TableHead className="px-1 align-bottom whitespace-nowrap">時間帯</TableHead>
-            <TableHead className="px-1 text-right align-bottom whitespace-normal">減便前の外れる割合</TableHead>
-            <TableHead className="px-1 text-right align-bottom whitespace-normal">減便後の外れる割合</TableHead>
+            <TableHead className="px-1 text-right align-bottom whitespace-normal">減便前の到達圏外の割合</TableHead>
+            <TableHead className="px-1 text-right align-bottom whitespace-normal">減便後の到達圏外の割合</TableHead>
             <TableHead className="px-1 text-right align-bottom whitespace-normal">増減(ポイント)</TableHead>
-            <TableHead className="px-1 text-right align-bottom whitespace-normal">減便で外れたセル{hasPopulation && '(推計人口)'}</TableHead>
+            <TableHead className="px-1 text-right align-bottom whitespace-normal">減便で到達圏から外れた区画{hasPopulation && '(推計人口)'}</TableHead>
             <TableHead className="px-1 text-right align-bottom whitespace-normal">新たに到達{hasPopulation && '(推計人口)'}</TableHead>
           </TableRow>
         </TableHeader>
@@ -404,8 +405,8 @@ function CompareTable({ snapshot, selectedHour }: { snapshot: ReachSnapshot; sel
         </TableBody>
       </Table>
       <p className="text-xs text-muted-foreground">
-        割合はセルの数で数え、分母はどちらも減便前の到達できる見込みのあるセル({formatCount(denominator)})です。同じ日付の、減便前(読み込んだ
-        GTFS)と減便後{snapshot.draft ? '(承認前の下書き)' : ''}を比べています。
+        割合は区画の数で数えます。分母はどちらも、減便前の GTFS で徒歩圏に停留所・駅がある区画({formatCount(denominator)})です。同じ日付の、減便前(読み込んだ
+        GTFS)と減便後{snapshot.draft ? '(承認待ちの下書き)' : ''}を比べています。
       </p>
     </div>
   )
@@ -419,18 +420,18 @@ export function ZeroServiceSummary({ snapshot }: { snapshot: ReachSnapshot }) {
   const feedStops = zeroStops.filter((s) => s.scope === 'feed').length
   const feedRoutes = zeroRoutes.filter((r) => r.scope === 'feed').length
   return (
-    <section className="flex flex-col gap-2 text-sm" aria-label="運行がゼロになる場所">
+    <section className="flex flex-col gap-2 text-sm" aria-label="到達できなくなる区画・発車がなくなる停留所・便がなくなる系統">
       <p className={comparison.dayLostCells > 0 ? 'font-medium text-destructive' : undefined}>
         {comparison.dayLostCells > 0 && <span aria-hidden="true">⚠ </span>}
-        一日を通して乗れなくなる場所:<span className="tabular-nums">{formatCount(comparison.dayLostCells)}</span> セル
+        一日を通して到達できなくなる区画:<span className="tabular-nums">{formatCount(comparison.dayLostCells)}</span> 区画
         {hasPopulation && <>(推計人口 {formatCount(comparison.dayLostPopulation)} 人)</>}
         <span className="block text-xs font-normal text-muted-foreground">
-          減便前はこの日のどれかの時間帯に到達でき、減便後はどの時間帯にも到達できないセル。
+          減便前はこの日のどれかの時間帯に到達でき、減便後はどの時間帯にも到達できない区画です。
         </span>
       </p>
       <div>
         <p className="font-medium">
-          運行がゼロになる停留所:<span className="tabular-nums">{formatCount(zeroStops.length)}</span> 件
+          発車がなくなる停留所:<span className="tabular-nums">{formatCount(zeroStops.length)}</span> 件
           {zeroStops.length > 0 && <>(うち、出力のどの日にも便が来ない停留所 {formatCount(feedStops)} 件)</>}
         </p>
         {feedStops > 0 && (
@@ -444,7 +445,7 @@ export function ZeroServiceSummary({ snapshot }: { snapshot: ReachSnapshot }) {
             {zeroStops.slice(0, MAX_ZERO_STOPS).map((s) => (
               <li key={s.stopId} className="break-words">
                 <ScopeMark scope={s.scope} /> {s.name}
-                <span className="ml-1 font-mono text-muted-foreground">{s.stopId}</span>(減便前のこの日の出発 {s.beforeDepartures} 本)
+                <span className="ml-1 font-mono text-muted-foreground">{s.stopId}</span>(減便前のこの日の発車 {s.beforeDepartures} 本)
               </li>
             ))}
             {zeroStops.length > MAX_ZERO_STOPS && <li className="text-muted-foreground">ほか {zeroStops.length - MAX_ZERO_STOPS} 件</li>}
@@ -453,21 +454,21 @@ export function ZeroServiceSummary({ snapshot }: { snapshot: ReachSnapshot }) {
       </div>
       <div>
         <p className="font-medium">
-          運行がゼロになる系統:<span className="tabular-nums">{formatCount(zeroRoutes.length)}</span> 系統
+          便がなくなる系統:<span className="tabular-nums">{formatCount(zeroRoutes.length)}</span> 系統
           {zeroRoutes.length > 0 && <>(うち、全曜日で便がなくなる系統 {formatCount(feedRoutes)})</>}
         </p>
         {zeroRoutes.length > 0 && (
           <>
             <p className="text-xs text-destructive">
               <span aria-hidden="true">⚠ </span>
-              運行がゼロになります。路線の休止の届出に当たるかを運輸支局に確認してください。
+              この系統は便がなくなります。路線の休止の届出に当たるかを運輸支局に確認してください。
             </p>
             <ul className="mt-1 flex flex-col text-xs">
               {zeroRoutes.map((r) => (
                 <li key={r.routeId} className="break-words">
                   <ScopeMark scope={r.scope} /> {r.name}
                   {r.name !== r.routeId && <span className="ml-1 font-mono text-muted-foreground">{r.routeId}</span>}(
-                  {r.scope === 'feed' ? `基準の全便 ${r.beforeTrips} 本` : `減便前のこの日の便 ${r.beforeTrips} 本`})
+                  {r.scope === 'feed' ? `減便前の全便 ${r.beforeTrips} 便` : `減便前のこの日の便 ${r.beforeTrips} 便`})
                 </li>
               ))}
             </ul>
@@ -475,7 +476,7 @@ export function ZeroServiceSummary({ snapshot }: { snapshot: ReachSnapshot }) {
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        記号:全日=出力のどの日にも便が無い、この日=選んだ日だけ便が 0。Dispatcher は届出の要否を判定しません。
+        記号:「全日」は出力のどの日にも便がなく、「この日」は選んだ日だけ便が 0 です。Dispatcher は届出の要否を判定しません。
       </p>
     </section>
   )
@@ -500,20 +501,20 @@ export function ReachNotes({ snapshot }: { snapshot: ReachSnapshot }) {
   const { departures, result, summary } = snapshot
   const notes: string[] = []
   if (departures.skippedBlankTime > 0) {
-    notes.push(`departure_time が空の行 ${formatCount(departures.skippedBlankTime)} 件は、出発として数えていません(補間はしません)。`)
+    notes.push(`departure_time が空の行 ${formatCount(departures.skippedBlankTime)} 件は、発車として数えていません(補間はしません)。`)
   }
   if (departures.skippedInvalidTime > 0) {
-    notes.push(`departure_time が時刻として読めない行 ${formatCount(departures.skippedInvalidTime)} 件は、出発として数えていません。`)
+    notes.push(`departure_time が時刻として読めない行 ${formatCount(departures.skippedInvalidTime)} 件は、発車として数えていません。`)
   }
   if (departures.hasFrequencies) {
     notes.push('frequencies.txt があります。運行間隔で表した便は展開せず、stop_times.txt の時刻だけで数えています。')
   }
   if (!result.usedFallback && summary.totalCells === 0) {
     notes.push(
-      '参照データは読めましたが、停留所のまわりの 250m メッシュの人口がすべて 0 人(または参照データの範囲の外)のため、調べるセルがありません(人口が 1 人以上のセルだけを調べます)。停留所の緯度経度と、参照データの範囲(1次メッシュ)を確かめてください。',
+      '参照データは読めましたが、停留所のまわりの 250m メッシュの人口がすべて 0 人(または参照データの範囲の外)のため、調べる区画がありません(人口が 1 人以上の区画だけを調べます)。停留所の緯度経度と、参照データの範囲(1次メッシュ)を確かめてください。',
     )
   }
-  if (departures.counts.size === 0) notes.push(snapshot.baseline ? '減便後のこの日に出発がある停留所はありません。' : 'この日に出発がある停留所はありません。')
+  if (departures.counts.size === 0) notes.push(snapshot.baseline ? '減便後のこの日に発車がある停留所はありません。' : 'この日に発車がある停留所はありません。')
   if (notes.length === 0) return null
   return (
     <Alert className="border-amber-400 bg-amber-50 text-amber-950">
@@ -545,7 +546,7 @@ export function ReachConditions({
       <summary className="cursor-pointer">
         <span className="font-medium">徒歩圏の条件</span>
         <span className="text-xs text-muted-foreground">
-          (バス停/鉄道駅:
+          (停留所/鉄道駅:
           {REGION_CLASSES.map((c) => `${REGION_LABELS[c]} ${params.walkMinutes[c].bus}/${params.walkMinutes[c].rail}分`).join('、')}
           。人口密度 {params.densityThreshold.toLocaleString('ja-JP')}人/km²)
         </span>
@@ -566,7 +567,7 @@ export function ReachConditions({
               <span className="pb-1.5 text-xs">{REGION_LABELS[c]}</span>
               <NumberField
                 id={`reach-${c}-bus`}
-                label="バス停"
+                label="停留所"
                 value={params.walkMinutes[c].bus}
                 unit="分"
                 max={MAX_WALK_MINUTES}

@@ -3,7 +3,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RouteDiff, TripBrief, WeekdayDiff } from '@/gtfs/edit/diff'
 import type { Form2Result } from '@/gtfs/edit/form2'
-import { DiffCounts, Notice47Table, RouteDiffList } from './DiffTables'
+import { DiffCounts, ExcludedRoutes, Notice47Table, RouteDiffList } from './DiffTables'
 
 afterEach(cleanup)
 
@@ -70,16 +70,16 @@ describe('DiffCounts(平日の便数の前後と内訳)', () => {
     const group = screen.getByLabelText('平日便の件数')
     const text = group.textContent ?? ''
     // 11 + 5 + 6 = 22 便が 4 + 0 + 6 = 10 便に
-    expect(text).toContain('平日の便数(前 → 後)')
+    expect(text).toContain('平日の便数(減便前 → 減便後)')
     expect(within(group).getByText('22')).toBeTruthy()
     expect(within(group).getByText('10')).toBeTruthy()
-    expect(text).toContain('消える 3 便・入る 1 便・残る 2 便')
+    expect(text).toContain('なくなる便 3 便・加わる便 1 便・同じ便 2 便')
     // 大きな数字の前後に、減った数が出る
     expect(text).toContain('−12 便(55%)')
     // 前後の棒は、スクリーンリーダー向けに数字で説明する
-    expect(screen.getByRole('img').getAttribute('aria-label')).toBe('前 22 便(残る 2・消える 3)、後 10 便(残る 2・入る 1)')
+    expect(screen.getByRole('img').getAttribute('aria-label')).toBe('減便前 22 便(同じ便 2・なくなる便 3)、減便後 10 便(同じ便 2・加わる便 1)')
     // 先頭は便数の枠(注意の枠より前)
-    const hero = text.indexOf('平日の便数(前 → 後)')
+    const hero = text.indexOf('平日の便数(減便前 → 減便後)')
     expect(hero).toBeGreaterThanOrEqual(0)
     expect(hero).toBeLessThan(text.indexOf('全曜日で便がなくなる系統が'))
   })
@@ -97,6 +97,24 @@ describe('DiffCounts(平日の便数の前後と内訳)', () => {
     rerender(<DiffCounts diff={calm} result={result} />)
     expect(container.querySelector('[data-vanishing-banner]')).toBeNull()
     expect(screen.getByLabelText('平日便の件数').textContent).toContain('全曜日で便がなくなる系統:0 系統')
+  })
+
+  it('棒の見えるラベルも「減便前」「減便後」で書く', () => {
+    const { container } = render(<DiffCounts diff={diff} result={result} />)
+    const bars = container.querySelector('[role="img"]')!
+    expect(bars.textContent).toBe('減便前減便後')
+  })
+
+  it('平日に戻す便があれば、受け付けた便数と、受け付けなかった便の理由の場所を出す', () => {
+    const withAddBack = {
+      plan: { kind: 'saturday' },
+      report: {
+        addBack: { requested: 3, accepted: ['a', 'b'], duplicate: ['c'], notFound: [], notWeekday: [], ignoredExcludedRoute: [], ignoredAlreadyPresent: [] },
+      },
+    } as unknown as Form2Result
+    render(<DiffCounts diff={diff} result={withAddBack} />)
+    const text = screen.getByLabelText('平日便の件数').textContent ?? ''
+    expect(text).toContain('平日に戻す便:選んだ 3 便のうち、受け付け 2 便、受け付けなかった便 1 便(理由は手順「平日便を戻す」に出ています)')
   })
 
   it('便数が変わらないとき、減った数を出さない', () => {
@@ -118,6 +136,32 @@ describe('RouteDiffList(系統ごと)', () => {
   })
 })
 
+describe('RouteDiffList の便の一覧', () => {
+  it('なくなる便・加わる便に、減便前か減便後かを添え、入れ替えに使うダイヤの注意を出す', () => {
+    const { container } = render(<RouteDiffList diff={diff} />)
+    const r3 = container.querySelector('li[data-route="R3"]')!
+    expect(r3.textContent).toContain('加わる便(1 便)')
+    expect(r3.textContent).toContain('x(減便後)')
+    expect(r3.textContent).toContain('入れ替えに使うダイヤに、季節によって走らなくなった便が残っていることがあります。加わる便の系統と時刻を確かめてください。')
+    const r1 = container.querySelector('li[data-route="R1"]')!
+    expect(r1.textContent).toContain('なくなる便(2 便)')
+    expect(r1.textContent).toContain('a(減便前)')
+  })
+})
+
+describe('ExcludedRoutes(入れ替えから外す系統)', () => {
+  it('入れ替えに使うダイヤの便がない系統の注意と、外した系統の説明を出す', () => {
+    const stats = [
+      { routeId: 'R2', name: '2番', weekday: 5, replacement: 0 },
+      { routeId: 'R1', name: '1番', weekday: 11, replacement: 4 },
+    ]
+    const { container } = render(<ExcludedRoutes stats={stats} excluded={[]} onChange={() => {}} replacementLabel="土曜" />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('土曜の便がない系統(1 系統。表の先頭)は、入れ替えると全曜日で便がなくなります。路線の休止の届出に当たるかを運輸支局に確認してください。')
+    expect(text).toContain('外した系統は平日の便をそのまま残し、土曜の便は加わりません。')
+  })
+})
+
 describe('Notice47Table(届出の目安:時間帯ごとの便数)', () => {
   it('見出しを言い換え、公示第47号の区分であることを添える', () => {
     const { container } = render(<Notice47Table diff={diff} />)
@@ -131,7 +175,7 @@ describe('Notice47Table(届出の目安:時間帯ごとの便数)', () => {
   it('第46号の下限の印(▼)の意味と、運輸支局への確認を 1 つの短い文で説明する', () => {
     const { container } = render(<Notice47Table diff={diff} />)
     const note = container.querySelector('details > p')!
-    expect(note.textContent).toContain('▼は、平日の回数が 11〜15 回の系統が 10 回以下になり、公示第46号の表の下限を下回ることを示す')
+    expect(note.textContent).toContain('「▼」は、平日の回数が 11〜15 回の系統が 10 回以下になり、公示第46号の表の下限を下回ることを示す')
     expect(note.textContent).toContain('届出の区分は運輸支局に確認してください')
     // 長い説明にしない(1〜2 行)
     expect((note.textContent ?? '').length).toBeLessThan(120)

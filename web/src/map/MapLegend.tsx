@@ -84,8 +84,8 @@ export default function MapLegend({
       <ul className="flex flex-col gap-1">
         {diff ? (
           <>
-            <DiffRow kind="lost" label="減便で外れた" count={compare?.counts?.lost} />
-            <DiffRow kind="bothUnreachable" label="両方で外れる" count={compare?.counts?.bothUnreachable} />
+            <DiffRow kind="lost" label="減便で到達圏から外れた" count={compare?.counts?.lost} />
+            <DiffRow kind="bothUnreachable" label="前後とも到達圏外" count={compare?.counts?.bothUnreachable} />
             <DiffRow kind="gained" label="新たに到達" count={compare?.counts?.gained} />
             <DiffRow kind="bothReachable" label="両方で到達" count={compare?.counts?.bothReachable} />
           </>
@@ -93,11 +93,11 @@ export default function MapLegend({
           <>
             <li className="flex items-center gap-2">
               <Swatch color={REACH_COLORS.reachable} opacity={REACH_FILL_OPACITY_REACHABLE} />
-              徒歩圏内
+              到達圏内
             </li>
             <li className="flex items-center gap-2">
               <Swatch color={REACH_COLORS.unreachable} opacity={REACH_FILL_OPACITY} />
-              徒歩圏から外れる
+              到達圏から外れる
             </li>
           </>
         )}
@@ -105,24 +105,24 @@ export default function MapLegend({
           <li className="flex items-start gap-2" data-non-coverable="true">
             <EmptySwatch />
             <span>
-              塗らないセル:ダイヤと関係なく外れる <span className="tabular-nums">{formatCount(nonCoverableCells)}</span>{' '}
-              セル(区分の徒歩圏に停留所も駅も無い)
+              塗らない区画:徒歩圏に停留所・駅がない <span className="tabular-nums">{formatCount(nonCoverableCells)}</span>{' '}
+              区画(ダイヤにかかわらず到達できない)
             </span>
           </li>
         )}
         <li className="flex items-center gap-2">
           <Dot fill={STOP_COLORS.active} />
-          停留所(この時間帯に出発あり)
+          停留所(この時間帯に発車あり)
         </li>
         <li className="flex items-center gap-2">
           <Dot fill={STOP_COLORS.inactive} />
-          停留所(出発なし)
+          停留所(発車なし)
         </li>
         {diff && zeroTotal > 0 && (
           <li className="flex items-start gap-2" data-zero-stops="true">
             <ZeroMark />
             <span>
-              運行がゼロになる停留所 <span className="tabular-nums">{formatCount(zeroTotal)}</span> 件(出力のどの日にも便が来ない{' '}
+              発車がなくなる停留所 <span className="tabular-nums">{formatCount(zeroTotal)}</span> 件(出力のどの日にも便が来ない{' '}
               <span className="tabular-nums">{formatCount(compare!.zeroStops.feed)}</span> 件)
             </span>
           </li>
@@ -147,7 +147,7 @@ function DiffRow({ kind, label, count }: { kind: keyof typeof REACH_DIFF_COLORS;
         {count !== undefined && (
           <>
             {' '}
-            <span className="tabular-nums">{formatCount(count)}</span> セル
+            <span className="tabular-nums">{formatCount(count)}</span> 区画
           </>
         )}
       </span>

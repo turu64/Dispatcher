@@ -9,7 +9,7 @@ import { stopDiff, type StopDiffResult } from '@/gtfs/edit/stopDiff'
 import { movementSummary } from '@/gtfs/edit/notice'
 import { form2Texts } from '@/gtfs/validate/edit'
 import { formatDateJa, todayInJapan } from '@/lib/dates'
-import { diffOf, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
+import { diffOf, draftName, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
 import { useResearchStore } from '@/store/research'
 import { checkedAtText } from '@/claude/research'
 import MovementQuoteView from './MovementQuote'
@@ -137,8 +137,8 @@ export default function ChangeOrder() {
               印刷する
             </Button>
             <p className="text-xs text-muted-foreground">
-              印刷の画面で送信先を「PDF に保存」にすると、PDF にできます。A4 縦1枚に収まるように作っていますが、保護する便や変わる系統が多いときは2枚目に続きます(便は省かずにすべて載せます)。
-              {draft && `承認前の下書き(${draft.id})は含めていません。`}
+              印刷の画面で送信先を「PDF に保存」にすると、PDF にできます。A4 縦1枚に収まるように作っていますが、平日に戻した便や変わる系統が多いときは2枚目に続きます(便は省かずにすべて載せます)。
+              {draft && `承認待ちの${draftName(draft.id)} は反映していません。`}
             </p>
           </div>
           <Sheet base={base} history={history} version={version} customFeedVersion={customFeedVersion.trim()} />
@@ -246,7 +246,7 @@ function Sheet({
         <h2 className="text-base font-bold print:text-[13px]">変更指示書(減便)</h2>
         <p>
           作成日:{formatDateJa(today)}
-          <span className="ml-2 text-muted-foreground print:text-black">元の GTFS:{base.label}</span>
+          <span className="ml-2 text-muted-foreground print:text-black">読み込んだ GTFS:{base.label}</span>
         </p>
       </header>
 
@@ -260,9 +260,9 @@ function Sheet({
         </p>
       </Section>
 
-      <Section title="2. 方針と承認">
+      <Section title="2. 減便の方針と承認">
         <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 print:grid-cols-2">
-          <Field label="方針">{POLICY_KIND_LABELS[plan.kind]}</Field>
+          <Field label="減便の方針">{POLICY_KIND_LABELS[plan.kind]}</Field>
           <Field label="期間" wide>
             {periodText(plan.period.start, plan.period.end)}
             <span className="text-muted-foreground print:text-black">
@@ -274,12 +274,12 @@ function Sheet({
           </Field>
           <Field label="除外した系統">{excluded.length > 0 ? excluded.join('、') : 'なし'}</Field>
           <Field label="平日の便数">
-            {weekdayBefore} → {weekdayAfter} 便(消える {diff.removed.length}、入る {diff.added.length}、同じ {diff.same.length})
+            {weekdayBefore} → {weekdayAfter} 便(なくなる便 {diff.removed.length}・加わる便 {diff.added.length}・同じ便 {diff.same.length})
           </Field>
           <Field label="全曜日で便がなくなる系統">
             {vanishing.length > 0 ? `${vanishing.length} 系統(下の表の ✕)` : 'なし'}
           </Field>
-          <Field label="方針の承認" wide>
+          <Field label="減便の方針の承認" wide>
             {policyRecord ? (
               <>
                 {approvedAtText(policyRecord.at)}({ACTOR_TEXT[policyRecord.by]})
@@ -289,7 +289,7 @@ function Sheet({
             )}
           </Field>
           {addBackRecords.length > 0 && (
-            <Field label="足し戻しの承認" wide>
+            <Field label="便を平日に戻す承認" wide>
               {addBackRecords.length} 回(最後は {approvedAtText(addBackRecords[addBackRecords.length - 1].at)}、
               利用者が作成 {addBackRecords.filter((r) => r.by === 'user').length} 回・AI の下書き {addBackRecords.filter((r) => r.by === 'claude').length} 回)
             </Field>
@@ -310,7 +310,7 @@ function Sheet({
               <table
                 key={i}
                 className="w-full table-fixed border-collapse text-center"
-                aria-label="系統と時間帯ごとの平日の便数(前 → 後)"
+                aria-label="系統と時間帯ごとの平日の便数(減便前 → 減便後)"
               >
                 <colgroup>
                   <col className="w-[34%]" />
@@ -338,7 +338,7 @@ function Sheet({
                           {r.vanishes && (
                             <span className="shrink-0 font-semibold">
                               <span aria-hidden="true">✕</span>
-                              <span className="sr-only">(全曜日で無くなる)</span>
+                              <span className="sr-only">(全曜日で便なし)</span>
                             </span>
                           )}
                           <span className="truncate">{r.routeName}</span>
@@ -368,23 +368,23 @@ function Sheet({
           ))}
         </p>
         <p className="text-muted-foreground print:text-black">
-          ✕は全曜日で便が無くなる系統。始発停留所の出発時刻で数え、変わらない {unchangedRoutes} 系統は省いています。
+          ✕は全曜日で便がなくなる系統です。始発停留所の発車時刻で数え、変わらない {unchangedRoutes} 系統は省いています。
           <span className="print-hide">回数の単位と届出の区分は判定しません。</span>届出の区分は運輸支局に確認してください。
         </p>
       </Section>
 
-      <Section title="4. 保護する便(足し戻した便)">
+      <Section title="4. 平日に戻した便">
         {trips.length === 0 ? (
-          <p>足し戻した便はありません。</p>
+          <p>平日に戻した便はありません。</p>
         ) : (
           <>
             <p>
               {trips.length} 便
-              {schoolTrips > 0 && `(うち休校日運休(学) ${schoolTrips} 便)`}。{restoreTotalsText(totals)}
+              {schoolTrips > 0 && `(うち休校日運休 ${schoolTrips} 便)`}。{restoreTotalsText(totals)}
             </p>
             <div className={`grid grid-cols-1 gap-x-3 ${trips.length > TRIP_ROWS_SPLIT ? 'print:grid-cols-2' : ''}`}>
               {splitHalf(trips, TRIP_ROWS_SPLIT).map((part, i) => (
-                <table key={i} className="w-full border-collapse text-left" aria-label="保護する便と理由">
+                <table key={i} className="w-full border-collapse text-left" aria-label="平日に戻した便と理由">
                   <thead>
                     <tr className="border-b border-foreground/40">
                       <th scope="col" className="py-0.5 font-medium">
@@ -400,7 +400,7 @@ function Sheet({
                         理由
                       </th>
                       <th scope="col" className="py-0.5 font-medium">
-                        印
+                        休校日
                       </th>
                     </tr>
                   </thead>
@@ -426,7 +426,7 @@ function Sheet({
               ))}
             </div>
             <p className="text-muted-foreground print:text-black">
-              (学)は休校日運休の便の印です。<span className="print-hide">{SCHOOL_HOLIDAY_NOTE}</span>
+              (学)は学校の休業日に運休する便の記号です。<span className="print-hide">{SCHOOL_HOLIDAY_NOTE}</span>
             </p>
             <div>
               <p className="font-medium">勤務の確認(運行管理者が乗務割で確かめた項目に印を付ける)</p>
@@ -468,7 +468,7 @@ function Sheet({
           </Field>
         </dl>
         <p className="print-hide text-muted-foreground">
-          方針の期間の開始日は {formatDateJa(plan.period.start)} です。
+          減便の期間の開始日は {formatDateJa(plan.period.start)} です。
         </p>
       </Section>
 
@@ -511,15 +511,15 @@ function Sheet({
                 {formatDateJa(stops.date)}の発車を比べた件数)
               </>
             ) : (
-              '—(比べる平日が見つかりません。減便後の GTFS に平日ダイヤの運行日があるか確かめてください)'
+              '比較する平日が見つかりません。減便後の GTFS に平日ダイヤの運行日があるか確かめてください。'
             )}
           </Field>
           {stops && stops.stopsWithAdded > 0 && (
-            <Field label="新しく生じる発車時刻がある停留所">
-              {stops.stopsWithAdded} 件(掲示より早い発車は早発になりえます)
+            <Field label="新しく加わる発車時刻がある停留所">
+              {stops.stopsWithAdded} 件。掲示より早い発車は早発になりえます。
             </Field>
           )}
-          {stops && stops.stopsLosingAll > 0 && <Field label="発車がすべて無くなる停留所">{stops.stopsLosingAll} 件</Field>}
+          {stops && stops.stopsLosingAll > 0 && <Field label="発車がすべてなくなる停留所">{stops.stopsLosingAll} 件</Field>}
         </dl>
         <p className="print-hide text-muted-foreground">停留所ごとの一覧と掲示の案は、「停留所の一覧」「周知文」のタブにあります。</p>
         <ul className="grid grid-cols-2 gap-x-3">
@@ -540,7 +540,7 @@ function Sheet({
               {/* 見出しで絞った結果だけを言う(廃止など、絞り込みの語に当たらない事実がありうるため) */}
               調べた {movement.researched} 事業者の結果
               {movement.latestCheckedAt && `(確認日時 ${checkedAtText(movement.latestCheckedAt)})`}
-              に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、前提情報の手順で確かめてください。
+              に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、手順「前提情報」で確かめてください。
             </p>
           ) : (
             <>
@@ -551,12 +551,12 @@ function Sheet({
                 ))}
               </div>
               {movement.quotes.length > MOVEMENT_MAX_OPERATORS && (
-                <p>ほか {movement.quotes.length - MOVEMENT_MAX_OPERATORS} 事業者の動きは、前提情報の手順で確かめられます。</p>
+                <p>ほか {movement.quotes.length - MOVEMENT_MAX_OPERATORS} 事業者の動きは、手順「前提情報」で確かめられます。</p>
               )}
             </>
           )}
           <p className="text-muted-foreground print:text-black">
-            調べた結果の引用です。確認の後に変わっていることがあるため、出典で確かめてください。
+            調べた結果の引用です。確認日時の後に変わっていることがあるため、出典で確かめてください。
           </p>
         </div>
       </Section>

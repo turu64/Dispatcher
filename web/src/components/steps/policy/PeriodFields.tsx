@@ -20,7 +20,7 @@ export function PolicyKindField({
 }) {
   return (
     <fieldset className="flex flex-col gap-1.5">
-      <legend className="mb-1 text-sm font-medium">方針の種類</legend>
+      <legend className="mb-1 text-sm font-medium">ダイヤの入れ替え方</legend>
       {(['weekdayToSaturday', 'weekdayToSundayHoliday'] as const).map((k) => (
         <label key={k} className="flex items-center gap-2 text-sm">
           <input type="radio" name="policy-kind" value={k} checked={kind === k} onChange={() => onChange(k)} className="size-4 accent-primary" />
@@ -28,7 +28,7 @@ export function PolicyKindField({
         </label>
       ))}
       {sameSatSun && (
-        <p className="text-xs text-muted-foreground">この GTFS では土曜と日祝が同じ時刻表のため、2つの方針は同じ結果になります。</p>
+        <p className="text-xs text-muted-foreground">この GTFS では土曜と日祝が同じ時刻表のため、どちらの入れ替え方でも同じ結果になります。</p>
       )}
     </fieldset>
   )
@@ -106,7 +106,7 @@ export function PeriodFields({
       </p>
       {periodMessage && <p className="text-sm text-destructive">{periodMessage}</p>}
       {periodProblems.length > 0 && (
-        <div role="group" aria-label="期間の確かめ" className="flex flex-col gap-1">
+        <div role="group" aria-label="期間の確認" className="flex flex-col gap-1">
           {periodProblems.map((p, i) => (
             <p
               key={`${p.code}-${i}`}
@@ -154,7 +154,7 @@ function HolidaysInPeriod({ state, validity }: { state: HolidayState; validity: 
       {uncovered.map((r) => (
         <p key={r.start} className="text-amber-900">
           <span aria-hidden="true">! </span>
-          {formatDateJa(r.start)}〜{formatDateJa(r.end)} の祝日は、内閣府の一覧にまだ無いため確かめていません。
+          {formatDateJa(r.start)}〜{formatDateJa(r.end)} の祝日は内閣府の一覧にまだないため、確かめていません。
         </p>
       ))}
     </div>

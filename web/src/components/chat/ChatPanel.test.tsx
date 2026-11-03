@@ -135,7 +135,7 @@ describe('AI に相談の欄', () => {
     await screen.findByText(new RegExp(CLAUDE_UNAVAILABLE.replace(/[()]/g, '\\$&')))
     expect(box().disabled).toBe(true)
     expect(sendButton().disabled).toBe(true)
-    expect(screen.getByText(/ほかの手順は、すべてボタンで使えます/)).toBeTruthy()
+    expect(screen.getByText(/ほかの手順はすべてボタンで使えます/)).toBeTruthy()
     expect(fake.api.create).not.toHaveBeenCalled()
     // 方針の手順は、AI が使えなくても入力できる
     expect(screen.getByRole('button', { name: '対象便を確かめる' })).toBeTruthy()
@@ -162,7 +162,7 @@ describe('AI に相談の欄', () => {
     const storage = memoryStorage()
     const { store, fake } = setup({ storage }, { available: true, tokenRequired: true })
     render(<ChatPanel store={store} />)
-    const field = (await screen.findByLabelText('合言葉')) as HTMLInputElement
+    const field = (await screen.findByLabelText('認証コード')) as HTMLInputElement
     expect(field.type).toBe('password')
     fireEvent.change(box(), { target: { value: 'こんにちは' } })
     expect(sendButton().disabled).toBe(true)
@@ -170,17 +170,17 @@ describe('AI に相談の欄', () => {
     fireEvent.change(field, { target: { value: 'secret-1' } })
     fireEvent.click(screen.getByRole('button', { name: '設定' }))
     expect(storage.value).toBe('secret-1')
-    await waitFor(() => expect(screen.queryByLabelText('合言葉')).toBeNull())
+    await waitFor(() => expect(screen.queryByLabelText('認証コード')).toBeNull())
     expect(sendButton().disabled).toBe(false)
 
     fake.api.create = vi.fn(async () => {
-      throw new ClaudeRequestError(401, '合言葉が違います。')
+      throw new ClaudeRequestError(401, '認証コードが違います。')
     })
     await act(async () => {
       fireEvent.click(sendButton())
     })
     expect(await screen.findByText(TOKEN_WRONG)).toBeTruthy()
-    expect(screen.getByLabelText('合言葉')).toBeTruthy()
+    expect(screen.getByLabelText('認証コード')).toBeTruthy()
     expect(storage.value).toBeNull()
     // 送れなかった文は入力欄に戻っている
     expect(box().value).toBe('こんにちは')
@@ -189,7 +189,7 @@ describe('AI に相談の欄', () => {
   it('送ると中継に届き、返答が途中から出て、考えています…は返答が終わるまで出る。利用額と送った情報も出る', async () => {
     const { store, fake } = setup()
     render(<ChatPanel store={store} />)
-    await screen.findByText('減便の方針の指示や、質問を送れます', { exact: false })
+    await screen.findByText('減便の方針の指示や質問を送れます', { exact: false })
     await typeAndSend('平日を土曜ダイヤにしてください')
     expect(box().value).toBe('')
     const message = fake.posts.find((p) => p.body.kind === 'message')!.body as Extract<SessionPostBody, { kind: 'message' }>
@@ -359,7 +359,7 @@ describe('AI に相談の欄', () => {
     await typeAndSend('こんにちは')
     const log = within(details).getByRole('list', { name: '送った情報' })
     expect(log.textContent).toContain('09:30:00')
-    expect(log.textContent).toContain('あなたの文')
+    expect(log.textContent).toContain('利用者の文')
     expect(log.textContent).toContain('こんにちは')
     expect(log.textContent).toContain('画面の状態・操作の行')
     expect(screen.getByText(/AI に送る情報\(1 回\)/)).toBeTruthy()
@@ -379,7 +379,7 @@ describe('AI に相談の欄', () => {
     await waitFor(() => expect(box().disabled).toBe(false))
     act(() => store.setState({ research: { active: true, openRuns: ['r1'], phase: '検索', paused: false, saved: 3, total: 12, delegated: 0, outcome: null } }))
     expect(screen.getByText('調べています 3 / 12 件(検索)')).toBeTruthy()
-    expect(screen.getByText('調査の間は、この画面を開いたままにしてください')).toBeTruthy()
+    expect(screen.getByText('調査の間はこの画面を開いたままにしてください。')).toBeTruthy()
   })
 
   it('下書きの知らせに、該当する手順へ移るボタンが付く。押すとその手順が開き、欄に焦点が移る', async () => {
@@ -399,7 +399,7 @@ describe('AI に相談の欄', () => {
     })
     // 番号と名前は手順の一覧(steps/registry.ts)の並びから出す
     const jump = await screen.findByRole('button', { name: '手順3「減便の方針」へ移る' })
-    expect(screen.getByText('下書き d1 を作りました。上の欄で確かめて承認してください')).toBeTruthy()
+    expect(screen.getByText('下書き #1 を作りました。上の欄で確かめて承認してください。')).toBeTruthy()
     // まだ読み込みの手順を開いていて、方針の手順は隠れている
     expect(useStepStore.getState().current).toBe('load')
     expect(screen.queryByRole('heading', { name: '3. 減便の方針' })).toBeNull()
@@ -441,7 +441,7 @@ describe('AI に候補を聞く', () => {
 
     const needToken = setup({}, { available: true, tokenRequired: true })
     const second = render(<AskRestoreButton store={needToken.store} />)
-    await screen.findByText(/合言葉を入れると使えます/)
+    await screen.findByText(/認証コードを入れると使えます/)
     expect((screen.getByRole('button', { name: 'AI に候補を聞く' }) as HTMLButtonElement).disabled).toBe(true)
     second.unmount()
 

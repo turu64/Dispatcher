@@ -169,7 +169,7 @@ export function PolicyForm({
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          入力の有効期間(feed_info の feed_start_date・feed_end_date、calendar の期間)が分からないため、方針を選べません。
+          入力の有効期間(feed_info の feed_start_date・feed_end_date、calendar の期間)が分からないため、減便の方針を選べません。
         </AlertDescription>
       </Alert>
     )
@@ -207,7 +207,7 @@ export function PolicyForm({
         <legend className="mb-1 text-sm font-medium">入れ替える service</legend>
         <ServiceSelect
           id="policy-weekday"
-          label="平日のダイヤ(入れ替える側)"
+          label="入れ替え元のダイヤ(平日)"
           services={services}
           value={weekday}
           guess={guess?.weekday ?? null}
@@ -216,7 +216,7 @@ export function PolicyForm({
         />
         <ServiceSelect
           id="policy-replacement"
-          label={`${REPLACEMENT_LABELS[kind]}のダイヤ(写す元)`}
+          label={`入れ替えに使うダイヤ(${REPLACEMENT_LABELS[kind]})`}
           services={services}
           value={replacement}
           guess={guess?.[replacementRole] ?? null}
@@ -230,7 +230,8 @@ export function PolicyForm({
       <ExcludedRoutes stats={routeStats} excluded={excluded} onChange={setExcluded} replacementLabel={REPLACEMENT_LABELS[kind]} />
 
       <fieldset className="flex flex-col gap-1.5">
-        <legend className="mb-1 text-sm font-medium">減便の理由(変更指示書に載せる。任意)</legend>
+        <legend className="mb-1 text-sm font-medium">減便の理由</legend>
+        <p className="text-xs text-muted-foreground">変更指示書に載せます。入力は任意です。</p>
         <select
           aria-label="理由の区分"
           className="h-8 rounded-md border bg-background px-2 text-sm"
@@ -247,7 +248,7 @@ export function PolicyForm({
         <Input aria-label="理由のメモ" placeholder="メモ(例:運転士 2 名の欠員)" value={note} onChange={(e) => setNote(e.target.value)} />
       </fieldset>
 
-      <IssueList issues={problems.map((p) => problemIssue(p, weekdayCalendarNote))} title="方針の確かめ" />
+      <IssueList issues={problems.map((p) => problemIssue(p, weekdayCalendarNote))} title="減便内容の確認" />
       {message && (
         <Alert variant="destructive">
           <AlertDescription>{message}</AlertDescription>
@@ -255,9 +256,9 @@ export function PolicyForm({
       )}
       {confirmingReplace && draft ? (
         <InlineConfirm
-          label="Claude の下書きを捨てる確認"
+          label="AI の下書きを破棄する確認"
           message={replaceClaudeDraftMessage(draft)}
-          confirmLabel="捨てて続ける"
+          confirmLabel="破棄して続ける"
           onConfirm={() => submit(true)}
           onCancel={() => setConfirmDraftId(null)}
         />

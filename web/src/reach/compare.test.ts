@@ -72,7 +72,7 @@ describe('compareReach', () => {
   })
 
   it('調べたセル・区分・見込み・推計人口・時間帯の数が前後で違えばエラーにする', () => {
-    const msg = /到達圏を調べたセルが一致しません/
+    const msg = /到達圏を調べた区画が一致しません/
     expect(() => compareReach(BEFORE, { ...BEFORE, cells: BEFORE.cells.slice(0, 4) })).toThrow(msg)
     expect(() => compareReach(BEFORE, { ...BEFORE, classes: ['urban', 'urban', 'rural', 'rural', 'urban'] })).toThrow(msg)
     expect(() => compareReach(BEFORE, { ...BEFORE, coverable: [true, true, true, true, true] })).toThrow(msg)

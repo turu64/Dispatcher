@@ -144,7 +144,7 @@ export default function ReachLayers() {
   return (
     <>
       <MapLegend
-        caption={`${formatDateJa(snapshot.date)} ${bandLabel}の徒歩圏${baseline ? `(${MODE_LABELS[mode]})` : ''}`}
+        caption={`${formatDateJa(snapshot.date)} ${bandLabel}の到達圏${baseline ? `(${MODE_LABELS[mode]})` : ''}`}
         computing={computing}
         showStations={stations !== null && stations.length > 0}
         nonCoverableCells={nonCoverable}

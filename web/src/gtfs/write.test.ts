@@ -146,7 +146,7 @@ describe('writeGtfsZip', () => {
     // 編集後に表が欠けていれば、書かずに止める
     const missing = new Map(input.edited.tables)
     missing.delete('stops')
-    await expect(write({ ...input, edited: { tables: missing, warnings: [] } })).rejects.toThrow('編集後の GTFS に stops.txt がありません')
+    await expect(write({ ...input, edited: { tables: missing, warnings: [] } })).rejects.toThrow('出力する GTFS に stops.txt がありません')
   })
 
   it('出典のファイルを足し、基準に同じ名前があれば別の名前にする', async () => {

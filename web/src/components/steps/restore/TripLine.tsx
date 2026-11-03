@@ -26,7 +26,7 @@ export function TripLine({
       </span>
       <span className="font-mono text-[10px] text-muted-foreground">
         {trip.tripId}
-        {trip.feed === 'base' ? '(基準)' : '(編集後)'}
+        {trip.feed === 'base' ? '(減便前)' : '(減便後)'}
       </span>
       {hints && hints.length > 0 && (
         <span className="flex flex-wrap gap-1">

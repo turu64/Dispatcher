@@ -234,7 +234,7 @@ export async function fetchFacilities(
     else files.push(s.value)
   })
   if (reasons.size > 0) {
-    return { ok: false, mesh1s: list, message: `施設の参照データを読み込めませんでした(${[...reasons].join('、')})。` }
+    return { ok: false, mesh1s: list, message: `施設の参照データを読み込めませんでした。${[...reasons].join('、')}。` }
   }
   if (files.length === 0) {
     return {

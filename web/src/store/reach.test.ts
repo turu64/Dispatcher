@@ -811,7 +811,7 @@ describe('到達圏の前後の比較(基準の起点を使う)', () => {
     expect(store.getState().snapshot?.date).toBe('20261110')
     expect(store.getState().snapshot?.baseline).toBeDefined()
 
-    expect(store.getState().setDate('20261105')).toBe('比べられるのは減便後の GTFS の運行期間(2026/11/10〜2026/11/30)の日付です。')
+    expect(store.getState().setDate('20261105')).toBe('比較できるのは減便後の GTFS の運行期間(2026/11/10〜2026/11/30)の日付です。')
     expect(store.getState().date).toBe('20261110')
     expect(store.getState().setDate('20261112')).toBeNull()
     await settle()

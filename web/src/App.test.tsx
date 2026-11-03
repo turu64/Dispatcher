@@ -96,7 +96,7 @@ describe('画面の骨組み', () => {
     const names = within(nav)
       .getAllByRole('button')
       .map((b) => b.textContent)
-    expect(names).toEqual(['11. 読み込み', '22. 前提情報', '33. 減便の方針', '44. 影響(到達圏)', '55. 足し戻し', '66. 出力'])
+    expect(names).toEqual(['11. 読み込み', '22. 前提情報', '33. 減便の方針', '44. 影響(到達圏)', '55. 平日便を戻す', '66. 出力'])
     expect(useStepStore.getState().order).toEqual(STEP_KEYS)
   })
 
@@ -117,9 +117,9 @@ describe('画面の骨組み', () => {
   it('読み込んだあとは見出しからどの手順へも移れ、見出しの番号は一覧の並びになる。次へ・戻るでも移る', () => {
     load()
     render(<App />)
-    fireEvent.click(stepButton('5. 足し戻し'))
+    fireEvent.click(stepButton('5. 平日便を戻す'))
     expect(useStepStore.getState().current).toBe('restore')
-    expect(screen.getByRole('heading', { name: '5. 足し戻し' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '5. 平日便を戻す' })).toBeTruthy()
     expect(screen.queryByRole('heading', { name: '1. GTFS を読み込む' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^次へ/ }))
     expect(screen.getByRole('heading', { name: '6. 出力' })).toBeTruthy()
@@ -131,7 +131,7 @@ describe('画面の骨組み', () => {
     // どの手順でも「AI に相談」の欄が左の欄の下に出る
     expect(screen.getByRole('region', { name: 'AI に相談' })).toBeTruthy()
     // 鉄道駅の扱いの注記
-    expect(screen.getByText('鉄道駅は時刻表データが無いため、6〜24時のすべての時間帯で使えるものとみなしています。')).toBeTruthy()
+    expect(screen.getByText('鉄道駅は時刻表データがないため、6〜24時のすべての時間帯で使えるものとみなしています。')).toBeTruthy()
   })
 
   it('地図を出さない手順(方針・出力)では地図の入れ物を隠し、地図に戻ると map.resize() を呼ぶ', () => {

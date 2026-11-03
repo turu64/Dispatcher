@@ -384,7 +384,7 @@ SU,20261108,1`),
     // calendar の行が無いので weekdayCalendarOutside には当たらない
     expect(problems.filter((p) => p.severity === 'error').map((p) => p.code)).toEqual(['weekdayNotActive'])
     expect(problems.find((p) => p.code === 'weekdayNotActive')?.message).toBe(
-      '平日の service(WK)は、新しい有効期間(2026年11月1日〜2026年11月30日)の中で1日も走りません(calendar と calendar_dates で確かめました)。このままでは平日の便が出力から除かれ、方針が何も変えないため、平日の service か期間を選び直してください。',
+      '平日の service(WK)は、新しい有効期間(2026年11月1日〜2026年11月30日)の中で1日も走りません(calendar と calendar_dates で確かめました)。このままでは平日の便が出力から除かれ、ダイヤも入れ替わらないため、平日の service か減便の期間を選び直してください。',
     )
     const outcome = applyForm2(feed, basePlan(), OPTS)
     expect(outcome.ok).toBe(false)
@@ -597,7 +597,7 @@ SU,20261108,1`),
     const outTripIds = new Set(tripIds(out))
     expect(rows(out, 'stop_times').every((r) => outTripIds.has(r.trip_id ?? ''))).toBe(true)
     expect(report.warnings.find((w) => w.code === 'orphanStopTimesDropped')?.message).toBe(
-      'stop_times の行のうち、trips.txt に無い trip_id の 2 行を除きました(trip_id:GHOST、R1_0805_WK)。入力からある問題で、残すと同じ trip_id の便の停車に混ざるため除いています。',
+      'stop_times の行のうち、trips.txt にない trip_id の 2 行を除きました(trip_id:GHOST、R1_0805_WK)。入力からある問題で、残すと同じ trip_id の便の停車に混ざるため除いています。',
     )
     expect(codes({ report } as Form2Result)).toEqual(['orphanStopTimesDropped'])
 

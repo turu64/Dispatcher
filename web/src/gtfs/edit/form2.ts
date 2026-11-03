@@ -187,7 +187,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   const inputValidity = feedValidity(base)
   const validity = inputValidity ? policyValidity(inputValidity, plan.period) : null
   // checkPolicy が通れば起きない(便が無い、有効期間が決まらない・空ならエラーになる)
-  if (!tripsTable || !inputValidity || !validity) return { ok: false, message: '方針を適用できません(trips.txt か有効期間がありません)。' }
+  if (!tripsTable || !inputValidity || !validity) return { ok: false, message: 'trips.txt か有効期間がないため、減便の方針を適用できません。' }
 
   const warnings: { code: string; message: string }[] = []
   const warn = (code: string, message: string) => warnings.push({ code, message })
@@ -383,7 +383,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
     const rest = ids.length > MAX_EXAMPLES ? ` ほか ${ids.length - MAX_EXAMPLES} 件` : ''
     warn(
       'orphanStopTimesDropped',
-      `stop_times の行のうち、trips.txt に無い trip_id の ${orphanRows} 行を除きました(trip_id:${shown}${rest})。入力からある問題で、残すと同じ trip_id の便の停車に混ざるため除いています。`,
+      `stop_times の行のうち、trips.txt にない trip_id の ${orphanRows} 行を除きました(trip_id:${shown}${rest})。入力からある問題で、残すと同じ trip_id の便の停車に混ざるため除いています。`,
     )
   }
   const stopTimesOrder = stopTimesOrderOf(stopTimeRows, tripRows)
@@ -412,7 +412,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   const routeIds = new Set((base.tables.get('routes')?.rows ?? []).map((r) => trimmed(r.route_id)))
   const unknownRoutes = plan.excludedRoutes.map((r) => r.trim()).filter((r) => !routeIds.has(r))
   if (unknownRoutes.length > 0) {
-    warn('unknownExcludedRoute', `除外する系統のうち、routes.txt に無い route_id があります(${unknownRoutes.join('、')})。`)
+    warn('unknownExcludedRoute', `除外する系統のうち、routes.txt にない route_id があります(${unknownRoutes.join('、')})。`)
   }
   // 便があり、新しい有効期間に走るものだけ(期間に走らない夏の平日などは入れ替えなくても差し支えない)
   const otherWeekdays = describeServices(base, null).filter(
@@ -428,7 +428,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   if (withBlock > 0) {
     warn(
       'blockIdCopied',
-      `写した便のうち ${withBlock} 便に block_id があり、そのまま写しました。足し戻した便や残した便と運用が重ならないかは確かめていません。`,
+      `入れ替えに使うダイヤから加わる便のうち ${withBlock} 便に block_id があり、そのまま加えました。平日に戻した便や残した便と運用が重ならないかは確かめていません。`,
     )
   }
 
@@ -491,15 +491,15 @@ export function applyRevert(base: GtfsFeed, opts: RevertOptions): Form2Outcome {
   const versionProblem = opts.feedVersion === undefined ? null : feedVersionProblem(opts.feedVersion)
   if (versionProblem) return { ok: false, message: versionProblem }
   const restoreFrom = opts.restoreFrom.trim()
-  if (!isValidGtfsDate(restoreFrom)) return { ok: false, message: `戻す日の形が正しくありません(${opts.restoreFrom})。` }
+  if (!isValidGtfsDate(restoreFrom)) return { ok: false, message: `元のダイヤに戻す日の形が正しくありません(${opts.restoreFrom})。` }
   const tripsTable = base.tables.get('trips')
   const inputValidity = feedValidity(base)
-  if (!tripsTable || !inputValidity) return { ok: false, message: '減便をやめる版を作れません(trips.txt か入力の有効期間がありません)。' }
+  if (!tripsTable || !inputValidity) return { ok: false, message: 'trips.txt か入力の有効期間がないため、元のダイヤに戻す版を作れません。' }
   const validity = policyValidity(inputValidity, { start: restoreFrom, end: null })
   if (!validity) {
     return {
       ok: false,
-      message: `戻す日(${formatDate(restoreFrom)})が入力の有効期間の末日(${formatDate(inputValidity.end)})より後です。入力の有効期間の中の日を選んでください。`,
+      message: `元のダイヤに戻す日(${formatDate(restoreFrom)})が入力の有効期間の末日(${formatDate(inputValidity.end)})より後です。入力の有効期間の中の日を選んでください。`,
     }
   }
 
@@ -508,13 +508,13 @@ export function applyRevert(base: GtfsFeed, opts: RevertOptions): Form2Outcome {
   if (restoreFrom < inputValidity.start) {
     warn(
       'periodStartClamped',
-      `戻す日(${formatDate(restoreFrom)})が入力の開始日より前のため、入力の開始日(${formatDate(inputValidity.start)})にそろえました。`,
+      `元のダイヤに戻す日(${formatDate(restoreFrom)})が入力の開始日より前のため、入力の開始日(${formatDate(inputValidity.start)})にそろえました。`,
     )
   }
   if (validity.days <= 7) {
     warn(
       'shortValidity',
-      `有効期間が ${validity.days} 日です。GTFS-JP は有効期間が 7 日以下のデータを作成しないこととしているため、出力できません。戻す日を変えてください。`,
+      `有効期間が ${validity.days} 日です。GTFS-JP は有効期間が 7 日以下のデータを作成しないこととしているため、出力できません。元のダイヤに戻す日を変えてください。`,
     )
   }
 
@@ -696,7 +696,7 @@ function feedInfoOf(
   if (table && first) {
     const missing = FEED_INFO_DATE_FIELDS.filter((f) => !table.fields.includes(f))
     if (missing.length > 0) {
-      warn('feedInfoColumnsAdded', `feed_info.txt に ${missing.join('・')} の列が無いため、後ろに足しました(GTFS-JP 第4.0版で必須)。`)
+      warn('feedInfoColumnsAdded', `feed_info.txt に ${missing.join('・')} の列がないため、後ろに足しました(GTFS-JP 第4.0版で必須)。`)
     }
     const row: GtfsRow = { ...first, feed_version: after }
     if (trimmed(first.feed_start_date) !== validity.start) row.feed_start_date = validity.start
@@ -717,7 +717,7 @@ function feedInfoOf(
     feed_end_date: validity.end,
     feed_version: after,
   }
-  warn('feedInfoCreated', 'feed_info.txt が無いため、agency.txt の1行目から作りました(GTFS-JP 第4.0版で必須)。事業者名・URL・言語を確かめてください。')
+  warn('feedInfoCreated', 'feed_info.txt がないため、agency.txt の1行目から作りました(GTFS-JP 第4.0版で必須)。事業者名・URL・言語を確かめてください。')
   if (table) {
     const fields = [...table.fields, ...FEED_INFO_FIELDS.filter((f) => !table.fields.includes(f))]
     return { table: { ...table, fields, rows: [row] }, version }

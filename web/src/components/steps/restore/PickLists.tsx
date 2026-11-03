@@ -156,7 +156,7 @@ export function AiPicks({
     <section className="flex flex-col gap-1 rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5 text-xs" aria-label="AI のおすすめ">
       <h3 className="font-medium">AI のおすすめ({picks.length} 便)</h3>
       <p className="text-muted-foreground">
-        AI の下書きにある便です。下書きをそのまま承認するか、ここで一部を選んで足し戻せます(選んで足し戻すと、AI の下書きは捨てます)。
+        AI の下書きにある便です。下書きをそのまま承認するか、ここで一部を選んで平日に戻せます。選んで戻すと、AI の下書きは破棄します。
       </p>
       <ul className="flex flex-col divide-y rounded-md border bg-background">
         {picks.map(({ candidate: c, item }) => (
@@ -173,7 +173,7 @@ export function AiPicks({
                 <TripLine trip={c.trip} hints={c.detail.hints} lostCells={c.detail.lostCells} />
                 <span className="text-muted-foreground">
                   AI の理由:{item.reason === '' ? '(なし)' : item.reason}
-                  {item.schoolDaysOnly && '(休校日運休(学))'}
+                  {item.schoolDaysOnly && '・休校日運休(学)'}
                 </span>
               </span>
             </label>

@@ -5,7 +5,7 @@ import type { EditRecord, Form2Plan, PolicyReason } from '@/gtfs/edit/ops'
 import type { Form2Result } from '@/gtfs/edit/form2'
 import { form2Texts, timingNotices } from '@/gtfs/validate/edit'
 import { todayInJapan } from '@/lib/dates'
-import { blockingIssues, diffOf, useEditStore, type BaseGtfs } from '@/store/edit'
+import { blockingIssues, diffOf, draftName, useEditStore, type BaseGtfs } from '@/store/edit'
 import { draftActor, replaceClaudeDraftMessage } from '../editActions'
 import { FromTo, InlineConfirm, IssueList, NoteList } from '../editParts'
 import {
@@ -32,16 +32,16 @@ export function PolicyReview({ draft, onCommitted }: { draft: OpDraft; onCommitt
   const op = draft.record.op
   if (op.type !== 'applyPolicy') return null
   const byClaude = draft.record.by === 'claude'
-  const heading = `対象便を確かめる(下書き ${draft.id}${byClaude ? '、Claude の提案' : ''})`
+  const heading = `対象便を確かめる(${draftName(draft.id)}${byClaude ? '・AI の提案' : ''})`
 
   const discard = () => useEditStore.getState().discard()
   if (!draft.outcome.ok || !draft.diff) {
     return (
-      <section className="flex flex-col gap-2" aria-label="対象便の確かめ">
+      <section className="flex flex-col gap-2" aria-label="対象便の確認">
         <h3 className="text-sm font-medium">{heading}</h3>
         <Alert variant="destructive">
           <AlertDescription>
-            <p>この方針は適用できません。</p>
+            <p>この減便の方針は適用できません。</p>
             {!draft.outcome.ok &&
               draft.outcome.message.split('\n').map((line) => (
                 <p key={line} className="whitespace-pre-wrap">
@@ -73,7 +73,7 @@ export function PolicyReview({ draft, onCommitted }: { draft: OpDraft; onCommitt
   }
 
   return (
-    <section className="flex min-w-0 flex-col gap-3" aria-label="対象便の確かめ">
+    <section className="flex min-w-0 flex-col gap-3" aria-label="対象便の確認">
       <h3 className="text-sm font-medium">{heading}</h3>
       <p className="text-xs">
         {POLICY_KIND_LABELS[op.settings.kind]}。期間 {periodText(op.settings.period.start, op.settings.period.end)}。平日{' '}
@@ -98,7 +98,7 @@ export function PolicyReview({ draft, onCommitted }: { draft: OpDraft; onCommitt
           全曜日で便がなくなる系統があることを確かめました
         </label>
       )}
-      {blocking.length > 0 && <p className="text-sm text-destructive">誤りがあるため、この内容では進められません。</p>}
+      {blocking.length > 0 && <p className="text-sm text-destructive">誤りがあるため、この内容では承認できません。</p>}
       {message && (
         <Alert variant="destructive">
           <AlertDescription>{message}</AlertDescription>
@@ -106,7 +106,7 @@ export function PolicyReview({ draft, onCommitted }: { draft: OpDraft; onCommitt
       )}
       <div className="flex flex-wrap gap-2">
         <Button type="button" disabled={!canCommit} onClick={commit}>
-          この内容で進める
+          承認する
         </Button>
         <Button type="button" variant="outline" onClick={discard}>
           やめる
@@ -135,10 +135,10 @@ export function PolicySummary({
   const { before, after } = totals(diff)
   const names = new Map(diff.byRoute.map((r) => [r.routeId, r.routeName]))
   return (
-    <section className="flex flex-col gap-2" aria-label="適用した方針">
+    <section className="flex flex-col gap-2" aria-label="承認した減便の方針">
       <dl className="flex flex-col gap-0.5 text-sm">
         <div>
-          <dt className="inline">適用した方針:</dt>
+          <dt className="inline">承認した減便の方針:</dt>
           <dd className="inline font-medium">{POLICY_KIND_LABELS[plan.kind]}</dd>
         </div>
         <div>
@@ -168,8 +168,8 @@ export function PolicySummary({
         <div>
           <dt className="inline">平日便:</dt>
           <dd className="inline">
-            <FromTo before={before} after={after} emphasizeDecrease={after < before} /> 便(消える {diff.removed.length}・入る{' '}
-            {diff.added.length}・残る {diff.same.length})
+            <FromTo before={before} after={after} emphasizeDecrease={after < before} /> 便(なくなる便 {diff.removed.length}・加わる便{' '}
+            {diff.added.length}・同じ便 {diff.same.length})
           </dd>
         </div>
         <div className={diff.vanishingRoutes > 0 ? 'font-semibold text-destructive' : undefined}>
@@ -178,7 +178,7 @@ export function PolicySummary({
         </div>
       </dl>
       <Button type="button" variant="outline" size="sm" className="self-start" onClick={onChange}>
-        方針を変える
+        減便の方針を変える
       </Button>
     </section>
   )
@@ -232,11 +232,11 @@ export function EditHistoryPanel() {
       {undoDraft && (
         <div className="flex flex-col gap-1.5 rounded-md border border-dashed px-2 py-1.5 text-xs">
           <p>
-            下書き {undoDraft.id}{draftActor(undoDraft) === 'claude' && '(Claude の提案)'}:最後の操作を元に戻します。地図と表は戻したあとの状態を「下書き」として出しています。
+            {draftName(undoDraft.id)}{draftActor(undoDraft) === 'claude' && '(AI の提案)'}:最後の操作を元に戻します。地図と表には、戻したあとの状態を「下書き」として表示しています。
           </p>
           <div className="flex gap-2">
             <Button type="button" size="sm" onClick={() => useEditStore.getState().commit()}>
-              元に戻すことを承認する
+              元に戻す操作を承認する
             </Button>
             <Button type="button" size="sm" variant="outline" onClick={() => useEditStore.getState().discard()}>
               やめる
@@ -250,7 +250,7 @@ export function EditHistoryPanel() {
           message={
             <>
               本当にすべて戻しますか。すべての編集({history.length} 件)を戻して、読み込んだ GTFS のままにします。
-              {claudeDraft && <>Claude の下書き {claudeDraft.id} も捨てます。</>}
+              {claudeDraft && <>AI の{draftName(claudeDraft.id)} も破棄します。</>}
             </>
           }
           confirmLabel="すべて戻す"
@@ -259,9 +259,9 @@ export function EditHistoryPanel() {
         />
       ) : confirming === 'undo' && claudeDraft ? (
         <InlineConfirm
-          label="Claude の下書きを捨てる確認"
+          label="AI の下書きを破棄する確認"
           message={replaceClaudeDraftMessage(claudeDraft)}
-          confirmLabel="捨てて続ける"
+          confirmLabel="破棄して続ける"
           onConfirm={confirm}
           onCancel={cancel}
         />

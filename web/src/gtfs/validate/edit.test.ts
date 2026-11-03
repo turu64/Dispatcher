@@ -81,7 +81,7 @@ describe('validateEdit', () => {
     const short: HolidayList = { ...HOLIDAYS, coveredUntil: '20261231' }
     const [uncovered] = find(validateEdit(base, result, short), 'holidayNotCovered')
     expect(uncovered).toMatchObject({ severity: 'warning', examples: ['20270101', '20270131'] })
-    expect(uncovered.message).toBe('2027年1月1日〜2027年1月31日 の祝日は、内閣府の一覧にまだ無いため確かめていません。')
+    expect(uncovered.message).toBe('2027年1月1日〜2027年1月31日 の祝日は、内閣府の一覧にまだないため確かめていません。')
   })
 
   it('平日の service が走らない平日を、その日に走る service とあわせて並べる', () => {
@@ -237,12 +237,12 @@ describe('form2Texts', () => {
     expect(texts.validity).toEqual([
       '出力する GTFS の有効期間は 2026年11月1日〜2026年11月30日(30日)です。',
       '2026年10月1日〜2026年10月31日 は出力に含まれません(過ぎた日です)。',
-      '出力の有効期間は 2026年11月30日(入力の GTFS の末日)までです。減便が続くときは、次の版にも同じ方針を適用してください。',
+      '出力の有効期間は 2026年11月30日(入力の GTFS の末日)までです。減便が続くときは、次の版でも同じ減便の方針を承認してください。',
     ])
     expect(texts.changes[0]).toBe(
-      '期間の中で平日ダイヤが走る日(20日。祝日などの例外の日を除く)は、すべて土曜ダイヤ(足し戻した便と、除外した系統の便を除く)で走ります。',
+      '期間の中で平日ダイヤが走る日(20日。祝日などの例外の日を除く)は、すべて土曜ダイヤ(平日に戻した便と、除外した系統の便を除く)で走ります。',
     )
-    expect(texts.changes).toContain('足し戻した便は学校の休業日にも走ります。休校日運休の便は GTFS では表せないため、変更指示書と周知文で補ってください。')
+    expect(texts.changes).toContain('平日に戻した便は学校の休業日にも走ります。休校日運休の便は GTFS では表せないため、変更指示書と周知文で補ってください。')
     const ended = form2Texts(apply(base, basePlan({ kind: 'weekdayToSundayHoliday', replacementService: 'SU', period: { start: '20261101', end: '20261120' } })), '20261020')
     expect(ended.validity[1]).toContain('2026年11月21日 以降は出力に含まれず')
     expect(ended.changes[0]).toContain('すべて日祝ダイヤ')

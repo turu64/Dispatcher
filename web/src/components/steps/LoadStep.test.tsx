@@ -61,7 +61,7 @@ describe('LoadStep の版と期間', () => {
     show({ ...feed, tables })
     const text = screen.getByLabelText('読み込んだ GTFS の版と期間').textContent ?? ''
     expect(text).toContain('feed_version:(空)')
-    expect(text).toContain('2026年10月1日(木)〜2026年11月30日(月)(feed_info に無いため、calendar・calendar_dates から求めました)')
+    expect(text).toContain('2026年10月1日(木)〜2026年11月30日(月)(feed_info にないため、calendar・calendar_dates から求めました)')
   })
 })
 

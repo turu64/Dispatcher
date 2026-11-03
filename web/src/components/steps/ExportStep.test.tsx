@@ -60,7 +60,7 @@ describe('ExportStep', () => {
     const button = screen.getByRole('button', { name: 'GTFS を出力する' })
     expect(button).toHaveProperty('disabled', true)
     const draftId = useEditStore.getState().draft!.id
-    expect(screen.getByText(`下書き ${draftId} を承認するか、やめてから出力してください。`)).toBeTruthy()
+    expect(screen.getByText(`承認待ちの下書き #${draftId} があります。「承認する」または「やめる」を押してから出力してください。`)).toBeTruthy()
 
     // 下書きをやめると押せる。出力は承認済みの計画(方針だけ)で、押した時刻で作り直す
     act(() => useEditStore.getState().discard())
@@ -97,12 +97,12 @@ describe('ExportStep', () => {
     expect(screen.queryByRole('link', { name: 'もう一度ダウンロードする' })).toBeNull()
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:dispatcher-test')
 
-    // 出力し直してから、すべて戻す:履歴が空なので、前の出力は残さず「方針を適用してから」だけを出す
+    // 出力し直してから、すべて戻す:履歴が空なので、前の出力は残さず「減便の方針を承認すると」だけを出す
     fireEvent.click(screen.getByRole('button', { name: 'GTFS を出力する' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('出力しました'))
     act(() => useEditStore.getState().undoAll())
     expect(screen.queryByRole('status')).toBeNull()
-    expect(screen.getByText('方針を適用してから出力できます。')).toBeTruthy()
+    expect(screen.getByText('減便の方針を承認すると出力できます。')).toBeTruthy()
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2)
   })
 
@@ -149,7 +149,7 @@ describe('ExportStep', () => {
   it('履歴が空なら出力を押せない', () => {
     render(<ExportStep />)
     expect(screen.getByRole('button', { name: 'GTFS を出力する' })).toHaveProperty('disabled', true)
-    expect(screen.getByText('方針を適用してから出力できます。')).toBeTruthy()
+    expect(screen.getByText('減便の方針を承認すると出力できます。')).toBeTruthy()
   })
 
   it('出力の前に、有効期間・§5.10 の文言・実施日までの日数の注意・出典を出す', () => {
@@ -220,17 +220,17 @@ describe('ExportStep', () => {
     expect(useEditStore.getState().feedVersion).toBe('')
   })
 
-  it('trip_id の注意を出す。写す元のダイヤは方針に合わせる(方針が無いときは「入れ替え先」)', () => {
+  it('trip_id の注意を出す。入れ替えに使うダイヤは方針に合わせる(方針が無いときは「入れ替えに使うダイヤ」)', () => {
     render(<ExportStep />)
     expect(screen.getByTestId('trip-id-note').textContent).toBe(
-      '足し戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は入れ替え先のダイヤの運用とは対応しません。',
+      '平日に戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は入れ替えに使うダイヤの運用とは対応しません。',
     )
     act(() => {
       useEditStore.getState().propose(policy(), 'user')
       useEditStore.getState().commit()
     })
     expect(screen.getByTestId('trip-id-note').textContent).toBe(
-      '足し戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は出力の土曜ダイヤの運用とは対応しません。',
+      '平日に戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は出力の土曜ダイヤの運用とは対応しません。',
     )
   })
 
@@ -243,13 +243,13 @@ describe('ExportStep', () => {
     })
     render(<ExportStep />)
     expect(screen.getByTestId('trip-id-note').textContent).toBe(
-      '足し戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は出力の日祝ダイヤの運用とは対応しません。',
+      '平日に戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は出力の日祝ダイヤの運用とは対応しません。',
     )
   })
 
-  describe('減便をやめる版', () => {
+  describe('元のダイヤに戻す版', () => {
     function openRevert(): HTMLElement {
-      fireEvent.click(screen.getByRole('button', { name: '減便をやめる版を作る' }))
+      fireEvent.click(screen.getByRole('button', { name: '元のダイヤに戻す版を作る' }))
       return document.getElementById('revert-body')!
     }
 
@@ -273,7 +273,7 @@ describe('ExportStep', () => {
       fireEvent.click(dayCell(body, '20261115'))
       expect(body.textContent).toContain('有効期間:2026年11月15日(日)〜2026年11月30日(月)(16日)')
       expect(body.textContent).toContain('2026年10月1日(木)〜2026年11月14日(土) は出力に含まれません')
-      expect(body.textContent).toContain('便と時刻は読み込んだ GTFS のままで、減便の方針と足し戻しは入りません')
+      expect(body.textContent).toContain('便と時刻は読み込んだ GTFS のままで、減便の方針と、平日に戻した便は入りません')
       // 形2の文言は言い換え・除く(方針の対象・形2の理由の文を出さない)
       expect(body.querySelector('[data-code="weekdayNotRunning"]')).toBeNull()
       expect(body.querySelector('[data-code="validityGapBefore"]')).toBeNull()
@@ -285,7 +285,7 @@ describe('ExportStep', () => {
       // 便を消さない版なので、便の削除の審査の注意は出さない
       expect(body.textContent).not.toContain('便の削除')
 
-      fireEvent.click(screen.getByRole('button', { name: '減便をやめる版を出力する' }))
+      fireEvent.click(screen.getByRole('button', { name: '元のダイヤに戻す版を出力する' }))
       await waitFor(() => expect(writeGtfsZip).toHaveBeenCalledTimes(1))
       const input = writeGtfsZip.mock.calls[0][0]
       const baseFeed = useEditStore.getState().base!.feed
@@ -297,9 +297,9 @@ describe('ExportStep', () => {
       expect(input.edited.tables.get('calendar')!.rows.every((r) => r.start_date === '20261115' && r.end_date === '20261130')).toBe(true)
       expect(input.attribution).toContain('Dispatcher で有効期間と feed_version を書き換えています(便は元のまま。加工日時 2026年10月20日 12:00)')
       expect(input.attribution).not.toContain('減便を反映して')
-      const status = await screen.findByRole('status', { name: '減便をやめる版の出力' })
+      const status = await screen.findByRole('status', { name: '元のダイヤに戻す版の出力' })
       expect(status.textContent).toContain('dohoku_dispatcher_202610201200_restore.zip')
-      expect(status.textContent).toContain('戻す日 2026年11月15日(日)')
+      expect(status.textContent).toContain('元のダイヤに戻す日 2026年11月15日(日)')
       // 減便の出力(承認済みの計画)は、履歴が空なので押せないまま
       expect(screen.getByRole('button', { name: 'GTFS を出力する' })).toHaveProperty('disabled', true)
     })
@@ -359,11 +359,11 @@ describe('ExportStep', () => {
       })
       render(<ExportStep />)
       // 減便の出力の要約から、この版へ案内する
-      expect(document.body.textContent).toContain('元のダイヤに戻す版は、この画面の下の「減便をやめる版」で作れます。')
+      expect(document.body.textContent).toContain('元のダイヤに戻す版は、この画面の下の「元のダイヤに戻す版を作る」で作れます。')
       const body = openRevert()
-      expect(body.textContent).toContain('既定は、承認した方針の期間の終わり(2026年11月15日(日))の翌日です。')
+      expect(body.textContent).toContain('既定は、承認した減便の期間の終わり(2026年11月15日(日))の翌日です。')
       expect(body.textContent).toContain('有効期間:2026年11月16日(月)〜2026年11月30日(月)(15日)')
-      const button = screen.getByRole('button', { name: '減便をやめる版を出力する' })
+      const button = screen.getByRole('button', { name: '元のダイヤに戻す版を出力する' })
       expect(button).toHaveProperty('disabled', false)
 
       // 11/28(土)からでは 3 日しかなく、出力を止める
@@ -372,7 +372,7 @@ describe('ExportStep', () => {
       expect(button).toHaveProperty('disabled', true)
 
       // feed_version は自分で入れられる。制御文字は止める
-      const field = screen.getByLabelText('減便をやめる版の feed_version')
+      const field = screen.getByLabelText('元のダイヤに戻す版の feed_version')
       fireEvent.click(dayCell(body, '20261121'))
       fireEvent.change(field, { target: { value: 'a\tb' } })
       expect(button).toHaveProperty('disabled', true)

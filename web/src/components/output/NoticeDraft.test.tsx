@@ -218,13 +218,13 @@ describe('NoticeDraft', () => {
     expect(screen.queryByText(/公示から実施まで7日を切っています/)).toBeNull()
   })
 
-  it('承認前の下書きがあるときは、承認済みの内容で作っていることを知らせる', () => {
+  it('承認待ちの下書きがあるときは、承認済みの内容で作っていることを知らせる', () => {
     approve(policy())
     act(() => {
       useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '', schoolDaysOnly: false }] }, 'claude')
     })
     render(<NoticeDraft />)
-    expect(screen.getByText('承認前の下書きがあります。周知文は承認済みの内容で作っています。')).toBeTruthy()
+    expect(screen.getByText(/^承認待ちの下書き #\d+ があります。周知文は承認済みの内容で作っています。$/)).toBeTruthy()
     pick(/学校前/)
     expect(screen.getByTestId('no-departure')).toBeTruthy()
   })
@@ -335,7 +335,7 @@ describe('NoticeDraft', () => {
       render(<NoticeDraft />)
       pick(/駅前/)
       const note = screen.getByTestId('other-operators-missing')
-      expect(note.textContent).toContain('前提情報の手順で参照データを読み込むと表示します')
+      expect(note.textContent).toContain('手順「前提情報」で参照データを読み込むと表示します')
       expect(note.className).toContain('print-hide')
       expect(screen.queryByTestId('other-operators')).toBeNull()
     })

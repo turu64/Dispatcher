@@ -6,8 +6,8 @@ import type { ChatItem } from '@/store/chat'
 import SimpleMarkdown from './simpleMarkdown'
 
 const DONE_LABELS: Record<string, string> = {
-  apply_policy: '方針の下書きを作りました',
-  add_back_trips: '足し戻しの下書きを作りました',
+  apply_policy: '減便の方針の下書きを作りました',
+  add_back_trips: '便を平日に戻す下書きを作りました',
   undo_edit: '元に戻す下書きを作りました',
   summarize_impact: '影響を計算しました',
   search_trips: '便を探しました',

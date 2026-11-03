@@ -16,7 +16,7 @@ const SECONDS_PER_DAY = 86400
 /** 6時から24時までを、3時間ごと(6個)または1時間ごと(18個)に分ける */
 export function makeBands(stepHours: 1 | 3): TimeBand[] {
   if (stepHours !== 1 && stepHours !== 3) {
-    throw new Error(`時間帯の幅は1時間か3時間にしてください(${String(stepHours)} が指定されました)`)
+    throw new Error(`時間帯の幅は1時間か3時間にしてください(${String(stepHours)} が指定されました)。`)
   }
   const bands: TimeBand[] = []
   for (let h = FIRST_HOUR; h < LAST_HOUR; h += stepHours) {

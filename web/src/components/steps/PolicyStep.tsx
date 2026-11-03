@@ -30,7 +30,7 @@ export default function PolicyStep() {
   return (
     <StepSection title="2. 減便の方針" id={STEP_IDS.policy}>
       {!base ? (
-        <p className="text-sm text-muted-foreground">「読み込み」の手順で GTFS を読み込むと、減便の方針を選べます。</p>
+        <p className="text-sm text-muted-foreground">手順「読み込み」で GTFS を読み込むと、減便の方針を選べます。</p>
       ) : (
         <>
           {showForm && (

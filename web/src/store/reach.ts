@@ -320,7 +320,7 @@ export function createReachStore(deps: ReachStoreDeps) {
         const period = selectablePeriod(get())
         if (!period) return edited ? NO_EDITED_SERVICE_DAYS : NO_SERVICE_DAYS
         if (!isValidGtfsDate(date) || date < period.start || date > period.end) {
-          return edited ? `比べられるのは減便後の GTFS の運行期間(${slashDate(period.start)}〜${slashDate(period.end)})の日付です。` : OUT_OF_PERIOD
+          return edited ? `比較できるのは減便後の GTFS の運行期間(${slashDate(period.start)}〜${slashDate(period.end)})の日付です。` : OUT_OF_PERIOD
         }
         if (date !== get().date) {
           set({ date })

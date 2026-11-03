@@ -382,7 +382,7 @@ describe('ResearchStep', () => {
     const fetchMock = vi.fn(async () => new Response('', { status: 500 }))
     vi.stubGlobal('fetch', fetchMock)
     setup()
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('施設の参照データを読み込めませんでした(サーバーがエラーを返しました(500))'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('施設の参照データを読み込めませんでした。サーバーがエラーを返しました(500)。'))
     expect(fetchMock).toHaveBeenCalledWith(`/api/ref/facilities/${facilityMeshes(STOPS)[0]}`)
     const calls = fetchMock.mock.calls.length
     fireEvent.click(screen.getByRole('button', { name: '読み込み直す' }))

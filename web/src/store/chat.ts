@@ -9,7 +9,7 @@ import type { RestoreHintContext } from '../gtfs/edit/restore'
 import { describeServices, feedValidity, guessServiceChoice, policyValidity } from '../gtfs/edit/services'
 import type { GtfsFeed } from '../gtfs/load'
 import { todayInJapan } from '../lib/dates'
-import { japanIso, useEditStore, type DraftNotice } from './edit'
+import { draftName, japanIso, useEditStore, type DraftNotice } from './edit'
 import { useHolidayStore } from './holidays'
 import { useReachStore } from './reach'
 import { buildRestoreHintContext } from './restoreHintContext'
@@ -24,30 +24,30 @@ import { buildRestoreHintContext } from './restoreHintContext'
 
 // ---- 画面の文言 ----
 
-export const CLAUDE_UNAVAILABLE = 'AI は使えません(API キーが設定されていません)'
-export const TOKEN_WRONG = '合言葉が違います'
-export const TOKEN_MISSING = '合言葉を入れてください'
-export const TOKEN_CHARS = '合言葉は半角の英数字と記号で入れてください'
-export const RELOAD_NOTICE = 'GTFS を読み込み直したので、AI との会話を新しく始めます'
-export const ENDED_NOTICE = 'AI との会話が終わりました。次に送ると新しく始めます'
-export const NEW_SESSION_NOTICE = 'AI との会話を新しく始めます。AI はここまでの会話を覚えていません。GTFS の編集はそのまま残ります'
+export const CLAUDE_UNAVAILABLE = 'AI は使えません(API キーが設定されていません)。'
+export const TOKEN_WRONG = '認証コードが違います。'
+export const TOKEN_MISSING = '認証コードを入れてください。'
+export const TOKEN_CHARS = '認証コードは半角の英数字と記号で入れてください。'
+export const RELOAD_NOTICE = 'GTFS を読み込み直したため、AI との会話を新しく始めます。'
+export const ENDED_NOTICE = 'AI との会話が終わりました。次に送ると新しく始めます。'
+export const NEW_SESSION_NOTICE = 'AI との会話を新しく始めます。AI はここまでの会話を覚えていません。GTFS の編集はそのまま残ります。'
 export const STOPPED_NOTICE = '止めました'
-export const TOOLS_WAITING = 'AI がツールの結果を待っています'
+export const TOOLS_WAITING = 'AI がツールの結果を待っています。'
 export const SENDING = '送っています…'
 export const THINKING = '考えています…'
 export const RECONNECTING = 'つなぎ直しています…'
 /** 新しいセッションの最初のストリームがつながるまで(Anthropic の側の準備を待つ。docs/interfaces-1105.md §9) */
 export const PREPARING = 'AI を準備しています…(最初は 15 秒ほどかかります)'
-export const TEXT_TOO_LONG = '文が長すぎます。短くして送ってください'
+export const TEXT_TOO_LONG = '文が長すぎます。短くして送ってください。'
 /** 送る前に入力欄の下に出す文(§6.4) */
 export const SEND_INFO_NOTE =
-  '送るのは、あなたの文と、画面の状態・操作の行、ツールの結果(便の一覧や件数)です。GTFS のファイルは送りません'
+  '送るのは利用者の文と、画面の状態・操作の行、ツールの結果(便の一覧や件数)です。GTFS のファイルは送りません。'
 /** 調査を始めるときに SEND_INFO_NOTE に足す文(11/6) */
-export const RESEARCH_SEND_NOTE = '調べる施設・事業者の名前と位置(国土数値情報)を送り、AI が Web で検索します'
+export const RESEARCH_SEND_NOTE = '調べる施設・事業者の名前と位置(国土数値情報)を送り、AI が Web で検索します。'
 /** 調査の間に出す文 */
-export const RESEARCH_KEEP_OPEN = '調査の間は、この画面を開いたままにしてください'
+export const RESEARCH_KEEP_OPEN = '調査の間はこの画面を開いたままにしてください。'
 /** 止めたときに調査の run が開いていれば出す文(§4.9) */
-export const RESEARCH_PAUSED = '調査が止まっているかもしれません。続けるときは『調査を続けて』と送ってください'
+export const RESEARCH_PAUSED = '調査が止まっているかもしれません。続けるときは『調査を続けて』と送ってください。'
 /** 足し戻しの手順の「AI に候補を聞く」で送る文(§6) */
 /** 調査を始めたときにサーバーが会話に入れる [画面の操作] の行(server の research.START_LINE と同じ文。「AI に送る情報」に残す) */
 export function researchStartLine(count: number): string {
@@ -58,7 +58,7 @@ export function researchStartLine(count: number): string {
 export const RESEARCH_UNAVAILABLE = '調査の API が使えません。'
 
 export const ASK_RESTORE_PROMPT =
-  '方針で消える平日の便のうち、通勤・通学・通院などのために足し戻したほうがよい便を、手がかりと停留所名から選び、理由をつけて足し戻しの下書きにしてください。数は多くても 10 便くらいにしてください。'
+  '減便の方針でなくなる平日の便のうち、通勤・通学・通院などのために平日に戻したほうがよい便を、判断材料と停留所名から選び、理由をつけて、便を平日に戻す下書きにしてください。数は多くても 10 便くらいにしてください。'
 
 /** 利用者の文の上限(UTF-8 のバイト数。サーバーは [画面の…] の行と合わせて 32KB まで) */
 export const MAX_TEXT_BYTES = 24 * 1024
@@ -77,12 +77,12 @@ export function usageText(usage: { costCents: number; budgetCents: number }): st
 /** 予算に達したときの文(§4.9) */
 export function budgetReachedMessage(budgetCents: number | null): string {
   const limit = budgetCents === null ? '' : `(${(budgetCents / 100).toString()} ドル)`
-  return `この会話の AI の利用額が上限${limit}に達しました。続けるときは『新しく始める』を押してください。GTFS の編集はそのまま残ります。AI はここまでの会話を覚えていません`
+  return `この会話の AI の利用額が上限${limit}に達しました。続けるときは「新しく始める」を押してください。GTFS の編集はそのまま残ります。AI はここまでの会話を覚えていません。`
 }
 
 /** 下書きの知らせの文 */
 export function draftMessage(id: string): string {
-  return `下書き ${id} を作りました。上の欄で確かめて承認してください`
+  return `${draftName(id)} を作りました。上の欄で確かめて承認してください。`
 }
 
 // ---- 状態 ----
@@ -492,7 +492,7 @@ export function createChatStore(deps: ChatStoreDeps) {
         set({ token: null, tokenError: TOKEN_WRONG })
         return
       }
-      push({ kind: 'error', text: errorText(e, 'AI に送れませんでした。もう一度送ってください') })
+      push({ kind: 'error', text: errorText(e, 'AI に送れませんでした。もう一度送ってください。') })
     }
 
     return {
@@ -594,7 +594,7 @@ export function createChatStore(deps: ChatStoreDeps) {
                 : status.state === 'ready' && !status.available
                   ? CLAUDE_UNAVAILABLE
                   : tokenError
-                    ? `${tokenError}(「AI に相談」の欄)`
+                    ? `${tokenError}入力欄は「AI に相談」の欄にあります。`
                     : budgetReached
                       ? budgetReachedMessage(budgetCents)
                       : TOOLS_WAITING
@@ -609,7 +609,7 @@ export function createChatStore(deps: ChatStoreDeps) {
               const created = await session.start()
               if (created) set({ budgetCents: session.budgetCents, usage: null, research: EMPTY_RESEARCH })
               const handle = session.handle
-              if (!handle) throw new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます')
+              if (!handle) throw new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます。')
               const view = await api.start(get().token, handle, targetIds)
               if (gen !== generation) return null
               log([{ kind: 'screen', text: researchStartLine(view.total) }])
@@ -629,10 +629,10 @@ export function createChatStore(deps: ChatStoreDeps) {
               }
               if (e instanceof ClaudeRequestError && e.status === 401) {
                 deps.storage.set(null)
-                set({ token: null, tokenError: TOKEN_WRONG, researchError: `${TOKEN_WRONG}(「AI に相談」の欄)` })
+                set({ token: null, tokenError: TOKEN_WRONG, researchError: `${TOKEN_WRONG}入力欄は「AI に相談」の欄にあります。` })
                 return null
               }
-              set({ researchError: errorText(e, '調査を始められませんでした。もう一度試してください') })
+              set({ researchError: errorText(e, '調査を始められませんでした。もう一度試してください。') })
               return null
             }
           }

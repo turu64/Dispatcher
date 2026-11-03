@@ -144,7 +144,7 @@ function checkInput(input: ReachInput): void {
     throw new RangeError(`時間帯の数は 0 以上の整数で指定してください:${String(bandCount)}`)
   }
   if (!REGION_CLASSES.includes(fallbackClass)) {
-    throw new RangeError(`参照データが無いときの区分が正しくありません:${String(fallbackClass)}`)
+    throw new RangeError(`参照データがないときの区分が正しくありません:${String(fallbackClass)}`)
   }
   checkNonNegative(params.densityThreshold, '人口密度のしきい値')
   if (typeof params.speedMPerMin !== 'number' || !Number.isFinite(params.speedMPerMin) || params.speedMPerMin <= 0) {
@@ -153,7 +153,7 @@ function checkInput(input: ReachInput): void {
   for (const c of REGION_CLASSES) {
     const minutes = params.walkMinutes?.[c]
     if (!minutes) throw new RangeError(`${CLASS_LABEL[c]}の徒歩の分数がありません`)
-    checkNonNegative(minutes.bus, `${CLASS_LABEL[c]}のバス停までの徒歩の分数`)
+    checkNonNegative(minutes.bus, `${CLASS_LABEL[c]}の停留所までの徒歩の分数`)
     checkNonNegative(minutes.rail, `${CLASS_LABEL[c]}の鉄道駅までの徒歩の分数`)
   }
 }

@@ -32,8 +32,9 @@ import ReachLayers from './ReachLayers'
  * 一覧で焦点の当たっている対象(store/map.ts の highlightedTargetId)には輪を付けて記号を大きくする。地図は動かさない
  */
 
-/** 凡例の、ほかの事業者の停留所の行の名前 */
-export const OTHER_STOPS_LEGEND = `ほかの事業者の停留所(こちらの停留所から ${OTHER_STOP_RADIUS_M}m 以内)`
+/** 凡例の、ほかの事業者の停留所の行の名前と、その後ろに添える条件 */
+export const OTHER_STOPS_LEGEND = 'ほかの事業者の停留所'
+export const OTHER_STOPS_LEGEND_NOTE = `(こちらの停留所から ${OTHER_STOP_RADIUS_M}m 以内・独自の記号)`
 
 
 /**
@@ -99,9 +100,8 @@ export function FacilityLegend({
         <span className="flex items-start gap-1.5" data-testid="legend-other-stops">
           <FacilitySymbol kind="operator" symbol="busstop" className="mt-0.5 size-4 shrink-0" />
           <span>
-            {OTHER_STOPS_LEGEND}
-            {otherStops} か所
-            <span className="text-muted-foreground">(独自の記号)</span>
+            {OTHER_STOPS_LEGEND} {otherStops} か所
+            <span className="ml-1 text-muted-foreground">{OTHER_STOPS_LEGEND_NOTE}</span>
           </span>
         </span>
       )}

@@ -7,9 +7,9 @@ import { TripLine } from './TripLine'
 function editedText(dir: DirectionGroup): string | null {
   const edited = dir.edited
   if (edited === undefined) return null
-  if (edited === null) return '編集後はこの方向の便がありません'
-  if (edited.maxGapMin === null) return `編集後は ${edited.trips.length} 便`
-  return `編集後の最大間隔 ${edited.maxGapMin} 分`
+  if (edited === null) return '減便後はこの方向の便がありません'
+  if (edited.maxGapMin === null) return `減便後は ${edited.trips.length} 便`
+  return `減便後の最大間隔 ${edited.maxGapMin} 分`
 }
 
 /** 編集後に残る(入る)便の始発の時刻を並べた文 */
@@ -45,7 +45,7 @@ export function CandidateGroups({
 }) {
   if (groups.length === 0) return <p className="rounded-md border px-2 py-1.5 text-xs text-muted-foreground">当てはまる便がありません。</p>
   return (
-    <div className="flex flex-col gap-1.5" role="group" aria-label="足し戻す便の候補">
+    <div className="flex flex-col gap-1.5" role="group" aria-label="平日に戻す便の候補">
       {groups.map((g, i) => {
         const open = isOpen(g.routeId)
         const all = showsAll(g.routeId)
@@ -71,7 +71,7 @@ export function CandidateGroups({
                 </Badge>
               )}
               <span className="text-muted-foreground">
-                消える {g.candidates.length} 便(手がかりあり {g.hinted} 便)
+                なくなる便 {g.candidates.length} 便(判断材料あり {g.hinted} 便)
               </span>
               {picked > 0 && <span className="font-medium text-primary">選択 {picked} 便</span>}
             </button>
@@ -89,7 +89,7 @@ export function CandidateGroups({
                         <span className="font-medium">{name}</span>
                         {gap && <span className="text-muted-foreground">{gap}</span>}
                       </p>
-                      {times && <p className="break-words text-[10px] text-muted-foreground">編集後の便:{times}</p>}
+                      {times && <p className="break-words text-[10px] text-muted-foreground">減便後の便:{times}</p>}
                       <ul className="flex flex-col divide-y rounded-md border" aria-label={`${g.routeName} ${name} の候補`}>
                         {trips.map((c) => (
                           <li key={c.trip.tripId} className="px-2 py-1">
@@ -112,7 +112,7 @@ export function CandidateGroups({
                     </div>
                   )
                 })}
-                {g.hinted === 0 && !all && <p className="text-muted-foreground">手がかりのある便はありません。</p>}
+                {g.hinted === 0 && !all && <p className="text-muted-foreground">判断材料のある便はありません。</p>}
                 {hidden > 0 && !all && (
                   <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => onShowAll(g.routeId)}>
                     ほかの便を見る(残り {hidden} 便)

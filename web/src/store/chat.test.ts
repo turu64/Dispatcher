@@ -148,7 +148,7 @@ describe('中継の状態と合言葉', () => {
     await s().loadStatus()
     expect(s().token).toBe('old')
     fake.api.create = vi.fn(async () => {
-      throw new ClaudeRequestError(401, '合言葉が違います。')
+      throw new ClaudeRequestError(401, '認証コードが違います。')
     })
     expect(await s().send('こんにちは')).toBe(false)
     expect(s()).toMatchObject({ token: null, tokenError: TOKEN_WRONG, unsent: 'こんにちは', sending: false })
@@ -302,19 +302,19 @@ describe('tool_call を実行して tool_results で送り、実行している�
     expect(s().items.at(-1)).toMatchObject({ kind: 'error', text: TOOLS_WAITING })
     release()
     await vi.waitFor(() => expect(s().toolRunning).toBe(false))
-    expect(edit.getState().draft?.id).toBe('d1')
+    expect(edit.getState().draft?.id).toBe('1')
     const items = s()
       .items.filter((i) => i.kind === 'tool' || i.kind === 'draft')
       .map(({ id: _id, ...rest }) => rest)
     expect(items).toEqual([
-      { kind: 'tool', callId: 'sevt_1', name: 'apply_policy', label: '方針の下書きを作っています…', status: 'done' },
-      { kind: 'draft', draftId: 'd1', text: draftMessage('d1'), step: 'policy' },
+      { kind: 'tool', callId: 'sevt_1', name: 'apply_policy', label: '減便の方針の下書きを作っています…', status: 'done' },
+      { kind: 'draft', draftId: '1', text: draftMessage('1'), step: 'policy' },
     ])
     const results = fake.posts.filter((p) => p.body.kind === 'tool_results')
     expect(results).toHaveLength(1)
     const sent = (results[0].body as Extract<SessionPostBody, { kind: 'tool_results' }>).results
     expect(sent.map((r) => r.custom_tool_use_id)).toEqual(['sevt_1'])
-    expect(JSON.parse(sent[0].text)).toMatchObject({ status: 'draft', draft_id: 'd1' })
+    expect(JSON.parse(sent[0].text)).toMatchObject({ status: 'draft', draft_id: '1' })
     expect(s().sentLog.at(-1)!.parts).toEqual([{ kind: 'tool_result', text: sent[0].text, toolName: 'apply_policy', isError: false }])
   })
 
@@ -326,14 +326,14 @@ describe('tool_call を実行して tool_results で送り、実行している�
     expect(edit.getState().commit()).toEqual({ ok: true })
     await s().send('学校の便を足し戻して')
     expect(messages().at(-1)).toEqual([
-      { type: 'text', text: '[画面の操作] 下書き d1 を利用者が承認しました。' },
+      { type: 'text', text: '[画面の操作] 利用者が下書き #1 を承認しました。' },
       { type: 'text', text: '学校の便を足し戻して' },
     ])
     // 利用者がボタンで足し戻した便の数
     expect(edit.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '', schoolDaysOnly: false }] }, 'user').ok).toBe(true)
     edit.getState().commit()
     await s().send('どうなった?')
-    expect(messages().at(-1)![0]).toEqual({ type: 'text', text: '[画面の操作] 利用者が便を 1 本足し戻しました。' })
+    expect(messages().at(-1)![0]).toEqual({ type: 'text', text: '[画面の操作] 利用者が便を 1 便、平日に戻しました。' })
   })
 
   it('「止める」で、答えていない呼び出しの「利用者が止めました」を results に入れた interrupt を1回で送る', async () => {
@@ -423,7 +423,7 @@ describe('予算に達したら入力欄を閉じ、「新しく始める」を�
     await vi.waitFor(() => expect(s().budgetReached).toBe(true))
     expect(s().items.at(-1)).toMatchObject({ kind: 'notice', text: budgetReachedMessage(300) })
     expect(budgetReachedMessage(300)).toBe(
-      'この会話の AI の利用額が上限(3 ドル)に達しました。続けるときは『新しく始める』を押してください。GTFS の編集はそのまま残ります。AI はここまでの会話を覚えていません',
+      'この会話の AI の利用額が上限(3 ドル)に達しました。続けるときは「新しく始める」を押してください。GTFS の編集はそのまま残ります。AI はここまでの会話を覚えていません。',
     )
     expect(sendBlockedReason(s())).toBe(budgetReachedMessage(300))
     expect(await s().send('二つ目')).toBe(false)
@@ -438,7 +438,7 @@ describe('予算に達したら入力欄を閉じ、「新しく始める」を�
     expect(messages().at(-1)).toEqual([
       {
         type: 'text',
-        text: `${TODAY_LINE}\n[画面の操作] これまでに承認された編集:方針の適用(平日を土曜ダイヤに、2026年11月9日〜当面の間)、足し戻し 0 本。`,
+        text: `${TODAY_LINE}\n[画面の操作] これまでに承認された編集:減便の方針の承認(平日を土曜ダイヤに、2026年11月9日〜当面の間)、平日に戻した便 0 便。`,
       },
       { type: 'text', text: '三つ目' },
     ])

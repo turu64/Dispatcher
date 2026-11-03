@@ -197,9 +197,9 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
   // service と便
   const trips = rowsOf(base, 'trips')
   const tripCount = (sid: string) => trips.filter((t) => trimmed(t.service_id) === sid).length
-  if (wk === rp) error('sameService', `平日の service と写す元の service が同じ(${wk})です。`)
+  if (wk === rp) error('sameService', `平日の service と入れ替えに使う service が同じ(${wk})です。`)
   if (tripCount(wk) === 0) error('noWeekdayTrips', `平日の service(${wk})の便がありません。`)
-  if (tripCount(rp) === 0) error('noReplacementTrips', `写す元の service(${rp})の便がありません。`)
+  if (tripCount(rp) === 0) error('noReplacementTrips', `入れ替えに使う service(${rp})の便がありません。`)
 
   const input = feedValidity(base)
   if (input === null) {
@@ -239,14 +239,14 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
       if (tripCount(wk) > 0 && !runsAnyDay(index.get(wk), validity.start, validity.end)) {
         error(
           'weekdayNotActive',
-          `平日の service(${wk})は、新しい有効期間(${validityText})の中で1日も走りません(calendar と calendar_dates で確かめました)。このままでは平日の便が出力から除かれ、方針が何も変えないため、平日の service か期間を選び直してください。`,
+          `平日の service(${wk})は、新しい有効期間(${validityText})の中で1日も走りません(calendar と calendar_dates で確かめました)。このままでは平日の便が出力から除かれ、ダイヤも入れ替わらないため、平日の service か減便の期間を選び直してください。`,
         )
       }
       const rpDays = index.get(rp)
       if (tripCount(rp) > 0 && !runsAnyDay(rpDays, validity.start, validity.end)) {
         error(
           'replacementNotActive',
-          `写す元の service(${rp})は、新しい有効期間(${formatDate(validity.start)}〜${formatDate(validity.end)})の中で1日も走りません。走らない時刻表を平日に写さないよう、写す元の service か期間を選び直してください。`,
+          `入れ替えに使う service(${rp})は、新しい有効期間(${formatDate(validity.start)}〜${formatDate(validity.end)})の中で1日も走りません。走らない時刻表を平日の便に入れ替えないよう、入れ替えに使う service か減便の期間を選び直してください。`,
         )
       } else if (rpDays) {
         // 写す元の calendar の期間(無ければ走る日の最初〜最後)が、新しい有効期間の全体を覆うか
@@ -264,7 +264,7 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
         if (range && (range.start > validity.start || range.end < validity.end)) {
           warning(
             'replacementPartial',
-            `写す元の service(${rp})の期間(${formatDate(range.start)}〜${formatDate(range.end)})が、新しい有効期間(${formatDate(validity.start)}〜${formatDate(validity.end)})の全体を覆いません。期間の一部の平日で、写した便が走らない時刻表になることがあります。`,
+            `入れ替えに使う service(${rp})の期間(${formatDate(range.start)}〜${formatDate(range.end)})が、新しい有効期間(${formatDate(validity.start)}〜${formatDate(validity.end)})の全体を覆いません。期間の一部の平日で、加わる便が走らない時刻表になることがあります。`,
           )
         }
       }
@@ -281,7 +281,7 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
 
   // frequencies(到達圏も展開しないため、11/4 は扱わない)
   if (rowsOf(base, 'frequencies').length > 0) {
-    error('frequencies', 'frequencies.txt に行がある GTFS には、方針を適用できません(運行間隔で表す便は扱っていません)。')
+    error('frequencies', 'frequencies.txt に行がある GTFS には、減便の方針を適用できません。運行間隔で表す便は扱っていません。')
   }
 
   // 平日の便を指すほかの表の行(§5.2)
@@ -299,7 +299,7 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
   if (referencing.length > 0) {
     error(
       'tripReferences',
-      `平日の service の便を指す行があります(${referencing.join('、')})。消した便を指したまま残らないよう、この GTFS には方針を適用できません。`,
+      `平日の service の便を指す行があります(${referencing.join('、')})。消した便を指したまま残らないよう、この GTFS には減便の方針を適用できません。`,
     )
   }
 
@@ -307,10 +307,10 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
   const routeIds = new Set(rowsOf(base, 'routes').map((r) => trimmed(r.route_id)))
   const weekdayRoutes = new Set(trips.filter((t) => trimmed(t.service_id) === wk).map((t) => trimmed(t.route_id)))
   const unknown = settings.excludedRoutes.map((r) => r.trim()).filter((r) => !routeIds.has(r))
-  if (unknown.length > 0) warning('unknownExcludedRoute', `除外する系統のうち、routes.txt に無い route_id があります(${unknown.join('、')})。`)
+  if (unknown.length > 0) warning('unknownExcludedRoute', `除外する系統のうち、routes.txt にない route_id があります(${unknown.join('、')})。`)
   const noWeekday = settings.excludedRoutes.map((r) => r.trim()).filter((r) => routeIds.has(r) && !weekdayRoutes.has(r))
   if (noWeekday.length > 0) {
-    warning('excludedRouteWithoutWeekdayTrips', `除外する系統のうち、平日の便が無い route_id があります(${noWeekday.join('、')})。`)
+    warning('excludedRouteWithoutWeekdayTrips', `除外する系統のうち、平日の便がない route_id があります(${noWeekday.join('、')})。`)
   }
 
   return problems

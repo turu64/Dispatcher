@@ -233,7 +233,7 @@ export const FEED_ERROR_RULES: StructuralRule[] = [
     code: 'stopTimesDecreasing',
     file: 'stop_times.txt',
     tripTargets: true,
-    message: (n) => `stop_times.txt で、stop_sequence の順に時刻が戻る便があります(前の停留所より早い時刻、出発が到着より早いなど。${n} 便)。`,
+    message: (n) => `stop_times.txt で、stop_sequence の順に時刻が戻る便があります(前の停留所より早い時刻、発車が到着より早いなど。${n} 便)。`,
     targets: (feed) => {
       const out = new Set<string>()
       for (const [tripId, rows] of stopTimeGroups(feed)) {
@@ -372,7 +372,7 @@ function timeFormatVariantIssue(edited: GtfsFeed): ValidationIssue | null {
     severity: 'warning',
     code: 'timeFormatVariant',
     file: 'stop_times.txt',
-    message: `stop_times.txt に、時刻の書き方が HH:MM:SS とそろっていない便があります(時が1桁、前後の空白など。${trips.size} 便)。前後の比較と足し戻しは時刻を文字列で比べるため、同じ時刻でも別の便として扱います。`,
+    message: `stop_times.txt に、時刻の書き方が HH:MM:SS とそろっていない便があります(時が1桁、前後の空白など。${trips.size} 便)。前後の比較と、便を平日に戻す処理では、時刻を文字列で比べるため、同じ時刻でも別の便として扱います。`,
     count: trips.size,
     examples: examplesOf(trips),
   }
@@ -441,7 +441,7 @@ function signatureColumnMismatchIssue(base: GtfsFeed, result: Form2Result): Vali
     severity: 'warning',
     code: 'signatureColumnMismatch',
     file: 'trips.txt',
-    message: `平日ダイヤ(${wk})の便のうち ${mismatched.length} 便は、入力の平日便と停留所・時刻が同じですが、行き先か乗降の扱いが違います(${detail})。前後の比較と足し戻しでは同じ便として扱うため、行き先・乗降の扱いを確かめてください。`,
+    message: `平日ダイヤ(${wk})の便のうち ${mismatched.length} 便は、入力の平日便と停留所・時刻が同じですが、行き先か乗降の扱いが違います(${detail})。前後の比較と、便を平日に戻す処理では、同じ便として扱います。行き先・乗降の扱いを確かめてください。`,
     count: mismatched.length,
     examples: examplesOf(mismatched),
   }
@@ -475,7 +475,7 @@ function unusedIssues(base: GtfsFeed, edited: GtfsFeed): ValidationIssue[] {
       severity: 'info',
       code: 'unusedRoutes',
       file: 'routes.txt',
-      message: `出力では便が1つも無くなる系統が ${lostRoutes.length} 系統あります(入力では便があった系統)。routes.txt には残します。`,
+      message: `出力では便が1つもなくなる系統が ${lostRoutes.length} 系統あります(入力では便があった系統)。routes.txt には残します。`,
       count: lostRoutes.length,
       examples: lostRoutes.slice(0, MAX_EXAMPLES),
     })

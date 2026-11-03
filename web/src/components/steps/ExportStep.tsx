@@ -14,7 +14,7 @@ import type { HolidayList } from '@/gtfs/holidays'
 import { form2Texts, timingNotices, validateEdit, type ValidationIssue } from '@/gtfs/validate/edit'
 import { exportFileName, writeGtfsZip } from '@/gtfs/write'
 import { formatDateJa, todayInJapan } from '@/lib/dates'
-import { diffOf, generatedAtOf, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
+import { diffOf, draftName, generatedAtOf, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { FromTo, IssueList, NoteList } from './editParts'
 import { attributionOf, generatedAtText, REPLACEMENT_LABELS, restoreTotalsText } from './editText'
@@ -31,8 +31,8 @@ interface Exported {
  * 写す元のダイヤは方針で決まる(土曜・日祝)。方針がまだ無いときは「入れ替え先のダイヤ」と書く
  */
 function tripIdNote(kind: PolicyKind | null): string {
-  const target = kind ? `出力の${REPLACEMENT_LABELS[kind]}ダイヤ` : '入れ替え先のダイヤ'
-  return `足し戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は${target}の運用とは対応しません。`
+  const target = kind ? `出力の${REPLACEMENT_LABELS[kind]}ダイヤ` : '入れ替えに使うダイヤ'
+  return `平日に戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は${target}の運用とは対応しません。`
 }
 
 function errorsIn(issues: readonly ValidationIssue[]): ValidationIssue[] {
@@ -108,13 +108,13 @@ export default function ExportStep() {
   const blocked = !base
     ? null
     : draft
-      ? `下書き ${draft.id} を承認するか、やめてから出力してください。`
+      ? `承認待ちの${draftName(draft.id)} があります。「承認する」または「やめる」を押してから出力してください。`
       : !plan || !version
-        ? '方針を適用してから出力できます。'
+        ? '減便の方針を承認すると出力できます。'
         : versionProblem
           ? versionProblem
           : previewErrors.length > 0
-          ? '誤りがあるため出力できません(下の一覧)。方針の期間などを直してください。'
+          ? '誤りがあるため出力できません。下の一覧を確かめ、減便の期間などを直してください。'
           : null
 
   async function onExport() {
@@ -171,7 +171,7 @@ export default function ExportStep() {
   return (
     <StepSection title="6. GTFS を出力">
       {!base ? (
-        <p className="text-sm text-muted-foreground">GTFS を読み込み、方針を承認すると、減便を反映した GTFS を出力できます。</p>
+        <p className="text-sm text-muted-foreground">GTFS を読み込み、減便の方針を承認すると、減便を反映した GTFS を出力できます。</p>
       ) : (
         <>
           {version && <ExportSummary base={base} version={version} customVersion={versionProblem ? '' : customVersion} />}
@@ -289,7 +289,7 @@ function ExportSummary({ base, version, customVersion }: { base: BaseGtfs; versi
       </dl>
       {report.addBack.accepted.length > 0 && <p className="text-xs">{restoreTotalsText(totals)}</p>}
       <NoteList
-        items={version.plan.period.end !== null ? [...texts.validity, '元のダイヤに戻す版は、この画面の下の「減便をやめる版」で作れます。'] : texts.validity}
+        items={version.plan.period.end !== null ? [...texts.validity, '元のダイヤに戻す版は、この画面の下の「元のダイヤに戻す版を作る」で作れます。'] : texts.validity}
         label="有効期間と期間の外"
       />
       <NoteList items={texts.changes} label="何が変わるか" />
@@ -357,10 +357,10 @@ function revertTimingNotices(result: Form2Result, today: string): ValidationIssu
 function revertTexts(result: Form2Result): string[] {
   const { validity, inputValidity } = result.report
   const texts = [
-    `出力する GTFS の有効期間は ${formatDateJa(validity.start)}〜${formatDateJa(validity.end)}(${validity.days}日)です。便と時刻は読み込んだ GTFS のままで、減便の方針と足し戻しは入りません。`,
+    `出力する GTFS の有効期間は ${formatDateJa(validity.start)}〜${formatDateJa(validity.end)}(${validity.days}日)です。便と時刻は読み込んだ GTFS のままで、減便の方針と、平日に戻した便は入りません。`,
   ]
   if (validity.start > inputValidity.start) {
-    texts.push(`${formatDateJa(inputValidity.start)}〜${formatDateJa(addDays(validity.start, -1))} は出力に含まれません(戻す日より前は減便版の期間です)。`)
+    texts.push(`${formatDateJa(inputValidity.start)}〜${formatDateJa(addDays(validity.start, -1))} は出力に含まれません(元のダイヤに戻す日より前は、減便版の期間です)。`)
   }
   texts.push(
     '読み込んだ GTFS が減便前の元の GTFS であることを確かめてください。減便版の ZIP を読み込んでいると、減便のダイヤのまま出力されます。',
@@ -377,7 +377,7 @@ function revertAttributionOf(sample: BaseGtfs['sample'], generatedAt: string | n
     return { file: `# 出典\n\n${text}\n`, screen: text }
   }
   return {
-    file: `# 加工の記録\n\nこの GTFS は、Dispatcher で有効期間と feed_version を書き換えたもの(減便をやめる版。便は元のまま)です(加工日時 ${when})。元の GTFS の出典と利用条件は、元の GTFS の提供者の表示に従ってください。\n`,
+    file: `# 加工の記録\n\nこの GTFS は、Dispatcher で有効期間と feed_version を書き換えたもの(元のダイヤに戻す版。便は元のまま)です(加工日時 ${when})。元の GTFS の出典と利用条件は、元の GTFS の提供者の表示に従ってください。\n`,
     screen: '元の GTFS の利用条件に従って、出典と加工した旨を示してください。',
   }
 }
@@ -401,13 +401,13 @@ function RevertExport({ base, plan, holidays }: { base: BaseGtfs; plan: Form2Pla
   return (
     <section className="flex flex-col gap-2 border-t pt-3" aria-labelledby="revert-heading">
       <h3 id="revert-heading" className="text-sm font-medium">
-        減便をやめる版(元のダイヤに戻す版)
+        元のダイヤに戻す版
       </h3>
       <p className="text-xs text-muted-foreground">
-        減便を終えて元のダイヤに戻すときに公開する GTFS です。読み込んだ GTFS の便をそのまま使い、有効期間を戻す日から入力の末日までにして、feed_version を新しくします。
+        減便を終えて元のダイヤに戻すときに公開する GTFS です。読み込んだ GTFS の便をそのまま使い、有効期間を元のダイヤに戻す日から入力の末日までにして、feed_version を新しくします。
       </p>
       <Button type="button" variant="outline" size="sm" className="self-start" aria-expanded={open} aria-controls="revert-body" onClick={() => setOpen((v) => !v)}>
-        {open ? '減便をやめる版を閉じる' : '減便をやめる版を作る'}
+        {open ? '元のダイヤに戻す版を閉じる' : '元のダイヤに戻す版を作る'}
       </Button>
       {open && (
         <div id="revert-body" className="flex flex-col gap-2">
@@ -468,14 +468,14 @@ function RevertBody({ base, plan, holidays }: { base: BaseGtfs; plan: Form2Plan 
   }, [base.feed, restoreFrom, deferredVersion, previewAt, services, holidays])
 
   if (!input || !restoreFrom) {
-    return <p className="text-sm text-muted-foreground">入力の有効期間が決まらないため、減便をやめる版を作れません。</p>
+    return <p className="text-sm text-muted-foreground">入力の有効期間が決まらないため、元のダイヤに戻す版を作れません。</p>
   }
   const blocked = versionProblem
     ? versionProblem
     : !preview?.result
       ? (preview?.message ?? null)
       : errorsIn(preview.issues).length > 0
-        ? '誤りがあるため出力できません(下の一覧)。戻す日などを直してください。'
+        ? '誤りがあるため出力できません。下の一覧を確かめ、元のダイヤに戻す日などを直してください。'
         : null
 
   function pick(date: string) {
@@ -528,7 +528,7 @@ function RevertBody({ base, plan, holidays }: { base: BaseGtfs; plan: Form2Plan 
       a.remove()
       setExported({ url, fileName, generatedAt, feedVersion: outcome.result.report.feedVersion.after, restoreFrom })
     } catch (e) {
-      setError(e instanceof Error && e.message ? e.message : '減便をやめる版を出力できませんでした。')
+      setError(e instanceof Error && e.message ? e.message : '元のダイヤに戻す版を出力できませんでした。')
     } finally {
       setBusy(false)
     }
@@ -539,17 +539,18 @@ function RevertBody({ base, plan, holidays }: { base: BaseGtfs; plan: Form2Plan 
     <>
       <div className="flex flex-col gap-1">
         <span className="text-sm font-medium" id="revert-date-label">
-          戻す日(この日から元のダイヤで走る)
+          元のダイヤに戻す日
         </span>
         <div aria-labelledby="revert-date-label" role="group">
           <HolidayCalendar value={restoreFrom} onChange={pick} min={input.start} max={input.end} holidays={holidays} />
         </div>
-        {plan?.period.end && (
-          <p className="text-xs text-muted-foreground">既定は、承認した方針の期間の終わり({formatDateJa(plan.period.end)})の翌日です。</p>
-        )}
+        <p className="text-xs text-muted-foreground">
+          この日から元のダイヤで走ります。
+          {plan?.period.end && `既定は、承認した減便の期間の終わり(${formatDateJa(plan.period.end)})の翌日です。`}
+        </p>
       </div>
       <div className="flex flex-col gap-1">
-        <Label htmlFor="revert-feed-version">減便をやめる版の feed_version</Label>
+        <Label htmlFor="revert-feed-version">元のダイヤに戻す版の feed_version</Label>
         <Input
           id="revert-feed-version"
           value={feedVersion}
@@ -562,7 +563,7 @@ function RevertBody({ base, plan, holidays }: { base: BaseGtfs; plan: Form2Plan 
       </div>
       {result && (
         <>
-          <dl className="flex flex-col gap-0.5 text-sm" aria-label="減便をやめる版">
+          <dl className="flex flex-col gap-0.5 text-sm" aria-label="元のダイヤに戻す版">
             <div>
               <dt className="inline">有効期間:</dt>
               <dd className="inline">
@@ -577,29 +578,29 @@ function RevertBody({ base, plan, holidays }: { base: BaseGtfs; plan: Form2Plan 
               </dd>
             </div>
           </dl>
-          <NoteList items={revertTexts(result)} label="減便をやめる版の有効期間" />
-          <IssueList issues={preview?.issues ?? []} title="減便をやめる版の出力の前の検証" />
-          <IssueList issues={revertTimingNotices(result, today)} title="減便をやめる版の公開の注意" />
+          <NoteList items={revertTexts(result)} label="元のダイヤに戻す版の有効期間" />
+          <IssueList issues={preview?.issues ?? []} title="元のダイヤに戻す版:出力前の検証" />
+          <IssueList issues={revertTimingNotices(result, today)} title="元のダイヤに戻す版:公開の注意" />
         </>
       )}
       {blocked && <p className="text-sm text-muted-foreground">{blocked}</p>}
       <Button type="button" className="self-start" disabled={blocked !== null} loading={busy} loadingLabel="出力中" onClick={() => void onExport()}>
-        減便をやめる版を出力する
+        元のダイヤに戻す版を出力する
       </Button>
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      <IssueList issues={exportIssues} title="減便をやめる版の出力のときの検証" />
+      <IssueList issues={exportIssues} title="元のダイヤに戻す版:出力のときの検証" />
       {exported && (
-        <div role="status" aria-label="減便をやめる版の出力" className="flex flex-col gap-1 rounded-md border px-2 py-1.5 text-xs">
+        <div role="status" aria-label="元のダイヤに戻す版の出力" className="flex flex-col gap-1 rounded-md border px-2 py-1.5 text-xs">
           <p>
-            出力しました:<span className="font-mono break-all">{exported.fileName}</span>(戻す日 {formatDateJa(exported.restoreFrom)}、feed_version{' '}
+            出力しました:<span className="font-mono break-all">{exported.fileName}</span>(元のダイヤに戻す日 {formatDateJa(exported.restoreFrom)}、feed_version{' '}
             {exported.feedVersion}、作成 {generatedAtText(exported.generatedAt)})
           </p>
           <a href={exported.url} download={exported.fileName} className="self-start underline">
-            減便をやめる版をもう一度ダウンロードする
+            元のダイヤに戻す版をもう一度ダウンロードする
           </a>
         </div>
       )}

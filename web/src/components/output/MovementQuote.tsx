@@ -37,7 +37,7 @@ export default function MovementQuoteView({ quote, maxFacts }: { quote: Movement
           </li>
         ))}
       </ul>
-      {hidden > 0 && <p>ほか {hidden} 件は、前提情報の手順で確かめられます。</p>}
+      {hidden > 0 && <p>ほか {hidden} 件は、手順「前提情報」で確かめられます。</p>}
       {sources.length > 0 && (
         <ol className="flex flex-col gap-0.5" aria-label="出典">
           {sources.map((s) => {

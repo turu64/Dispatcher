@@ -201,14 +201,14 @@ export interface RestoreHintContext {
 /** 画面に出す手がかりの名前(並びは RestoreHint の順) */
 export const RESTORE_HINT_LABELS: Record<RestoreHint, string> = {
   weekdayOnlyRoute: '平日だけの系統',
-  routeWouldVanish: '系統が全曜日でなくなる',
+  routeWouldVanish: '全曜日で便がなくなる系統',
   firstTripOfRoute: '系統の始発',
   lastTripOfRoute: '系統の終発',
   onlyTripInBand: '時間帯で唯一の便',
   morning: '朝(6〜9時)',
   evening: '夕方(15〜19時)',
   onlyServiceAtStop: '停留所で唯一の便',
-  restoresLostCells: '外れた場所が戻る',
+  restoresLostCells: '到達圏が戻る',
   nearFacility: '学校・病院の近く',
 }
 
@@ -327,7 +327,7 @@ function lostCellIndexOf(ctx: RestoreHintContext): LostCellIndex {
     before.coverable.length !== n ||
     before.cellPopulation.length !== n
   ) {
-    throw new Error('足し戻しの手がかりに渡した到達圏の比較の形が合いません(基準と編集後のセル、時間帯の数)。')
+    throw new Error('便を平日に戻す判断材料に渡した到達圏の比較の形が合いません(減便前と減便後の区画、時間帯の数)。')
   }
 
   // 1. 時間帯ごとの「減便で外れた」セル(compareReach の lostCells と同じ定義)

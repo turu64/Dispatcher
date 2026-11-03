@@ -87,7 +87,7 @@ export default function StopChangesTable() {
       ) : !edited ? (
         <p className="text-sm text-muted-foreground">減便の方針を承認すると、停留所ごとの本数・最終便・最大間隔の変化を出します。</p>
       ) : !result ? (
-        <p className="text-sm text-destructive">比べる日を決められません(減便後の GTFS に運行日があるか確かめてください)。</p>
+        <p className="text-sm text-destructive">比較する日付を決められません。減便後の GTFS に運行日があるか確かめてください。</p>
       ) : (
         <StopChangesBody result={result} draft={edited.draft} />
       )}
@@ -122,12 +122,12 @@ function StopChangesBody({ result, draft }: { result: StopDiffResult; draft: boo
   return (
     <>
       <p className="text-sm">
-        比べる日:<span className="font-medium">{formatDateJa(result.date)}</span>
-        <span className="text-xs text-muted-foreground">(「影響(到達圏)」の手順の上で選んでいる日付です。ダイヤの種類が同じ日は同じ結果になります)</span>
+        比較する日付:<span className="font-medium">{formatDateJa(result.date)}</span>
+        <span className="text-xs text-muted-foreground">(手順「影響(到達圏)」で、地図の下の操作盤に選んでいる日付です。ダイヤの種類が同じ日は同じ結果になります)</span>
       </p>
       {draft && (
         <p className="rounded-md border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
-          承認前の下書きで比べています。承認すると確定します。
+          承認待ちの下書きで比べています。承認すると確定します。
         </p>
       )}
 
@@ -139,27 +139,27 @@ function StopChangesBody({ result, draft }: { result: StopDiffResult; draft: boo
           </dd>
         </div>
         <div className="rounded-lg bg-muted/50 px-3 py-2">
-          <dt className="text-xs text-muted-foreground">発車がすべて無くなる停留所</dt>
+          <dt className="text-xs text-muted-foreground">発車がすべてなくなる停留所</dt>
           <dd className="text-lg font-semibold tabular-nums">{result.stopsLosingAll}件</dd>
         </div>
         <div className="rounded-lg bg-muted/50 px-3 py-2">
-          <dt className="text-xs text-muted-foreground">新しく生じる発車時刻がある停留所</dt>
+          <dt className="text-xs text-muted-foreground">新しく加わる発車時刻がある停留所</dt>
           <dd className="text-lg font-semibold tabular-nums">{result.stopsWithAdded}件</dd>
         </div>
         <div className="rounded-lg bg-muted/50 px-3 py-2">
-          <dt className="text-xs text-muted-foreground">無くなる発車時刻がある停留所</dt>
+          <dt className="text-xs text-muted-foreground">なくなる発車時刻がある停留所</dt>
           <dd className="text-lg font-semibold tabular-nums">{result.stopsWithRemoved}件</dd>
         </div>
       </dl>
 
       {result.stopsWithAdded > 0 && (
         <p className="rounded-md border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
-          新しく生じる発車時刻がある停留所には、今の掲示にない時刻が載ります。掲示より早い発車は早発になりえます。掲示を差し替えるまでは、利用者に旧い時刻を案内しないでください。
+          新しく加わる発車時刻がある停留所では、減便前の掲示にない時刻に便が発車します。掲示より早い発車は早発になりえます。掲示を差し替えるまでは、利用者に古い時刻を案内しないでください。
         </p>
       )}
       {result.stopsLosingAll > 0 && (
         <p className="text-xs text-muted-foreground">
-          発車がすべて無くなる停留所は、この日は便が来ません。掲示の撤去と、休止の届出に当たるかを確かめてください。
+          発車がすべてなくなる停留所は、この日は便が来ません。掲示の撤去と、休止の届出に当たるかを確かめてください。
         </p>
       )}
       {(skippedBlank > 0 || skippedInvalid > 0) && (
@@ -298,7 +298,7 @@ function StopRows({ stop, isOpen, detailId, onToggle }: { stop: StopChange; isOp
               onClick={onToggle}
               className="tabular-nums"
             >
-              新{stop.added.length}・無{stop.removed.length}
+              加わる {stop.added.length}・なくなる {stop.removed.length}
             </Button>
           ) : (
             <span className="text-xs text-muted-foreground">変化なし</span>
@@ -310,11 +310,11 @@ function StopRows({ stop, isOpen, detailId, onToggle }: { stop: StopChange; isOp
           <TableCell colSpan={6} className="whitespace-normal bg-muted/30 text-xs">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1">
-                <p className="font-medium">新しく生じる発車時刻({stop.added.length}本)</p>
+                <p className="font-medium">新しく加わる発車時刻({stop.added.length}本)</p>
                 <DepartureList stop={stop} list={stop.added} empty="ありません" />
               </div>
               <div className="flex flex-col gap-1">
-                <p className="font-medium">無くなる発車時刻({stop.removed.length}本)</p>
+                <p className="font-medium">なくなる発車時刻({stop.removed.length}本)</p>
                 <DepartureList stop={stop} list={stop.removed} empty="ありません" />
               </div>
             </div>

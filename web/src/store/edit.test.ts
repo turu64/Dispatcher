@@ -57,7 +57,7 @@ describe('useEditStore(createEditStore)', () => {
     const draft = store.getState().draft
     expect(draft?.kind).toBe('op')
     if (draft?.kind !== 'op' || !draft.outcome.ok) throw new Error('下書きがありません')
-    expect(draft.id).toBe('d1')
+    expect(draft.id).toBe('1')
     expect(draft.diff?.byRoute.find((r) => r.routeId === 'R3')?.vanishes).toBe(true)
     expect(store.getState().history).toEqual([])
     expect(onEdited).toHaveBeenLastCalledWith(expect.objectContaining({ draft: true, feed: draft.outcome.result.feed }))
@@ -81,7 +81,7 @@ describe('useEditStore(createEditStore)', () => {
     expect(draft?.kind === 'op' && draft.outcome.ok).toBe(false)
     const committed = store.getState().commit()
     expect(committed.ok).toBe(false)
-    if (!committed.ok) expect(committed.message).toContain('平日の service と写す元の service が同じ')
+    if (!committed.ok) expect(committed.message).toContain('平日の service と入れ替えに使う service が同じ')
     expect(store.getState().history).toEqual([])
     expect(store.getState().versions).toEqual([])
     // 失敗した下書きでは、地図は基準のまま(編集後なし)
@@ -91,7 +91,7 @@ describe('useEditStore(createEditStore)', () => {
   it('方針を承認する前の足し戻しは断る', () => {
     const { store } = setup()
     const r = store.getState().propose(addBack('R3_0730_WK'), 'user')
-    expect(r).toEqual({ ok: false, message: '減便の方針を承認してから、便を足し戻せます。' })
+    expect(r).toEqual({ ok: false, message: '減便の方針を承認してから、便を平日に戻せます。' })
     expect(store.getState().draft).toBeNull()
   })
 
@@ -102,10 +102,10 @@ describe('useEditStore(createEditStore)', () => {
     const first = store.getState().propose(addBack('R3_0730_WK'), 'claude')
     expect(first.ok).toBe(true)
     const second = store.getState().propose(addBack('R1_0800_WK'), 'claude')
-    expect(second).toEqual({ ok: false, message: '下書き d2 が承認待ちです。' })
-    expect(store.getState().proposeUndo('claude')).toEqual({ ok: false, message: '下書き d2 が承認待ちです。' })
+    expect(second).toEqual({ ok: false, message: '下書き #2 が承認待ちです。' })
+    expect(store.getState().proposeUndo('claude')).toEqual({ ok: false, message: '下書き #2 が承認待ちです。' })
     const draft = store.getState().draft
-    expect(draft?.id).toBe('d2')
+    expect(draft?.id).toBe('2')
     expect(draft?.kind === 'op' && draft.record.op).toEqual(addBack('R3_0730_WK'))
     expect(store.getState().draftNotices).toEqual([])
   })
@@ -116,11 +116,11 @@ describe('useEditStore(createEditStore)', () => {
     expect(store.getState().commit()).toEqual({ ok: true })
     store.getState().propose(addBack('R3_0730_WK'), 'claude')
     store.getState().propose(addBack('R1_0800_WK'), 'user')
-    expect(store.getState().draft?.id).toBe('d3')
+    expect(store.getState().draft?.id).toBe('3')
     const notices = store.getState().takeDraftNotices()
     expect(notices).toEqual([
-      { draftId: 'd1', by: 'claude', result: 'committed', at: '2026-11-04T09:30:00+09:00' },
-      { draftId: 'd2', by: 'claude', result: 'replaced', at: '2026-11-04T09:30:00+09:00' },
+      { draftId: '1', by: 'claude', result: 'committed', at: '2026-11-04T09:30:00+09:00' },
+      { draftId: '2', by: 'claude', result: 'replaced', at: '2026-11-04T09:30:00+09:00' },
     ])
     // 伝えた分は消える
     expect(store.getState().takeDraftNotices()).toEqual([])
@@ -169,7 +169,7 @@ describe('useEditStore(createEditStore)', () => {
     expect(store.getState().history).toHaveLength(1)
     expect(lastVersion(store.getState())).toBe(v1)
     expect(onEdited).toHaveBeenLastCalledWith(expect.objectContaining({ feed: v1?.feed, draft: false }))
-    expect(store.getState().takeDraftNotices().map((n) => [n.draftId, n.result])).toEqual([['d3', 'discarded']])
+    expect(store.getState().takeDraftNotices().map((n) => [n.draftId, n.result])).toEqual([['3', 'discarded']])
 
     store.getState().undoAll()
     expect(store.getState().history).toEqual([])

@@ -492,8 +492,8 @@ describe('computeReach:入力の誤り', () => {
     expect(() => run({ params: paramsWith({ densityThreshold: Number.NaN }) })).toThrow('人口密度のしきい値は 0 以上の数')
     expect(() =>
       run({ params: paramsWith({ walkMinutes: { ...DEFAULT_REACH_PARAMS.walkMinutes, rural: { bus: -1, rail: 20 } } }) }),
-    ).toThrow('中山間・地方のバス停までの徒歩の分数は 0 以上の数')
-    expect(() => run({ fallbackClass: 'city' as RegionClass })).toThrow('参照データが無いときの区分が正しくありません')
+    ).toThrow('中山間・地方の停留所までの徒歩の分数は 0 以上の数')
+    expect(() => run({ fallbackClass: 'city' as RegionClass })).toThrow('参照データがないときの区分が正しくありません')
   })
 })
 

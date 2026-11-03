@@ -99,21 +99,21 @@ describe('ChangeOrder', () => {
     expect(reason.getByText('運転士の一時的な欠員')).toBeTruthy()
     expect(reason.getByText('運転士 3 人が病欠')).toBeTruthy()
 
-    const policySection = within(section('2. 方針と承認'))
+    const policySection = within(section('2. 減便の方針と承認'))
     expect(policySection.getByText('平日を土曜ダイヤに')).toBeTruthy()
     // 除外した系統は系統名(R2 は 2 番・市役所線)で出す
     expect(policySection.getByText('除外した系統:').nextElementSibling?.textContent).toBe('2')
     expect(policySection.getByText('期間:').nextElementSibling?.textContent).toContain('2026年11月1日(日)〜当面の間')
     // 承認の日時(時計は 2026-10-20 12:00 日本時間)と、利用者が作成した操作であること
-    expect(policySection.getByText('方針の承認:').nextElementSibling?.textContent).toBe('2026年10月20日 12:00(利用者が作成して承認)')
+    expect(policySection.getByText('減便の方針の承認:').nextElementSibling?.textContent).toBe('2026年10月20日 12:00(利用者が作成して承認)')
     expect(sheet.getByText('作成日:', { exact: false }).textContent).toContain('2026年10月20日(火)')
   })
 
   it('Claude の下書きを承認した操作は、AI の下書きとして出す', () => {
     commit(policy({ category: null, note: '' }), 'claude')
     render(<ChangeOrder />)
-    const policySection = within(section('2. 方針と承認'))
-    expect(policySection.getByText('方針の承認:').nextElementSibling?.textContent).toContain('AI(Claude)の下書きを利用者が承認')
+    const policySection = within(section('2. 減便の方針と承認'))
+    expect(policySection.getByText('減便の方針の承認:').nextElementSibling?.textContent).toContain('AI(Claude)の下書きを利用者が承認')
     // 理由の区分を選ばなければ「未選択」
     expect(within(section('1. 減便の理由')).getByText('未選択')).toBeTruthy()
   })
@@ -125,29 +125,29 @@ describe('ChangeOrder', () => {
       items: [{ tripId: 'R3_0730_WK', reason: '学校前から市役所へ向かう通学の便', schoolDaysOnly: true }],
     })
     render(<ChangeOrder />)
-    const protectedSection = within(section('4. 保護する便(足し戻した便)'))
-    const row = protectedSection.getByRole('table', { name: '保護する便と理由' }).querySelector('tr[data-trip-id="R3_0730_WK"]') as HTMLElement
+    const protectedSection = within(section('4. 平日に戻した便'))
+    const row = protectedSection.getByRole('table', { name: '平日に戻した便と理由' }).querySelector('tr[data-trip-id="R3_0730_WK"]') as HTMLElement
     expect(row).toBeTruthy()
     const cells = within(row)
     expect(cells.getByText('学校前から市役所へ向かう通学の便')).toBeTruthy()
     expect(cells.getByText('(学)')).toBeTruthy()
     expect(cells.getByText('07:30〜07:50')).toBeTruthy()
     // 集計はコードが出す:1 便、営業運行時間 20 分(07:30〜07:50)
-    expect(protectedSection.getByText(/足し戻した便 1 便、営業運行時間の合計 0時間20分/)).toBeTruthy()
-    expect(protectedSection.getByText(/うち休校日運休\(学\) 1 便/)).toBeTruthy()
+    expect(protectedSection.getByText(/平日に戻した便 1 便、営業運行時間の合計 0時間20分/)).toBeTruthy()
+    expect(protectedSection.getByText(/うち休校日運休 1 便/)).toBeTruthy()
     // 勤務の確認欄(数値は目安)
     expect(protectedSection.getByText('拘束時間(13 時間以内、最大 15 時間)')).toBeTruthy()
     expect(protectedSection.getByText('休息期間(継続 9 時間以上)')).toBeTruthy()
     expect(protectedSection.getByText('確認者:', { exact: false })).toBeTruthy()
     // 足し戻しの承認の回数
-    expect(within(section('2. 方針と承認')).getByText('足し戻しの承認:').nextElementSibling?.textContent).toContain('1 回')
+    expect(within(section('2. 減便の方針と承認')).getByText('便を平日に戻す承認:').nextElementSibling?.textContent).toContain('1 回')
   })
 
   it('系統 × 公示第47号の時間帯の前後の回数を、変わった系統だけ出す。届出の区分は運輸支局に確認する', () => {
     commit(policy({ category: 'temporaryShortage', note: '' }))
     render(<ChangeOrder />)
     const notice = within(section('3. 届出の目安:時間帯ごとの便数(北海道運輸局 公示第47号の区分)'))
-    const table = notice.getByRole('table', { name: '系統と時間帯ごとの平日の便数(前 → 後)' })
+    const table = notice.getByRole('table', { name: '系統と時間帯ごとの平日の便数(減便前 → 減便後)' })
     const rows = within(table).getAllByRole('row')
     const rowOf = (name: string) => rows.find((r) => within(r).queryByRole('rowheader', { name: new RegExp(`(^|\\s|\\))${name}$`) }))!
     // 基準の平日:R1 は 6〜9 時台に 2 便、R2 は 9 時に 1 便(6〜9 時台)、R3 は 7:30 の 1 便。土曜に入れ替えると
@@ -157,7 +157,7 @@ describe('ChangeOrder', () => {
     const r2 = within(rowOf('2')).getAllByRole('cell').map((c) => c.textContent)
     expect(r2).toEqual(['1 → 0', '0 → 1', '0 → 0', '0 → 0'])
     const r3 = rowOf('3')
-    expect(within(r3).getByRole('rowheader').textContent).toContain('全曜日で無くなる')
+    expect(within(r3).getByRole('rowheader').textContent).toContain('全曜日で便なし')
     expect(within(r3).getAllByRole('cell')[0].textContent).toBe('1 → 0')
     // 合計
     const total = screen.getByTestId('notice47-total').textContent
@@ -210,15 +210,15 @@ describe('ChangeOrder', () => {
     vi.unstubAllGlobals()
   })
 
-  it('承認前の下書きは含めず、その旨を画面にだけ出す', () => {
+  it('承認待ちの下書きは反映せず、その旨を画面にだけ出す', () => {
     commit(policy({ category: 'temporaryShortage', note: '' }))
     act(() => {
       useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '', schoolDaysOnly: false }] }, 'claude')
     })
     const draftId = useEditStore.getState().draft!.id
     render(<ChangeOrder />)
-    expect(screen.getByText(new RegExp(`承認前の下書き\\(${draftId}\\)は含めていません`))).toBeTruthy()
-    expect(within(section('4. 保護する便(足し戻した便)')).getByText('足し戻した便はありません。')).toBeTruthy()
+    expect(screen.getByText(new RegExp(`承認待ちの下書き #${draftId} は反映していません`))).toBeTruthy()
+    expect(within(section('4. 平日に戻した便')).getByText('平日に戻した便はありません。')).toBeTruthy()
   })
 
   it('applyForm2 の結果の feed_version を、入力が無いときは出力日時の例として画面だけに出し、紙は手書きの欄にする', () => {
@@ -270,9 +270,9 @@ describe('ChangeOrder', () => {
     })
     expect(lastVersion(useEditStore.getState())!.report.addBack.accepted).toHaveLength(9)
     render(<ChangeOrder />)
-    const protectedSection = section('4. 保護する便(足し戻した便)')
+    const protectedSection = section('4. 平日に戻した便')
     // 印刷では表を左右に分けるが、行は全便ある
-    const tables = within(protectedSection).getAllByRole('table', { name: '保護する便と理由' })
+    const tables = within(protectedSection).getAllByRole('table', { name: '平日に戻した便と理由' })
     expect(tables).toHaveLength(2)
     const rows = [...protectedSection.querySelectorAll<HTMLElement>('tr[data-trip-id]')]
     expect(rows.map((r) => r.dataset.tripId).sort()).toEqual([...tripIds].sort())
@@ -281,7 +281,7 @@ describe('ChangeOrder', () => {
       // 印刷で隠さない
       expect(r.closest('.print-hide')).toBeNull()
     }
-    expect(within(protectedSection).getByText(/うち休校日運休\(学\) 5 便/)).toBeTruthy()
+    expect(within(protectedSection).getByText(/うち休校日運休 5 便/)).toBeTruthy()
     // 画面だけを指す「ほか N 便」や、行を絞るボタンは無い
     expect(within(protectedSection).queryByText(/ほか \d+ 便/)).toBeNull()
     expect(within(protectedSection).queryByRole('button')).toBeNull()
@@ -348,7 +348,7 @@ describe('ChangeOrder', () => {
       const text = section(TITLE).textContent ?? ''
       // 見出しで絞った結果だけを言い、「動きがない」とは書かない
       expect(text).toContain(
-        '調べた 1 事業者の結果(確認日時 2026年10月19日 09:00)に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、前提情報の手順で確かめてください。',
+        '調べた 1 事業者の結果(確認日時 2026年10月19日 09:00)に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、手順「前提情報」で確かめてください。',
       )
       expect(text).not.toContain('記載はありませんでした')
       expect(text).not.toContain('調べていません')

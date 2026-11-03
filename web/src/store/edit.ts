@@ -31,7 +31,7 @@ export interface BaseGtfs {
 export type Draft =
   | {
       kind: 'op'
-      /** 'd1'、'd2' … (store の中で増やす。Claude のツールの結果の draft_id) */
+      /** '1'、'2' … (store の中で増やす。Claude のツールの結果の draft_id。画面では draftName で「下書き #1」と出す) */
       id: string
       /** at は承認したときに入れ直す */
       record: EditRecord
@@ -178,9 +178,14 @@ export function diffOf(base: GtfsFeed, result: Form2Result): WeekdayDiff {
 }
 
 const NO_BASE = 'GTFS を読み込んでから編集してください。'
-const NO_POLICY = '減便の方針を承認してから、便を足し戻せます。'
+const NO_POLICY = '減便の方針を承認してから、便を平日に戻せます。'
 const NO_HISTORY = '元に戻す編集がありません。'
 const NO_DRAFT = '承認する下書きがありません。'
+
+/** 下書きの画面での呼び方(「下書き #1」)。画面・[画面の操作] の行・AI の返答で同じ番号を使う(docs/wording.md) */
+export function draftName(id: string): string {
+  return `下書き #${id}`
+}
 
 /** 編集の store を作る(テストでは時計と到達圏へのつなぎを差し替える) */
 export function createEditStore(deps: EditStoreDeps) {
@@ -232,12 +237,12 @@ export function createEditStore(deps: EditStoreDeps) {
     function blockedBy(by: EditActor): string | null {
       const { base, draft } = get()
       if (!base) return NO_BASE
-      if (draft && by === 'claude') return `下書き ${draft.id} が承認待ちです。`
+      if (draft && by === 'claude') return `${draftName(draft.id)} が承認待ちです。`
       return null
     }
 
     function newId(): string {
-      return `d${nextDraft++}`
+      return String(nextDraft++)
     }
 
     return {
@@ -258,7 +263,7 @@ export function createEditStore(deps: EditStoreDeps) {
         const { base, history, draft: previous } = get()
         if (!base) return { ok: false, message: NO_BASE }
         if (op.type !== 'applyPolicy' && planOf(history) === null) return { ok: false, message: NO_POLICY }
-        if (op.type === 'addBack' && op.items.length === 0) return { ok: false, message: '足し戻す便を選んでください。' }
+        if (op.type === 'addBack' && op.items.length === 0) return { ok: false, message: '平日に戻す便を選んでください。' }
         if (op.type === 'withdrawAddBack' && op.tripIds.length === 0) return { ok: false, message: '取り消す便を選んでください。' }
 
         const now = deps.now()
@@ -272,7 +277,7 @@ export function createEditStore(deps: EditStoreDeps) {
           try {
             outcome = applyForm2(base.feed, plan, { generatedAt: generatedAtOf(now) })
           } catch (e) {
-            outcome = { ok: false, message: e instanceof Error && e.message ? e.message : '方針を適用できませんでした。' }
+            outcome = { ok: false, message: e instanceof Error && e.message ? e.message : '減便の方針を適用できませんでした。' }
           }
         }
         const draft: Draft = {

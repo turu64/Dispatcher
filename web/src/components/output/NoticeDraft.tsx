@@ -29,7 +29,7 @@ import {
 } from '@/gtfs/edit/notice'
 import { policyReasonOf } from '@/gtfs/edit/ops'
 import { excludeOwnOperators, type OtherStop } from '@/ref/busstops'
-import { diffOf, lastVersion, useEditStore } from '@/store/edit'
+import { diffOf, draftName, lastVersion, useEditStore } from '@/store/edit'
 import { useResearchStore } from '@/store/research'
 import { formatDateJa, fromInputDate, toInputDate } from '@/lib/dates'
 
@@ -108,7 +108,7 @@ function OtherOperatorsBlock({
   if (others === null) {
     return (
       <p className="print-hide text-xs text-muted-foreground" data-testid="other-operators-missing">
-        周辺の事業者の停留所は、前提情報の手順で参照データを読み込むと表示します。
+        周辺の事業者の停留所は、手順「前提情報」で参照データを読み込むと表示します。
       </p>
     )
   }
@@ -367,7 +367,7 @@ export default function NoticeDraft() {
           base={base.feed}
           history={history}
           result={last}
-          hasDraft={draft !== null}
+          draftId={draft ? draft.id : null}
         />
       )}
     </StepSection>
@@ -378,12 +378,13 @@ function NoticeBody({
   base,
   history,
   result,
-  hasDraft,
+  draftId,
 }: {
   base: NonNullable<ReturnType<typeof useEditStore.getState>['base']>['feed']
   history: ReturnType<typeof useEditStore.getState>['history']
   result: NonNullable<ReturnType<typeof lastVersion>>
-  hasDraft: boolean
+  /** 承認待ちの下書きの番号(無ければ null) */
+  draftId: string | null
 }) {
   const [view, setView] = useState<View>('stop')
   const [query, setQuery] = useState('')
@@ -481,17 +482,17 @@ function NoticeBody({
 
   return (
     <>
-      {hasDraft && (
+      {draftId !== null && (
         <p className="print-hide rounded-md border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
-          承認前の下書きがあります。周知文は承認済みの内容で作っています。
+          承認待ちの{draftName(draftId)} があります。周知文は承認済みの内容で作っています。
         </p>
       )}
       {date === null ? (
-        <p className="text-sm text-destructive">期間の中に平日ダイヤが走る日がないため、掲示の時刻を出せません。減便の方針の期間を確かめてください。</p>
+        <p className="text-sm text-destructive">期間の中に平日ダイヤが走る日がないため、掲示の時刻を出せません。減便の期間を確かめてください。</p>
       ) : (
         <>
           <p className="print-hide text-sm">
-            時刻を数える日:<span className="font-medium">{formatDateJa(date)}</span>
+            時刻を集計する対象日:<span className="font-medium">{formatDateJa(date)}</span>
             <span className="text-xs text-muted-foreground">
               (期間の中で、平日ダイヤが走る最初の日です。この日と同じダイヤで走る日は同じ時刻になります)
             </span>
@@ -675,7 +676,7 @@ function NoticeBody({
             </>
           )}
           <p className="print-hide text-xs text-muted-foreground">
-            この文案は、運輸規則第17条の公示事項を雛形にしたもので、法定の様式ではありません。Dispatcher は届出・公示の要否を判定しません。運輸支局に確認してください。時刻・本数・距離はコードが数えた値で、AI は書いていません。
+            この文案は、運輸規則第17条の公示事項を雛形にしたもので、法定の様式ではありません。Dispatcher は届出・公示の要否を判定しません。運輸支局に確認してください。時刻・本数・距離はコードが出した値で、AI は書いていません。
           </p>
         </>
       )}

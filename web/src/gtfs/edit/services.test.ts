@@ -127,7 +127,7 @@ S2,20261103,1`,
     )
     const choice = guessServiceChoice(feed, describeServices(feed, null), NOVEMBER)
     expect(choice.sundayHoliday).toBeNull()
-    expect(choice.notes).toContain('祝日一覧を読めないため、日祝のダイヤを決められません')
+    expect(choice.notes).toContain('祝日一覧を読めないため、日祝のダイヤを決められません。')
   })
 
   it('新しい有効期間に走らない service を候補にしない', () => {

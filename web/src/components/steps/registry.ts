@@ -34,7 +34,7 @@ export const STEPS: readonly StepDef[] = [
   { key: 'research', title: '前提情報', component: ResearchStep, showMap: true, mapOverlay: MapOverlays },
   { key: 'policy', title: '減便の方針', component: PolicyStep, showMap: false },
   { key: 'reach', title: '影響(到達圏)', component: ReachStep, showMap: true, mapOverlay: MapOverlays },
-  { key: 'restore', title: '足し戻し', component: RestoreStep, showMap: true, mapOverlay: MapOverlays },
+  { key: 'restore', title: '平日便を戻す', component: RestoreStep, showMap: true, mapOverlay: MapOverlays },
   { key: 'output', title: '出力', component: OutputStep, showMap: false },
 ]
 

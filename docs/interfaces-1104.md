@@ -380,11 +380,17 @@ interface EditState {
   takeDraftNotices: () => DraftNotice[]
   /** 読み込み直しで呼ぶ。履歴と下書きを捨てる */
   setBase: (base: BaseGtfs | null) => void
+  /** 祝日一覧が変わったときに、方針の下書きの issues を今の祝日一覧で作り直す(下書きの id は変えない。承認済みの版は作り直さず、出力の画面が今の祝日一覧で検証し直す)。11/3 に足した */
+  refreshIssues: () => void
 }
 export interface EditStoreDeps {
   now: () => Date
   /** 編集後のフィードが変わったときに呼ぶ(到達圏の store の setEdited につなぐ) */
   onEdited: (edited: EditedSource | null) => void
+  /** validateEdit に渡す祝日一覧(useHolidayStore から読む)。11/3 に足した */
+  holidays?: () => HolidayList | null
+  /** 祝日一覧の変化を見張り、変わったら refreshIssues を呼ぶ(useHolidayStore.subscribe)。11/3 に足した */
+  watchHolidays?: (onChange: () => void) => void
 }
 export function createEditStore(deps: EditStoreDeps)
 export const useEditStore = createEditStore({ now: () => new Date(), onEdited: (e) => useReachStore.getState().setEdited(e) })
@@ -566,7 +572,7 @@ export function tripSignature(routeId: string, rows: readonly GtfsRow[]): string
 
 - trips:入力が `(service_id, trip_id)` の昇順なら、出力もその順(道北バスは両版ともこの順)。そうでなく `trip_id` の昇順ならその順。どちらでもなければ入力の順のまま、写した便を割り当ての順で後ろに足す。並びの判定と並べ替えは空白を取ったキーで行う
 - stop_times:入力が便ごとにまとまり、その便の並びが trips の並び(stop_times に出てくる便だけを見た順)と同じなら、出力も出力の trips の順に並べ、便の中は入力の行の順。そうでなければ入力の順のまま(消した便の行を除き)、写した便の行を後ろに足す
-- **孤立した行**:基準の trips に無い trip_id の stop_times の行は、どちらの並びでも出力から除き、件数と例を warning `orphanStopTimesDropped` に出す(参照実装も除く)。残すと、その trip_id が写した便の新しい trip_id と同じとき、写した便の停車に混ざる。基準では `validateEdit` の `stopTimesUnknownTrip`(入力からある問題)にも出る
+- **孤立した行**:基準の trips に無い trip_id の stop_times の行は、どちらの並びでも出力から除き、件数と例を warning `orphanStopTimesDropped` に出す(参照実装も除く)。残すと、その trip_id が写した便の新しい trip_id と同じとき、写した便の停車に混ざる。孤立した行は出力に残らないので、`validateEdit` には `stopTimesUnknownTrip` ではなく `form2.orphanStopTimesDropped`(`stop_times.txt`)として出る。孤立した行があると、stop_times の並びの判定はいつも `'input'` になる(参照実装と同じ)
 - `Form2Report.rowOrder` に判定の結果を入れる
 
 ### 5.6 有効期間、calendar、calendar_dates
@@ -663,7 +669,8 @@ export function timingNotices(result: Form2Result, today: string): ValidationIss
 
 | code | いつ | 文言 |
 | --- | --- | --- |
-| `leadTimeUnder3` | d < 3 | 「実施まで {d} 日です。静的 GTFS の反映が間に合わない可能性があります(Google は最低 2〜3 日前、calendar_dates の運休の反映に 24〜48 時間)。周知文で補ってください。」 |
+| `leadTimePassed` | d < 0(11/3 に足した) | 「実施日({日付})を {−d} 日過ぎています。過ぎた日は経路検索に正しく出ていません。周知文などで補ってください。」 |
+| `leadTimeUnder3` | 0 ≦ d < 3 | 「実施まで {d} 日です。静的 GTFS の反映が間に合わない可能性があります(Google は最低 2〜3 日前、calendar_dates の運休の反映に 24〜48 時間)。周知文で補ってください。」 |
 | `leadTimeUnder7` | d < 7 | 「実施まで {d} 日です。運輸規則第6条の 7 日前の公示に間に合いません。緊急やむを得ない理由の扱いは運輸支局に確認してください。」 |
 | `leadTimeUnder30` | d < 30 | 「実施まで {d} 日です。運行計画の変更の事前届出(実施予定日の 30 日前まで、施行規則第15条の13)に間に合いません。届出の区分(事前・事後)は運輸支局に確認してください。」 |
 
@@ -1317,6 +1324,9 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
 ## 13. 後でよい
 
 急がない指摘。期限の目安を付けて残す。
+
+- **方針の画面で、期間がおかしい理由を出す**(11/6 まで):終了日が開始日より前、または開始日が入力の末日より後のとき、service の推定が空になって「選んでください」に戻り、`checkPolicy` の `badPeriod`・`emptyValidity` が画面に出ない(ボタンは押せないので誤った GTFS にはならない)。期間の欄の下に理由を出す
+- **calendar の日付が不正な平日の service**(11/6 の検証器):その行は運行日を生まないので、`weekdayNotActive`(1日も走りません)だけが出て、原因の日付の誤りが分からない。文言に「日付の正しくない calendar の行は数えていません」を足すか、`badCalendar` を方針の画面にも出す。calendar が期間と重ならないときは `weekdayCalendarOutside` と `weekdayNotActive` が並ぶ
 
 - **比較の初日の前日の扱い**(11/6 以降):比較の日付が編集後の有効期間の初日だと、編集後は前日の service が空になり、前日の便の 24時を超える出発(30:00 以降が 6時以降に入る)が減便と関係なく差に出る。前日の分を基準と同じに扱うか、画面に注意を出す。道北バスは 24:00 以降の時刻が 0 行で、既定の日付も 11/2 以降なので今は影響しない
 - **§3 の `checkPolicy` の一覧に「`period.end` が入力の開始日より前(新しい有効期間が空)」を書き足す**:今も `replacementNotActive`(空の有効期間ではどの service も走らない)と `applyForm2` の ok: false で止まるので、誤った GTFS にはならない

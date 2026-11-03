@@ -428,6 +428,73 @@ function tripLine(t: TripBrief): Record<string, unknown> {
   }
 }
 
+// ---- 系統の指定の読み替え ----
+
+/** 利用者や Claude が書いた系統の指定(route_id・系統番号・系統名)を、どの規則で route_id に読み替えたか */
+export interface RouteResolution {
+  given: string
+  route_id: string
+  name: string
+  by: 'route_id' | 'route_short_name' | 'route_long_name' | 'long_name_number' | 'route_id_without_zeros'
+}
+
+/** 頭の 0 を除いた数字(数字だけの文字列でなければ null) */
+function numberKey(s: string): string | null {
+  return /^\d+$/.test(s) ? s.replace(/^0+(?=\d)/, '') : null
+}
+
+/** route_long_name の頭の番号(「51-沼田深川線」の 51)。区切りはハイフン類・空白 */
+function longNameNumber(longName: string): string | null {
+  const m = /^(\d+)\s*[-‐‑–—ー－\s]/.exec(longName)
+  return m ? numberKey(m[1]) : null
+}
+
+/**
+ * 系統の指定を route_id に読み替える。決まった規則を順に当て、1つに決まった規則で読み替える(推測はしない)。
+ * 規則:route_id と同じ → route_short_name と同じ → route_long_name と同じ → route_long_name の頭の番号と同じ
+ * → 頭の 0 を除いた route_id と同じ。ある規則で2つ以上に当たったら、そこで「決まらない」にする
+ */
+export function resolveRouteRefs(
+  feed: GtfsFeed,
+  refs: readonly string[],
+): { resolved: RouteResolution[]; problems: string[] } {
+  const routes = (feed.tables.get('routes')?.rows ?? []).map((r) => ({
+    id: trimmed(r.route_id),
+    short: trimmed(r.route_short_name),
+    long: trimmed(r.route_long_name),
+  }))
+  const nameOf = (r: (typeof routes)[number]) => r.long || r.short || r.id
+  const rules: [RouteResolution['by'], (r: (typeof routes)[number], given: string) => boolean][] = [
+    ['route_id', (r, g) => r.id === g],
+    ['route_short_name', (r, g) => r.short !== '' && r.short === g],
+    ['route_long_name', (r, g) => r.long !== '' && r.long === g],
+    ['long_name_number', (r, g) => numberKey(g) !== null && longNameNumber(r.long) === numberKey(g)],
+    ['route_id_without_zeros', (r, g) => numberKey(g) !== null && numberKey(r.id) === numberKey(g)],
+  ]
+  const resolved: RouteResolution[] = []
+  const problems: string[] = []
+  for (const given of refs) {
+    let done = false
+    for (const [by, match] of rules) {
+      const hits = routes.filter((r) => match(r, given))
+      if (hits.length === 1) {
+        resolved.push({ given, route_id: hits[0].id, name: nameOf(hits[0]), by })
+        done = true
+        break
+      }
+      if (hits.length > 1) {
+        problems.push(
+          `「${given}」に当たる系統が ${hits.length} つあります(${hits.slice(0, 5).map((r) => `${r.id}:${nameOf(r)}`).join('、')})。route_id で指定してください。`,
+        )
+        done = true
+        break
+      }
+    }
+    if (!done) problems.push(`「${given}」に当たる系統がありません(route_id・系統番号・系統名のどれとも合いません)。`)
+  }
+  return { resolved, problems }
+}
+
 // ---- ツール ----
 
 function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
@@ -463,7 +530,22 @@ function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
   const replacement = (kind === 'weekdayToSaturday' ? services?.saturday : services?.sundayHoliday) ?? null
   if (!weekday || !replacement) return fail(NO_SERVICES)
 
-  const settings: PolicySettings = { kind, weekdayService: weekday, replacementService: replacement, period: { start, end }, excludedRoutes: excluded }
+  // 系統の指定は、決まった規則で route_id に読み替える。決まらないものがあれば、誤った下書きを作らずに返す
+  const routeRefs = resolveRouteRefs(base.feed, excluded)
+  if (routeRefs.problems.length > 0) {
+    return fail(`入れ替えから外す系統を決められませんでした。${routeRefs.problems.join(' ')} 利用者に確かめてください。`, {
+      resolved_routes: routeRefs.resolved,
+    })
+  }
+  const excludedIds = [...new Set(routeRefs.resolved.map((r) => r.route_id))]
+
+  const settings: PolicySettings = {
+    kind,
+    weekdayService: weekday,
+    replacementService: replacement,
+    period: { start, end },
+    excludedRoutes: excludedIds,
+  }
   // 適用できない方針は下書きにしない(承認できない下書きが残ると、次の編集ができなくなるため)
   const problems = checkPolicy(base.feed, settings)
   const errors = problems.filter((p) => p.severity === 'error')
@@ -476,7 +558,11 @@ function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
   const op: EditOp = { type: 'applyPolicy', settings, reason: { category, note } }
   const proposed = state.propose(op, 'claude')
   if (!proposed.ok) return fail(proposed.message)
-  return draftResult(base.feed, proposed.draft, { services: { weekday, replacement } })
+  return draftResult(base.feed, proposed.draft, {
+    services: { weekday, replacement },
+    // どの指定をどの系統と読んだか(利用者が「系統51」と言ったときなどに、Claude が確かめて伝えるため)
+    excluded_routes: routeRefs.resolved,
+  })
 }
 
 /** 編集の下書き(kind 'op')の結果 */
@@ -771,6 +857,14 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
   const state = deps.edit()
   const base = state.base
   if (!base) return fail(NO_BASE)
+  // 系統の指定は apply_policy と同じ規則で route_id に読み替える(決まらなければ探さずに返す)
+  let resolvedRoutes: RouteResolution[] = []
+  if (routeIds !== null) {
+    const refs = resolveRouteRefs(base.feed, [...routeIds])
+    if (refs.problems.length > 0) return fail(`探す系統を決められませんでした。${refs.problems.join(' ')}`)
+    resolvedRoutes = refs.resolved
+    routeIds = new Set(refs.resolved.map((r) => r.route_id))
+  }
   const basis = basisOf(state)
   const result = basis.result
   if (!result && scope !== 'base_weekday') return fail(`${NO_EDIT}(scope base_weekday なら、基準の平日の便を探せます)`)
@@ -860,6 +954,7 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
       total: filtered.length,
       returned: list.length,
       omitted_over_limit: filtered.length - list.length,
+      ...(resolvedRoutes.length > 0 ? { routes: resolvedRoutes } : {}),
       notes,
       trips: list,
     },

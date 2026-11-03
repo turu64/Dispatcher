@@ -6,7 +6,16 @@ import { makeBands } from '../gtfs/departures'
 import { DEFAULT_REACH_PARAMS } from '../reach/reach'
 import { createEditStore, type BaseGtfs } from '../store/edit'
 import type { ReachSnapshot } from '../store/reach'
-import { fitResult, INPUT_LIMITS, MAX_RESULT_BYTES, runTool, type ReachAccess, type ReachView, type ToolDeps } from './tools'
+import {
+  fitResult,
+  INPUT_LIMITS,
+  MAX_RESULT_BYTES,
+  resolveRouteRefs,
+  runTool,
+  type ReachAccess,
+  type ReachView,
+  type ToolDeps,
+} from './tools'
 
 // 時計は 2026-11-04 09:30(日本時間)に止める
 const NOW = new Date('2026-11-04T00:30:00Z')
@@ -66,6 +75,80 @@ async function withPolicy(deps: ToolDeps, store: ReturnType<typeof setup>['store
   expect(r.isError).toBe(false)
   expect(store.getState().commit()).toEqual({ ok: true })
 }
+
+describe('系統の指定を route_id に読み替える(resolveRouteRefs)', () => {
+  /** 道北バスと同じ形:route_short_name が空で、route_long_name の頭に系統番号がある */
+  const dohokuLike = () =>
+    feedOf({
+      routes: rowsOf(`
+route_id,agency_id,route_short_name,route_long_name,route_type
+0051,1,,51-沼田深川線,3
+0151,1,,151-沼田深川西高線,3
+0044,1,,44-神楽北線,3
+R7,1,7,駅前線,3
+X1,1,,ー,3
+X2,1,9,環状線,3
+X3,1,9,環状線(逆),3`),
+    })
+
+  it('系統番号を route_long_name の頭の番号から読む(道北バスの「系統51」)', () => {
+    const r = resolveRouteRefs(dohokuLike(), ['51', '151'])
+    expect(r.problems).toEqual([])
+    expect(r.resolved).toEqual([
+      { given: '51', route_id: '0051', name: '51-沼田深川線', by: 'long_name_number' },
+      { given: '151', route_id: '0151', name: '151-沼田深川西高線', by: 'long_name_number' },
+    ])
+  })
+
+  it('route_id・route_short_name・route_long_name・頭の 0 の違いの順に当てる', () => {
+    const r = resolveRouteRefs(dohokuLike(), ['0044', '7', '駅前線', '044'])
+    expect(r.problems).toEqual([])
+    expect(r.resolved.map((x) => [x.given, x.route_id, x.by])).toEqual([
+      ['0044', '0044', 'route_id'],
+      ['7', 'R7', 'route_short_name'],
+      ['駅前線', 'R7', 'route_long_name'],
+      ['044', '0044', 'long_name_number'],
+    ])
+  })
+
+  it('当たらない指定と、2つ以上に当たる指定は、推測せずに問題として返す', () => {
+    const r = resolveRouteRefs(dohokuLike(), ['52', '9'])
+    expect(r.resolved).toEqual([])
+    expect(r.problems).toHaveLength(2)
+    expect(r.problems[0]).toContain('「52」に当たる系統がありません')
+    expect(r.problems[1]).toContain('「9」に当たる系統が 2 つあります')
+  })
+})
+
+describe('apply_policy は系統の指定を読み替え、決まらなければ下書きを作らない', () => {
+  it('系統番号で外した系統を route_id にして下書きを作り、読み替えを結果に書く', async () => {
+    const { deps, store } = setup()
+    const r = await runTool('apply_policy', { ...POLICY_INPUT, excluded_route_ids: ['駅前線'] }, deps)
+    expect(r.isError).toBe(false)
+    expect(parse(r.content).excluded_routes).toEqual([{ given: '駅前線', route_id: 'R1', name: '駅前線', by: 'route_long_name' }])
+    const draft = store.getState().draft
+    expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.settings.excludedRoutes).toEqual(['R1'])
+  })
+
+  it('search_trips の route_ids も同じ規則で読み替え、決まらなければ探さない', async () => {
+    const { deps } = setup()
+    const r = await runTool('search_trips', { ...SEARCH, scope: 'base_weekday', route_ids: ['駅前線'] }, deps)
+    expect(r.isError).toBe(false)
+    const body = parse(r.content)
+    expect(body.routes).toEqual([{ given: '駅前線', route_id: 'R1', name: '駅前線', by: 'route_long_name' }])
+    expect((body.trips as { route_id: string }[]).every((t) => t.route_id === 'R1')).toBe(true)
+    const bad = await runTool('search_trips', { ...SEARCH, scope: 'base_weekday', route_ids: ['99'] }, deps)
+    expect(bad.isError).toBe(true)
+  })
+
+  it('決まらない系統があれば is_error で返し、下書きを作らない', async () => {
+    const { deps, store } = setup()
+    const r = await runTool('apply_policy', { ...POLICY_INPUT, excluded_route_ids: ['99'] }, deps)
+    expect(r.isError).toBe(true)
+    expect(parse(r.content).message).toContain('「99」に当たる系統がありません')
+    expect(store.getState().draft).toBeNull()
+  })
+})
 
 describe('apply_policy は下書きを作り status: draft と draft_id を返す', () => {
   it('画面の service で下書きを作り、数はコードが出した summary に入れる', async () => {

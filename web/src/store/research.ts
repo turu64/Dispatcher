@@ -1,7 +1,11 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { fetchDemoResults, type DemoResult, type ResearchResult, type ResearchTarget } from '@/claude/research'
+import { pickNoticeDate } from '@/gtfs/edit/notice'
+import { stopDiff } from '@/gtfs/edit/stopDiff'
+import type { Stop } from '@/gtfs/parse'
 import { originStops } from '@/reach/input'
+import { operatorOverlap, type OperatorOverlap, type OtherStop } from '@/ref/busstops'
 import {
   DEFAULT_MAX_TARGETS,
   defaultSelection,
@@ -12,6 +16,7 @@ import {
   type FacilityLoadResult,
   type ResearchCandidate,
 } from '@/ref/facilities'
+import { lastVersion, useEditStore } from './edit'
 import { useGtfsStore } from './gtfs'
 import { usePriorityStore } from './priority'
 import { useReachStore } from './reach'
@@ -20,7 +25,17 @@ import { useReachStore } from './reach'
 export type FacilityState =
   | { status: 'idle' }
   | { status: 'loading'; key: string }
-  | { status: 'ready'; key: string; facilities: Facility[]; sources: string[] }
+  | {
+      status: 'ready'
+      key: string
+      facilities: Facility[]
+      sources: string[]
+      /**
+       * 周辺の事業者の停留所(facilities/{mesh1}.json の busstops。ref/busstops.ts)。
+       * null・undefined は停留所の参照データが無い(重なりを数えない)
+       */
+      busstops?: OtherStop[] | null
+    }
   | { status: 'error'; key: string; message: string }
 
 /** デモ用の保存済みの結果の読み込みの状態 */
@@ -82,7 +97,7 @@ export const useResearchStore = create<ResearchState>()((set, get) => ({
     if (now.status !== 'loading' || now.key !== key) return
     set({
       facilities: result.ok
-        ? { status: 'ready', key, facilities: result.facilities, sources: result.sources }
+        ? { status: 'ready', key, facilities: result.facilities, sources: result.sources, busstops: result.busstops }
         : { status: 'error', key, message: result.message },
     })
   },
@@ -127,11 +142,11 @@ export function facilitiesInUse(s: Pick<ResearchState, 'facilities'>): boolean {
   return s.facilities.status === 'ready' && s.facilities.facilities.length > 0
 }
 
-const NO_STOPS: readonly { lat: number; lon: number }[] = []
+const NO_STOPS: readonly Stop[] = []
 const NO_FACILITIES: readonly Facility[] = []
 
 /** 調査の対象を探す起点の停留所(到達圏の起点と同じ。到達圏の store が求めていればそれを使う) */
-export function useResearchStops(): readonly { lat: number; lon: number }[] {
+export function useResearchStops(): readonly Stop[] {
   const feed = useGtfsStore((s) => s.feed)
   const stops = useGtfsStore((s) => s.stops)
   const origins = useReachStore((s) => s.origins)
@@ -153,6 +168,27 @@ function useAgencyNames(): string[] {
   )
 }
 
+// ---- 周辺の事業者の停留所との重なり ----
+
+/** 事業者ごとの重なり(target_id → 重なり)。停留所の参照データが無ければ null */
+export type OverlapMap = ReadonlyMap<string, OperatorOverlap>
+
+// 前提情報の手順と地図の両方が同じ入力で求めるので、最後の入力と結果を1つだけ覚えておく(kdbush の索引を作り直さないため)
+let overlapMemo: { busstops: readonly OtherStop[]; stops: readonly Stop[]; names: string; result: OverlapMap } | null = null
+
+/**
+ * こちらの停留所(stops)の 300m 以内にある他事業者の停留所を、事業者ごとに数える(ref/busstops.ts の operatorOverlap)。
+ * 読み込んだ GTFS の事業者(agencyNames)は除く
+ */
+export function overlapsFor(busstops: readonly OtherStop[], stops: readonly Stop[], agencyNames: readonly string[]): OverlapMap {
+  const names = agencyNames.join('\u0000')
+  if (overlapMemo && overlapMemo.busstops === busstops && overlapMemo.stops === stops && overlapMemo.names === names) return overlapMemo.result
+  const own = stops.map((s) => ({ id: s.id, lat: s.lat, lon: s.lon }))
+  const result: OverlapMap = new Map(operatorOverlap(own, busstops, agencyNames).map((o) => [o.targetId, o]))
+  overlapMemo = { busstops, stops, names, result }
+  return result
+}
+
 /** 候補と、選んでいる対象(既定の選び方のままなら、その結果) */
 export interface ResearchView {
   candidates: ResearchCandidate[]
@@ -160,6 +196,8 @@ export interface ResearchView {
   /** 既定の選び方のままか */
   isDefault: boolean
   maxTargets: number
+  /** 事業者ごとの、こちらの停留所との重なり。停留所の参照データが無ければ null */
+  overlaps: OverlapMap | null
 }
 
 /** 前提情報の手順と地図が共通で使う、候補と選択 */
@@ -171,7 +209,50 @@ export function useResearchView(): ResearchView {
   const maxTargets = useResearchStore((s) => s.maxTargets)
   const order = usePriorityStore((s) => s.order)
   const list = facilities.status === 'ready' ? facilities.facilities : NO_FACILITIES
-  const candidates = useMemo(() => researchCandidates(list, stops, agencyNames), [list, stops, agencyNames])
+  const busstops = facilities.status === 'ready' ? (facilities.busstops ?? null) : null
+  const overlaps = useMemo(() => (busstops ? overlapsFor(busstops, stops, agencyNames) : null), [busstops, stops, agencyNames])
+  const candidates = useMemo(() => {
+    const base = researchCandidates(list, stops, agencyNames)
+    if (!overlaps) return base
+    // 事業者(自社を除く)に重なりを付ける。重なりの無い事業者は null(「近くに停留所なし」)
+    return base.map((c) => (c.facility.kind === 'operator' && !c.ownOperator ? { ...c, overlap: overlaps.get(c.facility.targetId) ?? null } : c))
+  }, [list, stops, agencyNames, overlaps])
   const defaults = useMemo(() => defaultSelection(candidates, order, maxTargets), [candidates, order, maxTargets])
-  return { candidates, selectedIds: selected ?? defaults, isDefault: selected === null, maxTargets }
+  return { candidates, selectedIds: selected ?? defaults, isDefault: selected === null, maxTargets, overlaps }
+}
+
+/** 減便の方針を承認した後の、発車が減る・なくなるこちらの停留所 */
+export interface ReducedStops {
+  /** 数えた日(YYYYMMDD。減便の期間のうち、元の平日ダイヤが走る最初の日。周知文・変更指示書と同じ決め方) */
+  date: string
+  /** 発車が減る・なくなる停留所の stop_id */
+  stopIds: ReadonlySet<string>
+}
+
+/** 停留所ごとの前後の発車(stopDiff)から、発車が減る・なくなる停留所を出す。日が決まらなければ null */
+export function reducedStopsOf(
+  base: Parameters<typeof stopDiff>[0],
+  version: { feed: Parameters<typeof stopDiff>[1]; plan: { weekdayService: string }; report: { validity: { start: string; end: string } } },
+): ReducedStops | null {
+  const date = pickNoticeDate(base, version.plan, version.report.validity)
+  if (!date) return null
+  const ids = new Set<string>()
+  for (const s of stopDiff(base, version.feed, date).stops) if (s.after.count < s.before.count) ids.add(s.stopId)
+  return { date, stopIds: ids }
+}
+
+/** 減便の方針を承認済みか(承認した版があるか)。承認済みでも数える日が決まらず useReducedStops が null のときを分けるのに使う */
+export function usePolicyApproved(): boolean {
+  return useEditStore((s) => lastVersion(s) !== null)
+}
+
+/**
+ * 減便の方針を承認済みなら、発車が減る・なくなるこちらの停留所(承認済みの最後の版で数える)。
+ * 承認前と、承認済みでも減便の期間に元の平日ダイヤが走る日がない(数える日が決まらない)ときは null。
+ * 比べる日は地図の操作盤の日付ではなく、減便の期間の最初の平日ダイヤの日(土日を選んでいても 0 にならないように)
+ */
+export function useReducedStops(): ReducedStops | null {
+  const base = useEditStore((s) => s.base)
+  const version = useEditStore(lastVersion)
+  return useMemo(() => (base && version ? reducedStopsOf(base.feed, version) : null), [base, version])
 }

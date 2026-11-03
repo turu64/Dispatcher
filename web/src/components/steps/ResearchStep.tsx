@@ -1,16 +1,35 @@
 import { ArrowDown, ArrowUp, ExternalLink } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStore, type StoreApi, type UseBoundStore } from 'zustand'
 import StepSection from '@/components/StepSection'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { checkedAtText, safeUrl, type ResearchResult, type ResearchStatus } from '@/claude/research'
 import { FacilitySymbol } from '@/map/FacilityLayer'
-import { DEFAULT_SELECT_WALK_M, FACILITY_KIND_LABELS, groupCandidates, type CandidateGroup, type ResearchCandidate } from '@/ref/facilities'
+import { OTHER_STOP_RADIUS_M } from '@/ref/busstops'
+import {
+  DEFAULT_SELECT_WALK_M,
+  FACILITY_KIND_LABELS,
+  groupCandidates,
+  initialShownCount,
+  operatorMovementFacts,
+  type CandidateGroup,
+  type ResearchCandidate,
+} from '@/ref/facilities'
 import { RESEARCH_KEEP_OPEN, RESEARCH_SEND_NOTE, researchText, useChatStore, type ChatState } from '@/store/chat'
 import { useGtfsStore } from '@/store/gtfs'
+import { useMapStore } from '@/store/map'
 import { DEFAULT_PRIORITY, priorityCategory, usePriorityStore } from '@/store/priority'
-import { facilitiesInUse, useResearchStops, useResearchStore, useResearchView } from '@/store/research'
+import {
+  facilitiesInUse,
+  usePolicyApproved,
+  useReducedStops,
+  useResearchStops,
+  useResearchStore,
+  useResearchView,
+  type OverlapMap,
+  type ReducedStops,
+} from '@/store/research'
 
 type ChatStoreHook = UseBoundStore<StoreApi<ChatState>>
 
@@ -18,12 +37,44 @@ type ChatStoreHook = UseBoundStore<StoreApi<ChatState>>
 
 export const RESEARCH_START = '前提情報を調べる'
 export const RESEARCH_DEMO = '保存済みの結果(デモ)を使う'
+/** 処理中のボタンの読み上げ */
+export const RESEARCH_STARTING = '調査を始めています'
+export const RESEARCH_DEMO_LOADING = '保存済みの結果を読み込んでいます'
 export const RESEARCH_DEMO_NOTE = 'AI も Web 検索も使わずに、保存済みの調査の結果(デモ用)を出し、その対象を選びます。'
 export const RESEARCH_DEMO_NONE = 'この GTFS の停留所の周りには、保存済みの結果(デモ)がありません。'
 export const RESEARCH_SAVED_NOTE = '保存済みの対象は調べ直さず(Web 検索をせず)、その結果を使います。'
 export const RESEARCH_RESULT_NOTE = '結果は AI が Web で調べたものです。確認日時の後に変わっていることがあるので、出典を開いて確かめてください。'
 export const OWN_OPERATOR = '読み込んだ GTFS の事業者'
 export const CLOSED_SCHOOL = '休校中か不明'
+
+// 周辺の事業者の行(減便の動きと、こちらの停留所との重なり)
+export const NO_NEARBY_STOPS = '近くに停留所なし'
+export const OVERLAP_DISCLAIMER = '国土数値情報の停留所には時刻がないため、本数や時間帯で補えるかは、その事業者の時刻表で確かめてください。'
+export const NO_BUSSTOP_DATA = '周辺の事業者の停留所の参照データがないため、こちらの停留所との重なりは数えていません。'
+export const MOVEMENT_NOT_RESEARCHED = '減便・ダイヤ改正・運休の動きは、まだ調べていません。'
+// 見出し(label)で絞った結果だけを言う。廃止など、絞り込みの語に当たらない事実がありうるため「動きがない」とは書かない
+export const MOVEMENT_NONE = '調べた結果に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、下の「調査の結果」で、ほかの事実と出典を確かめてください。'
+export const REDUCED_AFTER_POLICY = '「減便の方針」を承認すると、減便で発車が減る・なくなる停留所の近くにある数も出します。'
+export const REDUCED_NO_DATE = '減便の期間に元の平日ダイヤが走る日がないため、減便で発車が減る・なくなる停留所の近くにある数は数えていません。'
+
+/** 事業者の行の重なりの文 */
+function overlapText(ownStops: number, otherStops: number, routes: readonly string[]): string {
+  return `こちらの停留所 ${ownStops} か所の ${OTHER_STOP_RADIUS_M}m 以内に、この事業者の停留所 ${otherStops} か所(系統:${routesText(routes)})`
+}
+
+function dateJa(date: string): string {
+  return `${Number(date.slice(0, 4))}年${Number(date.slice(4, 6))}月${Number(date.slice(6, 8))}日`
+}
+
+/** 減便で発車が減る・なくなる停留所のうち、ほかの事業者の停留所が近くにある数の文 */
+function reducedSummaryText(reduced: number, near: number, date: string): string {
+  return `減便で発車が減る・なくなるこちらの停留所 ${reduced} か所のうち、ほかの事業者の停留所が ${OTHER_STOP_RADIUS_M}m 以内にあるのは ${near} か所です(${dateJa(date)}の発車で比べています)。`
+}
+
+/** まとまりの残りを開くボタンの文 */
+function showMoreText(rest: number): string {
+  return `続きを表示(残り ${rest} 件)`
+}
 
 const STATUS_LABELS: Record<ResearchStatus, string> = {
   found: '見つかった',
@@ -128,18 +179,241 @@ function CandidateGroupDetails({ label, picked, children }: { label: string; pic
   )
 }
 
+/**
+ * 一覧の行・調査の結果のカードに、マウスとキーボードの焦点で地図の強調を付ける(store/map.ts の highlightedTargetId)。
+ * 外れたときは、自分が強調しているときだけ解く(ほかの行に移った後に消さないため)
+ */
+function highlightHandlers(targetId: string) {
+  const on = () => useMapStore.getState().setHighlighted(targetId)
+  const off = () => {
+    if (useMapStore.getState().highlightedTargetId === targetId) useMapStore.getState().setHighlighted(null)
+  }
+  return { onMouseEnter: on, onMouseLeave: off, onFocus: on, onBlur: off }
+}
+
+/** 系統名を並べる。多いときは先頭の数件と残りの数 */
+const MAX_ROUTE_NAMES = 8
+function routesText(routes: readonly string[]): string {
+  if (routes.length === 0) return '系統名の記載なし'
+  if (routes.length <= MAX_ROUTE_NAMES) return routes.join('、')
+  return `${routes.slice(0, MAX_ROUTE_NAMES).join('、')} ほか ${routes.length - MAX_ROUTE_NAMES} 系統`
+}
+
+/** 事業者の行の、調べた減便の動き(調べた結果のうち、減便・ダイヤ改正・運休・特別ダイヤの事実) */
+function OperatorMovement({ result }: { result: ResearchResult | undefined }) {
+  if (!result) return <p className="text-muted-foreground">{MOVEMENT_NOT_RESEARCHED}</p>
+  const facts = operatorMovementFacts(result.facts)
+  const footer = (
+    <span className="text-muted-foreground">
+      確認日時 {checkedAtText(result.checkedAt)}・{result.origin === 'demo' ? 'デモ用の保存済みの結果' : 'Web で調べた結果'}
+    </span>
+  )
+  if (facts.length === 0) {
+    return (
+      <p>
+        <span className="text-muted-foreground">{MOVEMENT_NONE}</span> {footer}
+      </p>
+    )
+  }
+  const cited = [...new Set(facts.map((f) => f.source).filter((n) => n >= 1 && n <= result.sources.length))].sort((a, b) => a - b)
+  return (
+    <div className="flex flex-col gap-0.5" aria-label="調べた減便の動き">
+      <ul className="flex flex-col gap-0.5">
+        {facts.map((f, i) => (
+          <li key={i}>
+            <span className="text-muted-foreground">{f.label}:</span>
+            {f.value}
+            {f.source >= 1 && f.source <= result.sources.length && <sup className="ml-0.5 text-muted-foreground">[{f.source}]</sup>}
+          </li>
+        ))}
+      </ul>
+      {cited.length > 0 && (
+        <ol className="flex flex-col gap-0.5" aria-label="出典">
+          {cited.map((n) => {
+            const s = result.sources[n - 1]
+            const url = safeUrl(s.url)
+            return (
+              <li key={n} className="flex gap-1">
+                <span className="text-muted-foreground">[{n}]</span>
+                {url ? (
+                  <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-w-0 items-center gap-0.5 break-all underline underline-offset-2">
+                    {s.title || url}
+                    <ExternalLink className="size-3 shrink-0" aria-hidden="true" />
+                  </a>
+                ) : (
+                  <span className="text-muted-foreground">{s.title || '(URL を表示できません)'}</span>
+                )}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+      {footer}
+    </div>
+  )
+}
+
+/** 事業者の行の中身:調べた減便の動きと、こちらの停留所との重なり */
+function OperatorDetail({ candidate, result, reduced }: { candidate: ResearchCandidate; result: ResearchResult | undefined; reduced: ReducedStops | null }) {
+  const overlap = candidate.overlap
+  const nearReduced = overlap && reduced ? overlap.ownStopIds.filter((id) => reduced.stopIds.has(id)).length : null
+  return (
+    <div className="mt-0.5 flex flex-col gap-1 pl-5" data-testid={`operator-detail-${candidate.facility.targetId}`}>
+      <OperatorMovement result={result} />
+      {overlap && (
+        <p>
+          {overlapText(overlap.ownStopIds.length, overlap.otherStops.length, overlap.routes)}
+          {nearReduced !== null && `。このうち、減便で発車が減る・なくなる停留所 ${nearReduced} か所`}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** 1つのまとまりの行(選んだ対象のうち最後のものの後ろ3件まで。残りは「続きを表示」で開く) */
+function CandidateGroupItems({
+  group,
+  selected,
+  onToggle,
+  results,
+  highlighted,
+  reduced,
+}: {
+  group: CandidateGroup
+  selected: ReadonlySet<string>
+  onToggle: (id: string, checked: boolean) => void
+  results: ReadonlyMap<string, ResearchResult>
+  highlighted: string | null
+  reduced: ReducedStops | null
+}) {
+  const items = group.items
+  const initial = initialShownCount(items, selected)
+  // 最初に出す件数は、選び足すと増え、外しても減らさない(押している最中の行が消えないように)。候補が替わったら決め直す
+  const [shown, setShown] = useState(initial)
+  const [prevItems, setPrevItems] = useState(items)
+  if (items !== prevItems) {
+    setPrevItems(items)
+    setShown(initial)
+  } else if (initial > shown) {
+    setShown(initial)
+  }
+  const [expanded, setExpanded] = useState(false)
+  const count = expanded ? items.length : Math.min(Math.max(shown, initial), items.length)
+  const listRef = useRef<HTMLUListElement>(null)
+  // 「続きを表示」を押したら、ボタンが消えるので、開いた最初の行に焦点を移す
+  const focusFrom = useRef<number | null>(null)
+  useEffect(() => {
+    if (!expanded || focusFrom.current === null) return
+    listRef.current?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[focusFrom.current]?.focus()
+    focusFrom.current = null
+  }, [expanded])
+
+  return (
+    <>
+      <ul ref={listRef} className="flex flex-col gap-0.5 px-2 pb-2">
+        {items.slice(0, count).map((c) => {
+          const id = c.facility.targetId
+          const result = results.get(id)
+          const detail = detailText(c)
+          const isOperator = c.facility.kind === 'operator'
+          return (
+            <li
+              key={id}
+              {...highlightHandlers(id)}
+              data-highlighted={highlighted === id ? 'true' : undefined}
+              className="-mx-1 rounded-sm px-1 py-0.5 hover:bg-muted/60 data-[highlighted=true]:bg-muted"
+            >
+              <label className="flex items-start gap-1.5">
+                <input type="checkbox" className="mt-0.5" checked={selected.has(id)} onChange={(e) => onToggle(id, e.target.checked)} aria-label={c.facility.name} />
+                <FacilitySymbol kind={c.facility.kind} schoolType={c.facility.schoolType} className="mt-0.5 size-3.5 shrink-0" />
+                <span className="min-w-0 flex-1">
+                  <span>{c.facility.name}</span>
+                  {detail && <span className="ml-1.5 text-muted-foreground">{detail}</span>}
+                  {c.ownOperator && (
+                    <Badge variant="outline" className="ml-1.5">
+                      {OWN_OPERATOR}
+                    </Badge>
+                  )}
+                  {isOperator && c.overlap === null && (
+                    <Badge variant="outline" className="ml-1.5">
+                      {NO_NEARBY_STOPS}
+                    </Badge>
+                  )}
+                  {c.closed && (
+                    <Badge variant="outline" className="ml-1.5">
+                      {CLOSED_SCHOOL}
+                    </Badge>
+                  )}
+                  {result && (
+                    <span className="ml-1.5">
+                      <ResultBadge result={result} />
+                    </span>
+                  )}
+                </span>
+              </label>
+              {isOperator && !c.ownOperator && <OperatorDetail candidate={c} result={result} reduced={reduced} />}
+            </li>
+          )
+        })}
+      </ul>
+      {count < items.length && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="mx-2 mb-2"
+          onClick={() => {
+            focusFrom.current = count
+            setExpanded(true)
+          }}
+        >
+          {showMoreText(items.length - count)}
+        </Button>
+      )}
+    </>
+  )
+}
+
+/** 周辺の事業者のまとまりの先頭に出す断り書きと、減便で発車が減る・なくなる停留所との重なり */
+function OperatorGroupNote({ overlaps, reduced }: { overlaps: OverlapMap | null; reduced: ReducedStops | null }) {
+  // 承認済みでも、減便の期間に元の平日ダイヤが走る日がなければ reduced は null。そのときは「承認すると」と出さない
+  const approved = usePolicyApproved()
+  let summary: string | null = null
+  if (overlaps && reduced) {
+    const near = new Set<string>()
+    for (const o of overlaps.values()) for (const id of o.ownStopIds) if (reduced.stopIds.has(id)) near.add(id)
+    summary = reducedSummaryText(reduced.stopIds.size, near.size, reduced.date)
+  }
+  return (
+    <div className="flex flex-col gap-1 px-2 pb-1.5 text-muted-foreground">
+      {overlaps ? <p>{OVERLAP_DISCLAIMER}</p> : <p>{NO_BUSSTOP_DATA}</p>}
+      {summary && (
+        <p className="text-foreground" data-testid="reduced-summary">
+          {summary}
+        </p>
+      )}
+      {overlaps && !reduced && <p>{approved ? REDUCED_NO_DATE : REDUCED_AFTER_POLICY}</p>}
+    </div>
+  )
+}
+
 /** 候補の一覧(種類ごとに折りたたむ。選んだ対象のあるまとまりは開いておく) */
 function CandidateList({
   groups,
   selected,
   onToggle,
   results,
+  overlaps,
+  reduced,
 }: {
   groups: readonly CandidateGroup[]
   selected: ReadonlySet<string>
   onToggle: (id: string, checked: boolean) => void
   results: ReadonlyMap<string, ResearchResult>
+  overlaps: OverlapMap | null
+  reduced: ReducedStops | null
 }) {
+  const highlighted = useMapStore((s) => s.highlightedTargetId)
   return (
     <div className="flex flex-col gap-1.5" role="group" aria-label="調べる対象の候補">
       {groups.map((g) => {
@@ -152,46 +426,8 @@ function CandidateList({
                 {g.items.length} 件(選んだ {picked} 件)
               </span>
             </summary>
-            <ul className="flex flex-col gap-1 px-2 pb-2">
-              {g.items.map((c) => {
-                const id = c.facility.targetId
-                const result = results.get(id)
-                const detail = detailText(c)
-                return (
-                  <li key={id}>
-                    <label className="flex items-start gap-1.5">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5"
-                        checked={selected.has(id)}
-                        onChange={(e) => onToggle(id, e.target.checked)}
-                        aria-label={c.facility.name}
-                      />
-                      <FacilitySymbol kind={c.facility.kind} className="mt-0.5 size-3.5 shrink-0" />
-                      <span className="min-w-0 flex-1">
-                        <span>{c.facility.name}</span>
-                        {detail && <span className="ml-1.5 text-muted-foreground">{detail}</span>}
-                        {c.ownOperator && (
-                          <Badge variant="outline" className="ml-1.5">
-                            {OWN_OPERATOR}
-                          </Badge>
-                        )}
-                        {c.closed && (
-                          <Badge variant="outline" className="ml-1.5">
-                            {CLOSED_SCHOOL}
-                          </Badge>
-                        )}
-                        {result && (
-                          <span className="ml-1.5">
-                            <ResultBadge result={result} />
-                          </span>
-                        )}
-                      </span>
-                    </label>
-                  </li>
-                )
-              })}
-            </ul>
+            {g.key === 'operator' && <OperatorGroupNote overlaps={overlaps} reduced={reduced} />}
+            <CandidateGroupItems group={g} selected={selected} onToggle={onToggle} results={results} highlighted={highlighted} reduced={reduced} />
           </CandidateGroupDetails>
         )
       })}
@@ -199,10 +435,16 @@ function CandidateList({
   )
 }
 
-/** 調査の結果の1件(事実・出典 URL・確認日時・どこから来た結果か) */
-export function ResultCard({ result }: { result: ResearchResult }) {
+/** 調査の結果の1件(事実・出典 URL・確認日時・どこから来た結果か)。マウスと焦点で地図の記号を強調する */
+export function ResultCard({ result, highlighted = false }: { result: ResearchResult; highlighted?: boolean }) {
   return (
-    <li className="flex flex-col gap-1 rounded-md border px-2 py-1.5 text-xs" aria-label={`${result.name}の調査の結果`}>
+    <li
+      className="flex flex-col gap-1 rounded-md border px-2 py-1.5 text-xs outline-none focus-visible:ring-3 focus-visible:ring-ring/50 data-[highlighted=true]:bg-muted"
+      aria-label={`${result.name}の調査の結果`}
+      tabIndex={0}
+      data-highlighted={highlighted ? 'true' : undefined}
+      {...highlightHandlers(result.targetId)}
+    >
       <div className="flex flex-wrap items-center gap-1.5">
         <FacilitySymbol kind={result.kind} />
         <span className="font-medium">{result.name}</span>
@@ -270,10 +512,19 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
   const demo = useResearchStore((s) => s.demo)
   const inUse = useResearchStore(facilitiesInUse)
   const order = usePriorityStore((s) => s.order)
-  const { candidates, selectedIds, isDefault, maxTargets } = useResearchView()
+  const { candidates, selectedIds, isDefault, maxTargets, overlaps } = useResearchView()
+  const reduced = useReducedStops()
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
   const groups = useMemo(() => groupCandidates(candidates, order), [candidates, order])
   const [limitNote, setLimitNote] = useState<string | null>(null)
+  const highlighted = useMapStore((s) => s.highlightedTargetId)
+  // 「前提情報を調べる」の送信(POST)の間
+  const [starting, setStarting] = useState(false)
+  // 「読み込み直す」を押した後、読み込み終えるまで、前の理由とボタン(処理中)を残す
+  const [retryMessage, setRetryMessage] = useState<string | null>(null)
+
+  // 手順を離れたら、地図の強調を解く
+  useEffect(() => () => useMapStore.getState().setHighlighted(null), [])
 
   const sending = useStore(chat, (s) => s.sending)
   const progress = useStore(chat, (s) => s.research)
@@ -317,9 +568,24 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
   }
 
   const onStart = async () => {
-    const view = await chat.getState().startResearch(selectedIds)
-    if (view) useResearchStore.getState().setTargets(view.targets, view.maxTargets)
+    setStarting(true)
+    try {
+      const view = await chat.getState().startResearch(selectedIds)
+      if (view) useResearchStore.getState().setTargets(view.targets, view.maxTargets)
+    } finally {
+      setStarting(false)
+    }
   }
+
+  const onRetry = async () => {
+    setRetryMessage(facilities.status === 'error' ? facilities.message : null)
+    try {
+      await loadFacilities(stops)
+    } finally {
+      setRetryMessage(null)
+    }
+  }
+  const retrying = retryMessage !== null && facilities.status === 'loading'
 
   const onDemo = () => {
     void useResearchStore.getState().loadDemo(new Set(candidates.map((c) => c.facility.targetId)))
@@ -349,11 +615,11 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
 
       <PriorityList />
 
-      {facilities.status === 'loading' && <p className="text-sm text-muted-foreground">周辺の施設を読み込んでいます…</p>}
-      {facilities.status === 'error' && (
+      {facilities.status === 'loading' && !retrying && <p className="text-sm text-muted-foreground">周辺の施設を読み込んでいます…</p>}
+      {(facilities.status === 'error' || retrying) && (
         <div className="flex flex-col gap-1.5 rounded-md border border-destructive/40 px-2 py-1.5 text-sm" role="alert">
-          <p>{facilities.message}</p>
-          <Button type="button" variant="outline" size="xs" className="self-start" onClick={() => void loadFacilities(stops)}>
+          <p>{facilities.status === 'error' ? facilities.message : retryMessage}</p>
+          <Button type="button" variant="outline" size="xs" className="self-start" loading={retrying} loadingLabel="読み込み直しています" onClick={() => void onRetry()}>
             読み込み直す
           </Button>
         </div>
@@ -385,7 +651,7 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
               {isDefault && (
                 <p className="text-xs text-muted-foreground">
                   既定では、重要拠点の優先順位の高い種類から1件ずつ順に(停留所から {DEFAULT_SELECT_WALK_M.toLocaleString('ja-JP')}m 以内の施設を、病院は病床の多い順、ほかは停留所に近い順に)、最後に周辺のバス事業者(読み込んだ
-                  GTFS の事業者を除く)を、{maxTargets} 件まで選んでいます。
+                  GTFS の事業者を除き、こちらの停留所の近くに停留所がある事業者を、その停留所の多い順に)を、{maxTargets} 件まで選んでいます。
                 </p>
               )}
               {limitNote && (
@@ -393,7 +659,7 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
                   {limitNote}
                 </p>
               )}
-              <CandidateList groups={groups} selected={selected} onToggle={onToggle} results={results} />
+              <CandidateList groups={groups} selected={selected} onToggle={onToggle} results={results} overlaps={overlaps} reduced={reduced} />
             </>
           )}
 
@@ -401,15 +667,29 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
             <p className="text-xs text-muted-foreground">{RESEARCH_SEND_NOTE}。GTFS のファイルは送りません。</p>
             {cachedSelected > 0 && <p className="text-xs text-muted-foreground">{RESEARCH_SAVED_NOTE}</p>}
             <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" disabled={selectedIds.length === 0 || sending || progress.active} onClick={() => void onStart()}>
+              <Button
+                type="button"
+                size="sm"
+                loading={starting}
+                loadingLabel={RESEARCH_STARTING}
+                disabled={selectedIds.length === 0 || sending || progress.active}
+                onClick={() => void onStart()}
+              >
                 {RESEARCH_START}
               </Button>
-              <Button type="button" size="sm" variant="outline" disabled={candidates.length === 0 || demo.status === 'loading'} onClick={onDemo}>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                loading={demo.status === 'loading'}
+                loadingLabel={RESEARCH_DEMO_LOADING}
+                disabled={candidates.length === 0}
+                onClick={onDemo}
+              >
                 {RESEARCH_DEMO}
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">{RESEARCH_DEMO_NOTE}</p>
-            {demo.status === 'loading' && <p className="text-xs text-muted-foreground">保存済みの結果を読んでいます…</p>}
             {demo.status === 'ready' && (
               <p className="text-xs" role="status">
                 {demo.count > 0 ? `保存済みの結果(デモ)${demo.count} 件を出し、その対象を選びました。` : RESEARCH_DEMO_NONE}
@@ -441,7 +721,7 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
               <p className="text-xs text-muted-foreground">{RESEARCH_RESULT_NOTE}</p>
               <ul className="flex flex-col gap-1.5">
                 {shownResults.map((r) => (
-                  <ResultCard key={r.targetId} result={r} />
+                  <ResultCard key={r.targetId} result={r} highlighted={highlighted === r.targetId} />
                 ))}
               </ul>
             </section>

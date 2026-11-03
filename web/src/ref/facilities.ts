@@ -11,6 +11,7 @@
  * 施設の名前・位置はブラウザで表示と選択に使うだけ。サーバーに送るのは target_id だけ(名前と位置はサーバーが自分のデータで入れる)
  */
 import { distanceM, type Bounds } from '@/reach/mesh'
+import { mergeBusstopFiles, type OperatorOverlap, type OtherStop } from './busstops'
 import { expandBounds, pointsBounds, refMeshesFor } from '@/reach/refData'
 import { priorityCategory, type PriorityKey } from '@/store/priority'
 
@@ -173,6 +174,11 @@ export type FacilityLoadResult =
       sources: string[]
       /** ファイルの無かった1次メッシュ(その範囲に施設が無いか、海など) */
       missing: string[]
+      /**
+       * 周辺の事業者の停留所(同じファイルの最上位の鍵 busstops。ref/busstops.ts)。
+       * どのファイルにも busstops の鍵が無い(停留所を出す前の加工の)ときは null
+       */
+      busstops: OtherStop[] | null
     }
   | { ok: false; mesh1s: string[]; message: string }
 
@@ -238,7 +244,9 @@ export async function fetchFacilities(
     }
   }
   const { facilities, sources } = mergeFacilityFiles(files)
-  return { ok: true, mesh1s: list, facilities, sources, missing }
+  const hasBusstops = files.some((f) => isObj(f) && Array.isArray(f.busstops))
+  const busstops = hasBusstops ? mergeBusstopFiles(files).stops : null
+  return { ok: true, mesh1s: list, facilities, sources, missing, busstops }
 }
 
 // ---- 重要拠点の種類と、既定の選び方 ----
@@ -272,6 +280,11 @@ export interface ResearchCandidate {
   ownOperator: boolean
   /** 休校中など(既定では選ばない) */
   closed: boolean
+  /**
+   * 周辺の事業者のとき、こちらの停留所との重なり(ref/busstops.ts の operatorOverlap)。
+   * null は「近くに停留所なし」、undefined は停留所の参照データが無い(数えていない)か、事業者でない
+   */
+  overlap?: OperatorOverlap | null
 }
 
 /** 事業者名をそろえる(全角・半角、株式会社・(株)の書き方、空白の違いを除く) */
@@ -345,6 +358,17 @@ export function compareWithinCategory(a: ResearchCandidate, b: ResearchCandidate
 }
 
 /**
+ * 周辺の事業者の並び:こちらの停留所との重なりのある事業者を先に、重なりの数(近くに他社の停留所がある、こちらの停留所の数)の
+ * 多い順。同じなら他社の停留所の数の多い順、それも同じなら compareWithinCategory の順(決まった並びにする)。
+ * 重なりを数えていない(overlap が undefined)事業者どうしは compareWithinCategory の順(停留所の参照データが無いときの今までの並び)
+ */
+export function compareOperators(a: ResearchCandidate, b: ResearchCandidate): number {
+  const own = (c: ResearchCandidate) => c.overlap?.ownStopIds.length ?? 0
+  const other = (c: ResearchCandidate) => c.overlap?.otherStops.length ?? 0
+  return own(b) - own(a) || other(b) - other(a) || compareWithinCategory(a, b)
+}
+
+/**
  * 既定で選ぶ施設の、いちばん近い停留所までの距離の上限(m)。到達圏の既定でバス停の徒歩圏が最も広い中山間・地方の 15 分(1,200m)。
  * これより遠い施設はバスで行く見込みが薄いので、既定では選ばない(手では選べる)
  */
@@ -352,7 +376,7 @@ export const DEFAULT_SELECT_WALK_M = 1200
 
 /**
  * 既定で選ぶ対象(target_id の並び)。種類ごとの列を、重要拠点の優先順位の順に並べ、その後ろに周辺のバス事業者
- * (読み込んだ GTFS の事業者を除く)の列を置く。列の先頭から1件ずつ順に取る巡回を、max 件になるまで繰り返す
+ * (読み込んだ GTFS の事業者を除く。こちらの停留所との重なりの多い順。compareOperators)の列を置く。列の先頭から1件ずつ順に取る巡回を、max 件になるまで繰り返す
  * (優先順位の高い種類ほど先に、多く選ばれる。病院の多い市街地で上限が病院だけで埋まらないようにするため)。
  * 種類の中は compareWithinCategory の順。休校中などの学校、優先順位の外の施設(小学校・幼稚園など)、
  * 停留所から DEFAULT_SELECT_WALK_M より遠い施設は選ばない
@@ -363,7 +387,7 @@ export function defaultSelection(candidates: readonly ResearchCandidate[], order
     const group = candidates.filter((c) => c.category === key && !c.closed && c.nearestStopM <= DEFAULT_SELECT_WALK_M).sort(compareWithinCategory)
     if (group.length > 0) queues.push(group)
   }
-  const operators = candidates.filter((c) => c.facility.kind === 'operator' && !c.ownOperator).sort(compareWithinCategory)
+  const operators = candidates.filter((c) => c.facility.kind === 'operator' && !c.ownOperator).sort(compareOperators)
   if (operators.length > 0) queues.push(operators)
   const picked: string[] = []
   for (let round = 0; picked.length < max; round++) {
@@ -395,7 +419,7 @@ export interface CandidateGroup {
 export function groupCandidates(candidates: readonly ResearchCandidate[], order: readonly PriorityKey[]): CandidateGroup[] {
   const byNear = compareWithinCategory
   const groups: CandidateGroup[] = []
-  const operators = candidates.filter((c) => c.facility.kind === 'operator').sort(byNear)
+  const operators = candidates.filter((c) => c.facility.kind === 'operator').sort(compareOperators)
   if (operators.length > 0) groups.push({ key: 'operator', label: OPERATOR_GROUP, items: operators })
   for (const key of order) {
     const items = candidates.filter((c) => c.category === key).sort(byNear)
@@ -404,4 +428,35 @@ export function groupCandidates(candidates: readonly ResearchCandidate[], order:
   const others = candidates.filter((c) => c.facility.kind !== 'operator' && c.category === null).sort(byNear)
   if (others.length > 0) groups.push({ key: 'other', label: OTHER_GROUP, items: others })
   return groups
+}
+
+/** まとまりの中で、選んだ対象が無いときに最初に出す件数 */
+export const GROUP_HEAD_COUNT = 5
+/** まとまりの中で、選んだ対象のうち最後のものの後ろに出す件数 */
+export const GROUP_TAIL_AFTER_SELECTED = 3
+
+/**
+ * まとまりの中で最初に出す件数(残りは「続きを表示」で開く)。選んだ対象のうち最後のものの後ろ3件まで。
+ * 選んだ対象が無ければ最初の5件まで。まとまりの件数より多くはしない
+ */
+export function initialShownCount(items: readonly ResearchCandidate[], selected: ReadonlySet<string>): number {
+  let last = -1
+  items.forEach((c, i) => {
+    if (selected.has(c.facility.targetId)) last = i
+  })
+  const n = last < 0 ? GROUP_HEAD_COUNT : last + 1 + GROUP_TAIL_AFTER_SELECTED
+  return Math.min(n, items.length)
+}
+
+// ---- 周辺の事業者の減便の動き ----
+
+/**
+ * 減便の動きとして事業者の行に出す事実の見出し(調べた結果の label がこれを含むもの)。
+ * 廃止・休止も入れる(周知文の代わりの便に、廃止された系統を案内しないよう、その事実を必ず見せるため。11/4 指示役)
+ */
+export const OPERATOR_MOVEMENT_LABEL = /減便|ダイヤ改正|運休|特別ダイヤ|廃止|休止/
+
+/** 調べた事実のうち、減便・ダイヤ改正・運休・特別ダイヤ・廃止・休止のもの(並びはそのまま) */
+export function operatorMovementFacts<T extends { label: string }>(facts: readonly T[]): T[] {
+  return facts.filter((f) => OPERATOR_MOVEMENT_LABEL.test(f.label))
 }

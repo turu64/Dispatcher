@@ -1,11 +1,22 @@
 import type { MapLayerMouseEvent } from 'maplibre-gl'
 import { X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { OTHER_STOP_RADIUS_M } from '@/ref/busstops'
 import { FACILITY_KIND_LABELS, type FacilityKind, type ResearchCandidate } from '@/ref/facilities'
 import { useMapStore } from '@/store/map'
 import { useResearchView } from '@/store/research'
 import { useStepStore } from '@/store/steps'
-import { addFacilityImages, addFacilityLayers, FACILITIES_LAYER, FACILITIES_SOURCE, facilitiesToGeoJson, removeFacilityLayers } from './facilityLayers'
+import {
+  addFacilityImages,
+  addFacilityLayers,
+  distinctOtherStops,
+  FACILITIES_LAYER,
+  FACILITIES_SOURCE,
+  FACILITY_LAYER_IDS,
+  facilitiesToGeoJson,
+  removeFacilityLayers,
+  setFacilityHighlight,
+} from './facilityLayers'
 import {
   FACILITY_SYMBOL_KINDS,
   FACILITY_SYMBOL_LABELS,
@@ -16,9 +27,14 @@ import {
 import ReachLayers from './ReachLayers'
 
 /**
- * 前提情報の手順の地図:停留所の外接矩形 +2km にある施設・事業者(調査の対象の候補)を、種類ごとの記号で出す
- * (レイヤーと記号の画素は facilityLayers.ts)。押すと名前を出す
+ * 前提情報の手順の地図:停留所の外接矩形 +2km にある施設(調査の対象の候補)と、こちらの停留所から 300m 以内にある
+ * ほかの事業者の停留所を、種類ごとの記号で出す(レイヤーと記号の画像は facilityLayers.ts)。押すと名前を出す。
+ * 一覧で焦点の当たっている対象(store/map.ts の highlightedTargetId)には輪を付けて記号を大きくする。地図は動かさない
  */
+
+/** 凡例の、ほかの事業者の停留所の行の名前 */
+export const OTHER_STOPS_LEGEND = `ほかの事業者の停留所(こちらの停留所から ${OTHER_STOP_RADIUS_M}m 以内)`
+
 
 /**
  * 凡例・一覧の記号(SVG。地図の記号と同じ形と色)。
@@ -49,9 +65,20 @@ export function FacilitySymbol({
  * 施設の凡例(種類ごとの数と、選んだ対象の数)。置き場所は FacilityLayer の右の列(拡大・縮小のボタンの下)。
  * 下の端には時間帯の切り替え(BandControl。下の中央)があり、地図が狭いと重なるので、下には置かない
  */
-export function FacilityLegend({ candidates, selected }: { candidates: readonly ResearchCandidate[]; selected: ReadonlySet<string> }) {
+export function FacilityLegend({
+  candidates,
+  selected,
+  otherStops = 0,
+}: {
+  candidates: readonly ResearchCandidate[]
+  selected: ReadonlySet<string>
+  /** 地図に出す、ほかの事業者の停留所の数 */
+  otherStops?: number
+}) {
+  // 事業者は点にしない(重なる停留所を出す)ので、施設の種類ごとに数え、停留所の行は別に出す
   const counts = new Map<FacilitySymbolKind, number>()
   for (const c of candidates) {
+    if (c.facility.kind === 'operator') continue
     const symbol = facilitySymbolKind(c.facility.kind, c.facility.schoolType)
     counts.set(symbol, (counts.get(symbol) ?? 0) + 1)
   }
@@ -68,6 +95,16 @@ export function FacilityLegend({ candidates, selected }: { candidates: readonly 
           {FACILITY_SYMBOL_LABELS[k]} {counts.get(k)} 件
         </span>
       ))}
+      {otherStops > 0 && (
+        <span className="flex items-start gap-1.5" data-testid="legend-other-stops">
+          <FacilitySymbol kind="operator" symbol="busstop" className="mt-0.5 size-4 shrink-0" />
+          <span>
+            {OTHER_STOPS_LEGEND}
+            {otherStops} か所
+            <span className="text-muted-foreground">(独自の記号)</span>
+          </span>
+        </span>
+      )}
       <span className="text-muted-foreground">濃い記号は選んだ対象({selected.size} 件)</span>
     </div>
   )
@@ -78,11 +115,13 @@ export function FacilityLegend({ candidates, selected }: { candidates: readonly 
  */
 export function FacilityLayer({ visible }: { visible: boolean }) {
   const map = useMapStore((s) => s.map)
-  const { candidates, selectedIds } = useResearchView()
+  const highlighted = useMapStore((s) => s.highlightedTargetId)
+  const { candidates, selectedIds, overlaps } = useResearchView()
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
-  const features = useMemo(() => facilitiesToGeoJson(candidates, selected), [candidates, selected])
+  const features = useMemo(() => facilitiesToGeoJson(candidates, selected, overlaps?.values() ?? []), [candidates, selected, overlaps])
+  const otherStops = useMemo(() => (overlaps ? distinctOtherStops(overlaps.values()) : 0), [overlaps])
   // 押した記号の名前(地図の右上に出す)
-  const [picked, setPicked] = useState<{ name: string; kind: FacilityKind | null; symbol: FacilitySymbolKind | null } | null>(null)
+  const [picked, setPicked] = useState<{ name: string; detail: string; kind: FacilityKind | null; symbol: FacilitySymbolKind | null } | null>(null)
   // レイヤーは、前提情報の手順を初めて開いたときに足す(開かない人の地図に記号の画像を足さない)。足した後は隠すだけ
   const [used, setUsed] = useState(visible)
   // 記号の画像とレイヤーを足し終えた回数(足し終えたら、点と表示の状態を渡し直す)
@@ -95,11 +134,11 @@ export function FacilityLayer({ visible }: { visible: boolean }) {
     const abort = new AbortController()
     // 記号を押したら名前を出す
     const onClick = (e: MapLayerMouseEvent) => {
-      const props = e.features?.[0]?.properties as { name?: unknown; kind?: unknown; symbol?: unknown } | undefined
+      const props = e.features?.[0]?.properties as { name?: unknown; detail?: unknown; kind?: unknown; symbol?: unknown } | undefined
       if (typeof props?.name !== 'string') return
       const kind = typeof props.kind === 'string' && props.kind in FACILITY_KIND_LABELS ? (props.kind as FacilityKind) : null
       const symbol = typeof props.symbol === 'string' && (FACILITY_SYMBOL_KINDS as readonly string[]).includes(props.symbol) ? (props.symbol as FacilitySymbolKind) : null
-      setPicked({ name: props.name, kind, symbol })
+      setPicked({ name: props.name, detail: typeof props.detail === 'string' ? props.detail : '', kind, symbol })
     }
     const onEnter = () => {
       map.getCanvas().style.cursor = 'pointer'
@@ -140,20 +179,32 @@ export function FacilityLayer({ visible }: { visible: boolean }) {
   }, [map, used, features, ready])
 
   useEffect(() => {
-    if (used && map?.getLayer(FACILITIES_LAYER)) map.setLayoutProperty(FACILITIES_LAYER, 'visibility', visible ? 'visible' : 'none')
+    if (!used || !map) return
+    for (const id of FACILITY_LAYER_IDS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
   }, [map, used, visible, ready])
+
+  // 一覧で焦点の当たっている対象を強調する(輪と記号の拡大。地図は動かさない)
+  useEffect(() => {
+    if (!used || !map) return
+    setFacilityHighlight(map, highlighted)
+  }, [map, used, highlighted, ready])
 
   if (!visible || candidates.length === 0) return null
   // 凡例と押した記号の名前は、右上の拡大・縮小のボタンの下に縦に積む(互いに重ならず、下の中央の時間帯の切り替えとも重ならない)
   return (
     <div className="pointer-events-none absolute top-24 right-3 flex flex-col items-end gap-2" data-testid="facility-overlay">
-      <FacilityLegend candidates={candidates} selected={selected} />
+      <FacilityLegend candidates={candidates} selected={selected} otherStops={otherStops} />
       {picked && (
         <div className="pointer-events-auto flex max-w-60 items-start gap-1.5 rounded-lg bg-background/95 px-3 py-2 text-xs shadow-md ring-1 ring-foreground/10" role="status">
           {picked.kind && <FacilitySymbol kind={picked.kind} symbol={picked.symbol ?? undefined} className="mt-0.5 size-4 shrink-0" />}
           <span className="min-w-0 flex-1">
             {picked.name}
-            {picked.kind && <span className="ml-1 text-muted-foreground">{FACILITY_KIND_LABELS[picked.kind]}</span>}
+            {picked.symbol === 'busstop' ? (
+              <span className="ml-1 text-muted-foreground">ほかの事業者の停留所</span>
+            ) : (
+              picked.kind && <span className="ml-1 text-muted-foreground">{FACILITY_KIND_LABELS[picked.kind]}</span>
+            )}
+            {picked.detail && <span className="block text-muted-foreground">{picked.detail}</span>}
           </span>
           <button type="button" aria-label="閉じる" className="shrink-0 hover:text-foreground/70" onClick={() => setPicked(null)}>
             <X className="size-3.5" aria-hidden="true" />

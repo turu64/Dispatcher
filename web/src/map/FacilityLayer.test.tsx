@@ -4,13 +4,24 @@ import type { Map as MapLibreMap } from 'maplibre-gl'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { smallFeed } from '@/gtfs/edit/form2.fixture'
 import type { Stop } from '@/gtfs/parse'
+import { mergeBusstopFiles, type OperatorOverlap } from '@/ref/busstops'
 import { facilityCategory, facilityMeshes, mergeFacilityFiles, researchCandidates, type Facility } from '@/ref/facilities'
 import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
 import { useReachStore } from '@/store/reach'
 import { useResearchStore } from '@/store/research'
-import { FacilityLayer } from './FacilityLayer'
-import { FACILITIES_LAYER, FACILITIES_SOURCE, addFacilityImages, facilitiesToGeoJson } from './facilityLayers'
+import { FacilityLayer, OTHER_STOPS_LEGEND } from './FacilityLayer'
+import {
+  FACILITIES_HIGHLIGHT_LAYER,
+  FACILITIES_HIGHLIGHT_RING,
+  FACILITIES_LAYER,
+  FACILITIES_SOURCE,
+  FACILITY_LAYER_IDS,
+  addFacilityImages,
+  distinctOtherStops,
+  facilitiesToGeoJson,
+  highlightFilter,
+} from './facilityLayers'
 import {
   FACILITY_COLORS,
   FACILITY_SYMBOL_IS_GSI,
@@ -42,6 +53,7 @@ function fakeMap() {
   const images = new Set<string>()
   const imageArgs = new Map<string, { image: unknown; options: unknown }>()
   const layout: Record<string, unknown> = {}
+  const filters: Record<string, unknown> = {}
   const map = {
     getSource: (id: string) => sources.get(id),
     addSource: (id: string) => void sources.set(id, { setData: vi.fn() }),
@@ -56,12 +68,19 @@ function fakeMap() {
     },
     removeImage: (id: string) => void images.delete(id),
     setLayoutProperty: (layerId: string, name: string, value: unknown) => void (layout[`${layerId}.${name}`] = value),
+    setFilter: (layerId: string, filter: unknown) => void (filters[layerId] = filter),
+    // 地図を動かす操作(強調では呼ばないことを確かめる)
+    flyTo: vi.fn(),
+    easeTo: vi.fn(),
+    jumpTo: vi.fn(),
+    panTo: vi.fn(),
+    fitBounds: vi.fn(),
     on: vi.fn(),
     off: vi.fn(),
     getCanvas: () => ({ style: {} }),
   }
   act(() => useMapStore.getState().setMap(map as unknown as MapLibreMap))
-  return { map, sources, layers, images, imageArgs, layout }
+  return { map, sources, layers, images, imageArgs, layout, filters }
 }
 
 /** Image の偽物:src を入れると読み込めたことにする(jsdom には画像を読む仕組みが無い) */
@@ -105,6 +124,7 @@ afterEach(() => {
     useGtfsStore.getState().clear()
     useReachStore.setState({ origins: null })
     useResearchStore.getState().reset()
+    useMapStore.getState().setHighlighted(null)
   })
 })
 
@@ -293,5 +313,112 @@ describe('地図の store の強調', () => {
     expect(useMapStore.getState().highlightedTargetId).toBe('P04:hosp')
     act(() => useMapStore.getState().setHighlighted(null))
     expect(useMapStore.getState().highlightedTargetId).toBeNull()
+  })
+})
+
+// ---- 周辺の事業者の停留所と、一覧からの強調 ----
+
+const OPERATOR_FILE = {
+  facilities: [
+    ...FILE.facilities,
+    { target_id: 'P11:となりバス', kind: 'operator', name: 'となりバス', municipality: null, lat: 43.775, lon: 142.365, detail: { stops: 9, bbox: [43.7, 142.3, 43.8, 142.4] } },
+    { target_id: 'P11:テストバス', kind: 'operator', name: 'テストバス', municipality: null, lat: 43.77, lon: 142.36, detail: { stops: 9, bbox: [43.7, 142.3, 43.8, 142.4] } },
+  ],
+  busstops: [
+    { name: 'となり1', lat: 43.761, lon: 142.35, operators: ['P11:となりバス'], routes: ['1番', '2番'] },
+    { name: 'となり2', lat: 43.7801, lon: 142.3701, operators: ['P11:となりバス'], routes: [] },
+    // 遠い停留所は出さない
+    { name: 'となり遠く', lat: 43.7, lon: 142.3, operators: ['P11:となりバス'], routes: ['9番'] },
+    // 読み込んだ GTFS の事業者(テストバス)の停留所は出さない
+    { name: '自社', lat: 43.7601, lon: 142.3501, operators: ['P11:テストバス'], routes: [] },
+  ],
+}
+
+function loadOperatorFile() {
+  act(() => {
+    const { facilities, sources } = mergeFacilityFiles([OPERATOR_FILE])
+    useResearchStore.setState({
+      facilities: { status: 'ready', key: facilityMeshes(STOPS).join(','), facilities, sources, busstops: mergeBusstopFiles([OPERATOR_FILE]).stops },
+    })
+  })
+}
+
+describe('facilitiesToGeoJson(事業者)', () => {
+  it('事業者の点(重心)は出さず、重なる停留所を事業者の target_id で出す(押したときの事業者名・系統名つき)', () => {
+    const { facilities } = mergeFacilityFiles([OPERATOR_FILE])
+    const candidates = researchCandidates(facilities, STOPS, [])
+    const overlap: OperatorOverlap = {
+      targetId: 'P11:となりバス',
+      ownStopIds: ['S1'],
+      otherStops: [{ name: 'となり1', lat: 43.761, lon: 142.35, operators: ['P11:となりバス'], routes: ['1番', '2番'] }],
+      routes: ['1番', '2番'],
+    }
+    const fc = facilitiesToGeoJson(candidates, new Set(['P11:となりバス']), [overlap])
+    expect(fc.features.some((f) => f.properties.symbol === 'busstop' && f.properties.name === 'となりバス')).toBe(false)
+    const stops = fc.features.filter((f) => f.properties.symbol === 'busstop')
+    expect(stops).toHaveLength(1)
+    expect(stops[0].properties).toMatchObject({ id: 'P11:となりバス', kind: 'operator', name: 'となり1', detail: 'となりバス・系統:1番、2番', selected: 1 })
+    expect(stops[0].geometry.coordinates).toEqual([142.35, 43.761])
+  })
+
+  it('同じ停留所に2つの事業者が入るときは、地図の停留所の数を1か所と数える', () => {
+    const shared = { name: '共同', lat: 43.76, lon: 142.35, operators: ['P11:a', 'P11:b'], routes: [] }
+    const overlaps: OperatorOverlap[] = [
+      { targetId: 'P11:a', ownStopIds: ['S1'], otherStops: [shared], routes: [] },
+      { targetId: 'P11:b', ownStopIds: ['S1'], otherStops: [shared, { ...shared, name: '別' }], routes: [] },
+    ]
+    expect(distinctOtherStops(overlaps)).toBe(2)
+  })
+})
+
+describe('FacilityLayer の事業者と強調', () => {
+  it('重なるほかの事業者の停留所を出し、凡例に「ほかの事業者の停留所(こちらの停留所から 300m 以内)N か所」を出す', async () => {
+    loadOperatorFile()
+    const { layers, sources } = fakeMap()
+    render(<FacilityLayer visible />)
+    await waitFor(() => expect(layers.has(FACILITIES_LAYER)).toBe(true))
+    await waitFor(() => expect(sources.get(FACILITIES_SOURCE)!.setData).toHaveBeenCalled())
+    const data = sources.get(FACILITIES_SOURCE)!.setData.mock.calls.at(-1)![0] as { features: { properties: { id: string; name: string; symbol: string } }[] }
+    expect(data.features.filter((f) => f.properties.symbol === 'busstop').map((f) => [f.properties.id, f.properties.name])).toEqual([
+      ['P11:となりバス', 'となり1'],
+      ['P11:となりバス', 'となり2'],
+    ])
+    const legend = screen.getByRole('group', { name: '施設の凡例' })
+    expect(legend.textContent).toContain(`${OTHER_STOPS_LEGEND}2 か所`)
+    expect(OTHER_STOPS_LEGEND).toBe('ほかの事業者の停留所(こちらの停留所から 300m 以内)')
+    // 事業者そのものは施設の種類として数えない
+    expect(legend.textContent).not.toContain('バス事業者')
+  })
+
+  it('強調する対象(highlightedTargetId)で、輪と大きい記号のレイヤーを絞る。地図は動かさない', async () => {
+    loadOperatorFile()
+    const { map, layers, filters } = fakeMap()
+    render(<FacilityLayer visible />)
+    await waitFor(() => expect(layers.has(FACILITIES_HIGHLIGHT_LAYER)).toBe(true))
+    expect(layers.has(FACILITIES_HIGHLIGHT_RING)).toBe(true)
+    // 輪は記号の下、大きい記号は上に描く(足す順)
+    expect([...layers.keys()]).toEqual([FACILITIES_HIGHLIGHT_RING, FACILITIES_LAYER, FACILITIES_HIGHLIGHT_LAYER])
+    expect(filters[FACILITIES_HIGHLIGHT_LAYER]).toEqual(highlightFilter(null))
+
+    act(() => useMapStore.getState().setHighlighted('P04:hosp'))
+    expect(filters[FACILITIES_HIGHLIGHT_RING]).toEqual(['==', ['get', 'id'], 'P04:hosp'])
+    expect(filters[FACILITIES_HIGHLIGHT_LAYER]).toEqual(['==', ['get', 'id'], 'P04:hosp'])
+    // 事業者の行の強調は、その事業者の停留所(id が事業者の target_id)に当たる
+    act(() => useMapStore.getState().setHighlighted('P11:となりバス'))
+    expect(filters[FACILITIES_HIGHLIGHT_LAYER]).toEqual(['==', ['get', 'id'], 'P11:となりバス'])
+    act(() => useMapStore.getState().setHighlighted(null))
+    expect(filters[FACILITIES_HIGHLIGHT_LAYER]).toEqual(['==', ['get', 'id'], ''])
+    for (const fn of [map.flyTo, map.easeTo, map.jumpTo, map.panTo, map.fitBounds]) expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('地図を隠す手順では、強調のレイヤーも隠す。外れたら強調のレイヤーも片付ける', async () => {
+    const { layers, layout } = fakeMap()
+    const { rerender, unmount } = render(<FacilityLayer visible />)
+    await waitFor(() => expect(layers.has(FACILITIES_HIGHLIGHT_LAYER)).toBe(true))
+    for (const id of FACILITY_LAYER_IDS) expect(layout[`${id}.visibility`]).toBe('visible')
+    rerender(<FacilityLayer visible={false} />)
+    for (const id of FACILITY_LAYER_IDS) expect(layout[`${id}.visibility`]).toBe('none')
+    unmount()
+    expect(layers.size).toBe(0)
   })
 })

@@ -1,19 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PRIORITY, DEFAULT_PRIORITY_ORDER, movePriority, priorityRank } from '@/store/priority'
+import type { OperatorOverlap } from './busstops'
 import {
+  compareOperators,
   defaultSelection,
   facilitiesInBounds,
   facilityCategory,
   fetchFacilities,
   groupCandidates,
+  initialShownCount,
   isOwnOperator,
   mergeFacilityFiles,
   OPERATOR_GROUP,
+  operatorMovementFacts,
   OTHER_GROUP,
   parseFacility,
   researchBounds,
   researchCandidates,
   type Facility,
+  type ResearchCandidate,
 } from './facilities'
 
 // 停留所は旭川の近く(北緯 43.77 度)の3つ。外接矩形は 43.76〜43.78、142.35〜142.37
@@ -279,5 +284,98 @@ describe('fetchFacilities', () => {
     const r = await fetchFacilities([], fetchFn, new Map())
     expect(r.ok).toBe(false)
     expect(fetchFn).not.toHaveBeenCalled()
+  })
+})
+
+describe('fetchFacilities の停留所(busstops)', () => {
+  function res(status: number, body?: unknown) {
+    return { ok: status >= 200 && status < 300, status, json: async () => body }
+  }
+
+  it('同じファイルの busstops を読み、1次メッシュのファイルをつなぐ(取得の回数は増えない)', async () => {
+    const a = { ...FILE_A, busstops: [{ name: '停1', lat: 43.77, lon: 142.36, operators: ['P11:ほかのバス'], routes: ['1番'] }] }
+    const b = { ...FILE_B, busstops: [{ name: '停2', lat: 44.5, lon: 142.5, operators: ['P11:ほかのバス'], routes: [] }, { name: '', lat: 0, lon: 0, operators: [] }] }
+    const fetchFn = vi.fn(async (url: string) => (url.endsWith('6442') ? res(200, a) : res(200, b)))
+    const r = await fetchFacilities(['6442', '6542'], fetchFn, new Map())
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.busstops?.map((s) => s.name)).toEqual(['停1', '停2'])
+  })
+
+  it('どのファイルにも busstops の鍵が無ければ null(古い加工。重なりを数えない)', async () => {
+    const r = await fetchFacilities(['6442'], async () => res(200, FILE_A), new Map())
+    expect(r.ok && r.busstops).toBeNull()
+  })
+})
+
+describe('周辺の事業者の並び(重なり)', () => {
+  function op(id: string, nearestStopM: number, overlap: Pick<OperatorOverlap, 'ownStopIds' | 'otherStops'> | null | undefined): ResearchCandidate {
+    const facility: Facility = { targetId: id, kind: 'operator', name: id, municipality: null, lat: 43.77, lon: 142.36 }
+    return {
+      facility,
+      category: null,
+      nearestStopM,
+      ownOperator: false,
+      closed: false,
+      overlap: overlap === undefined ? undefined : overlap && { targetId: id, routes: [], ...overlap },
+    }
+  }
+  const stopsOf = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `s${i}`, lat: 43, lon: 142, operators: ['P11:x'], routes: [] }))
+
+  it('重なりのある事業者を、重なる自社の停留所の多い順(同じなら他社の停留所の多い順)に先にし、重なりの無い事業者は後ろ', () => {
+    const list = [
+      op('P11:none', 10, null),
+      op('P11:one', 500, { ownStopIds: ['A'], otherStops: stopsOf(5) }),
+      op('P11:three', 900, { ownStopIds: ['A', 'B', 'C'], otherStops: stopsOf(1) }),
+      op('P11:one-more', 800, { ownStopIds: ['B'], otherStops: stopsOf(6) }),
+    ]
+    const order = [...list].sort(compareOperators).map((c) => c.facility.targetId)
+    expect(order).toEqual(['P11:three', 'P11:one-more', 'P11:one', 'P11:none'])
+    expect(groupCandidates(list, DEFAULT_PRIORITY_ORDER)[0].items.map((c) => c.facility.targetId)).toEqual(order)
+    expect(defaultSelection(list, DEFAULT_PRIORITY_ORDER, 2)).toEqual(['P11:three', 'P11:one-more'])
+  })
+
+  it('重なりを数えていない(停留所の参照データが無い)ときは、今までどおり停留所に近い順', () => {
+    const list = [op('P11:far', 900, undefined), op('P11:near', 100, undefined)]
+    expect([...list].sort(compareOperators).map((c) => c.facility.targetId)).toEqual(['P11:near', 'P11:far'])
+  })
+})
+
+describe('initialShownCount', () => {
+  const items = Array.from({ length: 12 }, (_, i) => ({ facility: { targetId: `id${i}` } }) as ResearchCandidate)
+
+  it('選んだ対象が無ければ最初の5件まで', () => {
+    expect(initialShownCount(items, new Set())).toBe(5)
+    expect(initialShownCount(items.slice(0, 3), new Set())).toBe(3)
+  })
+
+  it('選んだ対象のうち最後のものの後ろ3件まで(件数より多くしない)', () => {
+    expect(initialShownCount(items, new Set(['id0']))).toBe(4)
+    expect(initialShownCount(items, new Set(['id0', 'id6']))).toBe(10)
+    expect(initialShownCount(items, new Set(['id10']))).toBe(12)
+  })
+})
+
+describe('operatorMovementFacts', () => {
+  it('label に廃止・休止を含む事実も返す(周知文で廃止された系統を案内しないため)', () => {
+    const facts = [
+      { label: '路線の廃止', value: 'x' },
+      { label: '運行区間', value: 'y' },
+      { label: '一部区間の休止', value: 'z' },
+    ]
+    expect(operatorMovementFacts(facts).map((f) => f.value)).toEqual(['x', 'z'])
+  })
+
+  it('label に減便・ダイヤ改正・運休・特別ダイヤを含む事実だけを、並びのまま返す', () => {
+    const facts = [
+      { label: '会社の概要', value: 'x' },
+      { label: '朝日線の減便(報道)', value: 'a' },
+      { label: '直近のダイヤ改正', value: 'b' },
+      { label: '災害時の運休', value: 'c' },
+      { label: '年末年始の特別ダイヤ', value: 'd' },
+      { label: '問い合わせ先', value: '減便のお知らせ' },
+    ]
+    expect(operatorMovementFacts(facts).map((f) => f.value)).toEqual(['a', 'b', 'c', 'd'])
   })
 })

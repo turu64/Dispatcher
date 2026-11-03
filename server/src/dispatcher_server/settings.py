@@ -180,3 +180,15 @@ def research_max_targets() -> int:
 
 def research_cache_days() -> int:
     return _positive("DISPATCHER_RESEARCH_CACHE_DAYS", DEFAULT_RESEARCH_CACHE_DAYS)
+
+
+# ---- 参照データ ----
+
+# 参照データ(1次メッシュごとの JSON)の既定の置き場所。app.py の DEFAULT_REF_DIR と同じ(開発時だけ正しい)
+DEFAULT_REF_DIR = REPO_ROOT / "data" / "out" / "ref"
+
+
+def ref_dir() -> Path:
+    """参照データの置き場所(DISPATCHER_REF_DIR。空の値は未設定として扱う)。前提情報の調査の対象をここから引く。"""
+    value = _env("DISPATCHER_REF_DIR")
+    return Path(value) if value is not None else DEFAULT_REF_DIR

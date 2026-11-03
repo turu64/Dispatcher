@@ -741,8 +741,9 @@ def test_reconnect_answers_server_tools_and_asks_exactly_once(monkeypatch: pytes
     assert len(fake.sent) == 1
     (events,) = fake.sent
     assert [event["type"] for event in events] == ["user.custom_tool_result", "user.tool_confirmation"]
-    assert events[0]["custom_tool_use_id"] == "sevt_srv" and events[0]["is_error"] is True
-    assert tool_text(events[0]) == {"status": "error", "message": "この機能はまだ使えません"}
+    # 調査を始めていないので、対象は空(中身は test_research.py)
+    assert events[0]["custom_tool_use_id"] == "sevt_srv" and events[0]["is_error"] is False
+    assert tool_text(events[0]) == {"status": "ok", "targets": [], "total": 0, "max_targets": 30}
     assert events[1] == {
         "type": "user.tool_confirmation",
         "tool_use_id": "sevt_ask",
@@ -970,16 +971,20 @@ def test_server_tools_answer_without_waiting_for_idle_and_only_once(monkeypatch:
         )
     ]
     frames = stream(client, handle)
-    answered = [(events[0]["custom_tool_use_id"], tool_text(events[0])["message"]) for events in fake.sent]
-    assert answered == [
-        ("sevt_save", "この機能はまだ使えません"),
-        ("sevt_t", "この機能はまだ使えません"),
-        ("sevt_r", "この機能はまだ使えません"),
-        ("sevt_t_child", "このツールは調整役だけが使えます"),
-        ("sevt_save_primary", "このツールは調査役だけが使えます"),
-        ("sevt_unknown", "このツールはありません"),
+    answered = [
+        (events[0]["custom_tool_use_id"], events[0]["is_error"], tool_text(events[0]).get("message", "").split("。")[0])
+        for events in fake.sent
     ]
-    assert all(events[0]["is_error"] is True and len(events) == 1 for events in fake.sent)
+    # ツールの中身は test_research.py。ここでは振り分けと、1回ずつ答えることを見る
+    assert answered == [
+        ("sevt_save", True, "save_research の入力が正しくありません"),
+        ("sevt_t", False, ""),
+        ("sevt_r", False, ""),
+        ("sevt_t_child", True, "このツールは調整役だけが使えます"),
+        ("sevt_save_primary", True, "このツールは調査役だけが使えます"),
+        ("sevt_unknown", True, "このツールはありません"),
+    ]
+    assert all(len(events) == 1 for events in fake.sent)
     assert "tool_call" not in kinds(frames)
     assert [frame[1] for frame in frames if frame[0] == "tool_activity"][:2] == [
         {"name": "save_research", "done": False},

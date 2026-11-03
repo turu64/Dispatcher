@@ -25,7 +25,7 @@ from typing import Any
 
 import anthropic
 
-from . import settings
+from . import research, settings
 from .store import get_store
 
 logger = logging.getLogger("dispatcher_server.agent")
@@ -61,7 +61,6 @@ SWEEP_INTERVAL_SECONDS = 15 * 60
 # ---- 文 ----
 
 MSG_TOOL_IN_RESEARCH = "このツールは調査の中では使えません"
-MSG_NOT_YET = "この機能はまだ使えません"
 MSG_UNKNOWN_TOOL = "このツールはありません"
 MSG_PRIMARY_ONLY = "このツールは調整役だけが使えます"
 MSG_RESEARCHER_ONLY = "このツールは調査役だけが使えます"
@@ -232,6 +231,10 @@ class SessionState:
     primary_thread_id: str | None = None
     calls: dict[str, dict[str, Any]] = field(default_factory=dict)  # agent.custom_tool_use(届いた順)
     answered: set[str] = field(default_factory=set)
+    # save_research の結果(call_id ごと)。events.send が届かず答え直すとき、保存を2度実行しない
+    # (2度目が「保存済み」の is_error になるのを防ぐ)。履歴から作り直しても call_id は同じなので reset で消さない。
+    # 読むだけの get_research_targets・get_research_results は答え直すときに実行し直す(覚える量を抑える)
+    saved_results: dict[str, tuple[str, bool]] = field(default_factory=dict)
     asks: dict[str, dict[str, Any]] = field(default_factory=dict)  # evaluated_permission が ask の agent.tool_use
     resolved_asks: set[str] = field(default_factory=set)
     open_runs: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -401,7 +404,7 @@ async def _send(client: Any, state: SessionState, events: list[dict[str, Any]]) 
 
 
 def run_server_tool(state: SessionState, call: dict[str, Any]) -> tuple[str, bool]:
-    """サーバーが実行するツール(§3.2)。11/5 の段階では、確かめの後に「まだ使えません」の is_error を返す。"""
+    """サーバーが実行するツール(§3.2)。スレッドを確かめてから、research.py の中身を実行する。"""
     name = call.get("name")
     if name in browser_tool_names():
         return _error_text(MSG_TOOL_IN_RESEARCH), True
@@ -412,7 +415,7 @@ def run_server_tool(state: SessionState, call: dict[str, Any]) -> tuple[str, boo
         return _error_text(MSG_PRIMARY_ONLY), True
     if name in RESEARCHER_SERVER_TOOLS and from_primary:
         return _error_text(MSG_RESEARCHER_ONLY), True
-    return _error_text(MSG_NOT_YET), True
+    return research.run_tool(str(name), state.row_id, call.get("input"))
 
 
 async def settle(
@@ -446,9 +449,18 @@ async def settle(
         else:
             if name in SERVER_TOOLS:
                 frames.append(sse("tool_activity", {"name": name, "done": False}))
-            text, is_error = run_server_tool(state, call)
+            cached = state.saved_results.get(call_id) if name == "save_research" else None
+            if cached is None:
+                text, is_error = run_server_tool(state, call)
+                if name == "save_research":
+                    state.saved_results[call_id] = (text, is_error)
+            else:
+                text, is_error = cached
             if name in SERVER_TOOLS:
                 frames.append(sse("tool_activity", {"name": name, "done": True}))
+            if name == "save_research" and not is_error:
+                # 調査の進み具合(保存した数と対象の数。§4.6 の research の saved)
+                frames.append(sse("research", {"kind": "saved", **research.progress(state.row_id)}))
             logger.info("agent サーバーのツール name=%s is_error=%s row=%s", name, is_error, state.row_id)
         events.append(_tool_result(call_id, text, is_error))
         state.answered.add(call_id)

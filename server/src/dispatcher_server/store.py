@@ -194,11 +194,95 @@ class Store:
             ).rowcount
         return len(old), expired
 
+    # ---- research_targets(11/6) ----
+
+    def set_research_targets(self, row_id: str, target_ids: list[str], now: float | None = None) -> None:
+        """このセッションの調査の対象を target_ids に置き換える(並びを保つ)。now を渡せば行の最後の操作も今にする。"""
+        with self._lock:
+            self._conn.execute("BEGIN")
+            try:
+                self._conn.execute("DELETE FROM research_targets WHERE row_id = ?", (row_id,))
+                self._conn.executemany(
+                    "INSERT OR IGNORE INTO research_targets (row_id, target_id) VALUES (?, ?)",
+                    [(row_id, target_id) for target_id in target_ids],
+                )
+                if now is not None:
+                    self._conn.execute(
+                        "UPDATE agent_sessions SET last_activity_at = ? WHERE row_id = ?", (iso(now), row_id)
+                    )
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+
+    def research_target_ids(self, row_id: str) -> list[str]:
+        """このセッションの調査の対象(入れた順)。"""
+        rows = self._all("SELECT target_id FROM research_targets WHERE row_id = ? ORDER BY rowid", (row_id,))
+        return [row["target_id"] for row in rows]
+
     # ---- research_results(11/6) ----
 
     def get_research_result(self, target_id: str) -> dict[str, Any] | None:
         rows = self._all("SELECT * FROM research_results WHERE target_id = ?", (target_id,))
         return rows[0] if rows else None
+
+    def valid_research_results(self, target_ids: list[str], now: float) -> dict[str, dict[str, Any]]:
+        """target_ids のうち、使える(demo か、期限の切れていない)結果の行。期限の切れた web の行は、掃除の前でも除く。"""
+        if not target_ids:
+            return {}
+        stamp = iso(now)
+        result: dict[str, dict[str, Any]] = {}
+        # SQLite の変数の数の上限に当たらないよう、分けて引く
+        for start in range(0, len(target_ids), 500):
+            chunk = target_ids[start : start + 500]
+            marks = ",".join("?" for _ in chunk)
+            rows = self._all(
+                f"SELECT * FROM research_results WHERE target_id IN ({marks})"
+                " AND (origin = 'demo' OR expires_at IS NULL OR expires_at >= ?)",
+                (*chunk, stamp),
+            )
+            for row in rows:
+                result[row["target_id"]] = row
+        return result
+
+    def all_valid_research_results(self, now: float) -> list[dict[str, Any]]:
+        """使える結果の行すべて(target_id の順)。デモ用の結果を書き出すときに使う。"""
+        return self._all(
+            "SELECT * FROM research_results WHERE origin = 'demo' OR expires_at IS NULL OR expires_at >= ?"
+            " ORDER BY target_id",
+            (iso(now),),
+        )
+
+    def seed_research_results(self, rows: list[dict[str, Any]]) -> int:
+        """デモ用の結果(origin: demo、期限なし)を入れる。同じ target_id の行は、web でも demo でも置き換える。
+
+        rows の各要素は target_id・kind・name・status・facts・sources・note・checked_at(UTC の ISO 8601)。
+        全部を1つのトランザクションで入れる。入れた数を返す。
+        """
+        with self._lock:
+            self._conn.execute("BEGIN")
+            try:
+                for row in rows:
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO research_results (target_id, kind, name, status, facts_json,"
+                        " sources_json, note, checked_at, expires_at, origin)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'demo')",
+                        (
+                            row["target_id"],
+                            row["kind"],
+                            row["name"],
+                            row["status"],
+                            json.dumps(row["facts"], ensure_ascii=False),
+                            json.dumps(row["sources"], ensure_ascii=False),
+                            row["note"],
+                            row["checked_at"],
+                        ),
+                    )
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+        return len(rows)
 
     def save_research_result(
         self,

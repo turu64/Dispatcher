@@ -1,0 +1,37 @@
+{
+  "mesh1": "6642",
+  "facilities": [
+    {
+      "target_id": "P11:テストバス",
+      "kind": "operator",
+      "name": "テストバス(後のファイル)",
+      "municipality": "",
+      "lat": 44.1,
+      "lon": 142.9,
+      "detail": {
+        "stops": 10,
+        "stops_here": 5,
+        "bbox": [
+          43.6,
+          142.2,
+          43.8,
+          142.4
+        ]
+      }
+    },
+    {
+      "target_id": "P29:98765432109B",
+      "kind": "school",
+      "name": "テスト北中学校",
+      "municipality": "名寄市",
+      "lat": 44.35,
+      "lon": 142.46,
+      "detail": {
+        "school_type": "中学校"
+      }
+    }
+  ],
+  "sources": [
+    "テスト用の参照データ(国土数値情報を加工した形)"
+  ]
+}

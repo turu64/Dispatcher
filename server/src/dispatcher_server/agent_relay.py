@@ -24,7 +24,7 @@ import anthropic
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from . import agent_session, settings
+from . import agent_session, research, settings
 from .agent_session import RelayError
 from .ratelimit import RateLimiter, jst_day
 from .store import get_store
@@ -57,6 +57,7 @@ SIGNATURE_BYTES = 16
 
 MAX_CREATE_BODY_BYTES = 1024
 MAX_EVENTS_BODY_BYTES = 400 * 1024
+MAX_RESEARCH_BODY_BYTES = 32 * 1024
 MAX_TEXT_BYTES = 32 * 1024
 MAX_RESULTS = 10
 SCREEN_LINE_PREFIXES = ("[画面の状態] ", "[画面の操作] ")
@@ -390,6 +391,17 @@ def _parse_results(value: Any, *, minimum: int) -> list[dict[str, Any]]:
     return results
 
 
+def _check_message_limits(request: Request) -> None:
+    """発言(user.message を送る要求)の上限を確かめて数える。"""
+    # 1日の利用額の台帳が上限に達したら、発言だけを止める(結果と止めるは通す。§4.11)
+    if get_store().ledger_cents(jst_day(time.time())) >= settings.daily_cost_cents():
+        _reject(429, MSG_LIMIT_COST, "rate_cost_day")
+    address = _client_address(request)
+    if limiter.check("message", address, per_hour=settings.messages_per_ip_hour()) is not None:
+        _reject(429, MSG_LIMIT_MESSAGE_HOUR, "rate_message_ip_hour")
+    limiter.record("message", address)
+
+
 @router.post("/session/events")
 async def session_events(request: Request) -> JSONResponse:
     _check_available_and_token(request)
@@ -412,13 +424,7 @@ async def session_events(request: Request) -> JSONResponse:
         results = _parse_results(data.get("results", []), minimum=0)
 
     if kind == "message":
-        # 1日の利用額の台帳が上限に達したら、発言だけを止める(結果と止めるは通す。§4.11)
-        if get_store().ledger_cents(jst_day(time.time())) >= settings.daily_cost_cents():
-            _reject(429, MSG_LIMIT_COST, "rate_cost_day")
-        address = _client_address(request)
-        if limiter.check("message", address, per_hour=settings.messages_per_ip_hour()) is not None:
-            _reject(429, MSG_LIMIT_MESSAGE_HOUR, "rate_message_ip_hour")
-        limiter.record("message", address)
+        _check_message_limits(request)
 
     client = _client()
     state = agent_session.get_state(row["row_id"], row["session_id"])
@@ -434,6 +440,53 @@ async def session_events(request: Request) -> JSONResponse:
     )
     logger.info("agent 送りました kind=%s results=%d row=%s", kind, len(results), row["row_id"])
     return JSONResponse({"ok": True})
+
+
+# ---- 前提情報の調査(§3.2・§4.2) ----
+
+
+@router.post("/session/research")
+async def start_research(request: Request) -> dict[str, Any]:
+    """調査の対象を決め、[画面の操作] の行を会話に入れる。返すのは正規化した対象の一覧。
+
+    対象の名前・種類・市町村・位置は、サーバーの参照データから入れる(ブラウザが送るのは target_ids だけ)。
+    対象は、このセッションの前の対象を置き換える。会話に入れられなければ(ツールの結果待ちなど)、前の対象に戻す。
+    """
+    _check_available_and_token(request)
+    row = _session_row(request)
+    data = await _read_json(request, MAX_RESEARCH_BODY_BYTES)
+    if not isinstance(data, dict) or set(data) != {"target_ids"}:
+        _bad_body("本文は target_ids だけにしてください")
+    try:
+        target_ids = research.parse_start_ids(data["target_ids"])
+    except research.ResearchInputError as error:
+        _reject(error.status, error.detail, "research_targets")
+    _check_message_limits(request)
+    client = _client()
+    state = agent_session.get_state(row["row_id"], row["session_id"])
+    store = get_store()
+    # 調整役がすぐ get_research_targets を呼んでも対象が見えるよう、送る前に入れる
+    previous = store.research_target_ids(row["row_id"])
+    store.set_research_targets(row["row_id"], target_ids, time.time())
+    try:
+        await agent_session.send_message(
+            state, client, [{"type": "text", "text": research.start_line(len(target_ids))}]
+        )
+    except RelayError as error:
+        store.set_research_targets(row["row_id"], previous)
+        _raise_relay(error)
+    store.touch(row["row_id"], time.time(), messages=1)
+    view = research.session_targets(row["row_id"])
+    logger.info("agent 調査の対象を決めました targets=%d row=%s", view["total"], row["row_id"])
+    return {"targets": view["targets"], "total": view["total"], "max_targets": view["max_targets"]}
+
+
+@router.get("/session/research")
+def session_research(request: Request) -> dict[str, Any]:
+    """このセッションの対象と、保存済みの結果(画面の表示とつなぎ直し用)。"""
+    _check_available_and_token(request)
+    row = _session_row(request)
+    return research.session_overview(row["row_id"])
 
 
 # ---- 終える(§4.9) ----

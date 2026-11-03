@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TripBrief } from '@/gtfs/edit/diff'
 import { feedOf, rowsOf } from '@/gtfs/edit/form2.fixture'
-import type { RestoreHint } from '@/gtfs/edit/restore'
+import type { NearFacility, RestoreHint } from '@/gtfs/edit/restore'
 import type { RouteDirection } from '@/gtfs/edit/stopDiff'
 import { compareCandidates, groupCandidates, tripEndpoints, type Candidate } from './grouping'
 
@@ -35,6 +35,22 @@ describe('compareCandidates', () => {
       cand('f', 'R', 0),
     ]
     expect([...list].sort(compareCandidates).map((c) => c.trip.tripId)).toEqual(['b', 'c', 'a', 'd', 'e', 'f'])
+  })
+
+  it('手がかりの数が同じなら、時間帯の窓に当たる施設の重要拠点の優先順位の高い便を、人口より先にする', () => {
+    const withFacility = (tripId: string, rank: number, matched: boolean, population?: number): Candidate => {
+      const c = cand(tripId, 'R', 0, ['nearFacility'], population)
+      const facility = { rank } as NearFacility['facility']
+      return { ...c, detail: { ...c.detail, facilities: [{ facility, stopId: 's', stopName: 's', distanceM: 100, matches: matched ? ([{}] as NearFacility['matches']) : [] }] } }
+    }
+    const list = [
+      withFacility('noMatch', 1, false, 1000),
+      withFacility('rank3', 3, true),
+      withFacility('rank1', 1, true),
+      cand('none', 'R', 0, ['morning'], 500),
+    ]
+    // 窓に当たる施設のある便が優先順位の順に先。当たる施設の無い便どうしは人口の順
+    expect([...list].sort(compareCandidates).map((c) => c.trip.tripId)).toEqual(['rank1', 'rank3', 'noMatch', 'none'])
   })
 })
 

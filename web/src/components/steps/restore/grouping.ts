@@ -1,5 +1,5 @@
 import type { TripBrief } from '@/gtfs/edit/diff'
-import type { RestoreHintDetail } from '@/gtfs/edit/restore'
+import { bestFacilityRank, type RestoreHintDetail } from '@/gtfs/edit/restore'
 import type { RouteDirection } from '@/gtfs/edit/stopDiff'
 import { compareStrings, sortByStopSequence, stopTimesByTrip } from '@/gtfs/edit/signature'
 import type { GtfsFeed } from '@/gtfs/load'
@@ -69,6 +69,10 @@ function compareSeconds(a: number | null, b: number | null): number {
  */
 export function compareCandidates(a: Candidate, b: Candidate): number {
   if (a.detail.hints.length !== b.detail.hints.length) return b.detail.hints.length - a.detail.hints.length
+  // 時間帯の窓に当たる学校・病院の、重要拠点の優先順位の高い便を先に(T19。当たる施設の無い便どうしは同じ扱い)
+  const ra = bestFacilityRank(a.detail)
+  const rb = bestFacilityRank(b.detail)
+  if (ra !== rb) return ra - rb
   const pa = populationOf(a)
   const pb = populationOf(b)
   if (pa !== pb) return pb - pa

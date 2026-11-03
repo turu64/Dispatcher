@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { weekdayIndex } from './calendar'
 import { fetchHolidays, holidaysBetween, parseHolidayJson, uncoveredRanges, type HolidayList } from './holidays'
 
@@ -255,7 +255,11 @@ describe('収録の範囲の外を返す', () => {
 const REAL_JSON = fileURLToPath(new URL('../../../data/out/ref/holidays.json', import.meta.url))
 
 describe.skipIf(!existsSync(REAL_JSON))('実データの祝日一覧(data/out/ref/holidays.json)', () => {
-  const list = parseHolidayJson(JSON.parse(readFileSync(REAL_JSON, 'utf-8')))
+  // 飛ばすときも Vitest はこの関数を実行してテストを集めるので、読むのは beforeAll の中にする
+  let list: HolidayList
+  beforeAll(() => {
+    list = parseHolidayJson(JSON.parse(readFileSync(REAL_JSON, 'utf-8')))
+  })
 
   it('1955 年から最後の祝日の年の終わりまで収録している', () => {
     expect(list.first).toBe('19550101')

@@ -14,6 +14,9 @@
         {"target_id": "P29:C101220400011", "kind": "school", "name": "…", "municipality": "旭川市",
          "lat": 43.7, "lon": 142.3, "detail": {…}}
       ],
+      "busstops": [
+        {"name": "旭川駅前", "lat": 43.76, "lon": 142.36, "operators": ["P11:旭川電気軌道(株)"], "routes": ["1", "2"]}
+      ],
       "sources": ["国土数値情報(バス停留所 P11、学校 P29、医療機関 P04)を加工して作成"]
     }
 
@@ -32,6 +35,17 @@ kind と detail:
     ``"campus"`` を足す。school_code で学校としてまとめられる。
 - ``hospital`` / ``clinic``(病床数が 20 床以上なら hospital、未満なら clinic。歯科診療所は入れない)
     detail ``{"beds", "emergency"(救急告示病院か), "disaster_base"("基幹"・"地域"・null), "address"}``
+
+busstops(バス停留所 P11 の停留所ごと。前提情報の手順で、編集する GTFS の停留所の近くにある他事業者の停留所と系統を数えるのに使う):
+
+- 停留所はその位置の1次メッシュのファイルにだけ入る(事業者と違い、複数のファイルには現れない)
+- name は停留所名(bsn)、operators は事業者の target_id(上の ``P11:…`` と同じ)、routes は系統名(bri の brn。重複なし、名前の順)
+- 停留所名・座標(小数6桁に丸めたもの)・事業者が同じものは1件にまとめ、系統名を合わせる。
+  事業者の違うものはまとめない(系統名をその事業者のものとして数えるため)。そのため operators はいつも1件
+- P11 には時刻表が無いので、本数や時間帯は入らない
+- 並びは (緯度, 経度, 停留所名, 事業者) の順。事業者名が空のもの、座標が無い・不正なものは数えて飛ばす。
+  停留所名が空のものは、事業者の停留所には数えるが busstops には入れない(notes に数える)
+- P11 が無いときは空の配列
 
 target_id(同じ入力なら同じ ID になる):
 
@@ -195,10 +209,32 @@ class Facility:
 
 
 @dataclass
+class BusStop:
+    """他事業者の停留所の1件(P11)。"""
+
+    name: str
+    lat: float
+    lon: float
+    operators: list[str]
+    routes: list[str]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "lat": round(self.lat, COORD_DIGITS),
+            "lon": round(self.lon, COORD_DIGITS),
+            "operators": list(self.operators),
+            "routes": list(self.routes),
+        }
+
+
+@dataclass
 class LoadResult:
     """1つの元データを読んだ結果。"""
 
     facilities: list[Facility] = field(default_factory=list)
+    # バス停留所(P11 を読んだときだけ入る)
+    busstops: list[BusStop] = field(default_factory=list)
     # 数えて飛ばした行(理由 → 件数)
     skipped: dict[str, int] = field(default_factory=dict)
     # 施設は入れたが、一部の項目を引けなかった件数(理由 → 件数)
@@ -345,15 +381,30 @@ def _attr(elem: ET.Element, local_name: str) -> str | None:
     return None
 
 
-def _read_busstops(path: Path) -> tuple[list[tuple[str, str]], dict[str, tuple[float, float]]]:
-    """P11 の GML から、(停留所の位置の参照, 事業者名) の並びと、位置の ID → (緯度, 経度) を取る。"""
+@dataclass
+class _RawBusStop:
+    """GML の BusStop 1つ。ref は位置(gml:Point)の ID。"""
+
+    ref: str
+    name: str
+    operator: str
+    routes: list[str]
+
+
+def _text(elem: ET.Element, local_name: str) -> str:
+    child = next((c for c in elem if _local(c.tag) == local_name), None)
+    return (child.text or "").strip() if child is not None else ""
+
+
+def _read_busstops(path: Path) -> tuple[list[_RawBusStop], dict[str, tuple[float, float]]]:
+    """P11 の GML から、停留所(位置の参照・停留所名 bsn・事業者名 boc・系統名 bri/brn)の並びと、位置の ID → (緯度, 経度) を取る。"""
     try:
         with path.open("rb") as f:
             head = f.read(8192)
             if re.search(rb"<!(DOCTYPE|ENTITY)", head, re.IGNORECASE):
                 raise FacilityDataError(f"{path.name} に DOCTYPE があるので読みません")
             f.seek(0)
-            stops: list[tuple[str, str]] = []
+            stops: list[_RawBusStop] = []
             points: dict[str, tuple[float, float]] = {}
             for _event, elem in ET.iterparse(f, events=("end",)):
                 name = _local(elem.tag)
@@ -370,9 +421,10 @@ def _read_busstops(path: Path) -> tuple[list[tuple[str, str]], dict[str, tuple[f
                     elem.clear()
                 elif name == "BusStop":
                     loc = next((c for c in elem if _local(c.tag) == "loc"), None)
-                    boc = next((c.text for c in elem if _local(c.tag) == "boc"), None)
                     href = _attr(loc, "href") if loc is not None else None
-                    stops.append(((href or "").lstrip("#"), boc or ""))
+                    # 系統(bri)は停留所ごとに0個以上。系統名(brn)が空のものは入れない
+                    routes = [r for r in (_text(c, "brn") for c in elem if _local(c.tag) == "bri") if r]
+                    stops.append(_RawBusStop((href or "").lstrip("#"), _text(elem, "bsn"), _text(elem, "boc"), routes))
                     elem.clear()
     except ET.ParseError as e:
         raise FacilityDataError(f"{path.name} を GML として読めません: {e}") from e
@@ -382,21 +434,40 @@ def _read_busstops(path: Path) -> tuple[list[tuple[str, str]], dict[str, tuple[f
 
 
 def load_operators(path: Path, municipalities: Municipalities) -> LoadResult:
-    """バス停留所(P11)を事業者ごとにまとめる。事業者は停留所のある1次メッシュごとに1件(位置はその1次メッシュの停留所の重心)。"""
+    """バス停留所(P11)を事業者ごとにまとめる。事業者は停留所のある1次メッシュごとに1件(位置はその1次メッシュの停留所の重心)。
+
+    停留所ごとの位置・停留所名・事業者・系統名は result.busstops に入れる(書き出しで busstops の鍵になる)。
+    """
     result = LoadResult()
     stops, points = _read_busstops(path)
     by_operator: dict[str, dict[str, list[tuple[float, float]]]] = {}
     display_names: dict[str, str] = {}
-    for ref, operator in stops:
-        key = normalize_text(operator)
-        pos = points.get(ref)
+    # (停留所名, 緯度, 経度, 事業者の target_id) → 系統名の集合。同じ停留所が二重に載っているときに1件にまとめる
+    merged: dict[tuple[str, float, float, str], set[str]] = {}
+    for stop in stops:
+        key = normalize_text(stop.operator)
+        pos = points.get(stop.ref)
         if not key:
             result.skip("事業者名が空")
         elif pos is None or not _valid_lat_lon(*pos):
             result.skip("座標が無い・不正")
         else:
-            display_names.setdefault(key, unicodedata.normalize("NFKC", operator).strip())
+            display_names.setdefault(key, unicodedata.normalize("NFKC", stop.operator).strip())
             by_operator.setdefault(key, {}).setdefault(mesh_code(pos[0], pos[1], 4), []).append(pos)
+            # 事業者としては数えるが、停留所名の無いものは一覧に出せないので停留所には入れない
+            stop_name = unicodedata.normalize("NFKC", stop.name).strip()
+            if not stop_name:
+                result.note("停留所名が空(事業者には数え、停留所の一覧には入れない)")
+                continue
+            routes = merged.setdefault(
+                (stop_name, round(pos[0], COORD_DIGITS), round(pos[1], COORD_DIGITS), operator_target_id(key)), set()
+            )
+            routes.update(unicodedata.normalize("NFKC", r).strip() for r in stop.routes)
+    result.busstops = [
+        BusStop(name, lat, lon, [op], sorted(r for r in routes if r))
+        # 並びは (緯度, 経度, 停留所名, 事業者) の順
+        for (name, lat, lon, op), routes in sorted(merged.items(), key=lambda kv: (kv[0][1], kv[0][2], kv[0][0], kv[0][3]))
+    ]
     municipality_names = set(municipalities.names_longest_first)
     for key in sorted(by_operator):
         meshes = by_operator[key]
@@ -437,8 +508,21 @@ def group_by_mesh1(facilities: list[Facility]) -> dict[str, list[Facility]]:
     return out
 
 
-def make_ref(mesh1: str, facilities: list[Facility]) -> dict[str, Any]:
-    return {"mesh1": mesh1, "facilities": [f.to_json() for f in facilities], "sources": list(SOURCES)}
+def group_busstops_by_mesh1(busstops: list[BusStop]) -> dict[str, list[BusStop]]:
+    """停留所を位置の1次メッシュごとに分ける(並びは元の並び。load_operators が決まった順に並べている)。"""
+    out: dict[str, list[BusStop]] = {}
+    for stop in busstops:
+        out.setdefault(mesh_code(stop.lat, stop.lon, 4), []).append(stop)
+    return out
+
+
+def make_ref(mesh1: str, facilities: list[Facility], busstops: list[BusStop] | None = None) -> dict[str, Any]:
+    return {
+        "mesh1": mesh1,
+        "facilities": [f.to_json() for f in facilities],
+        "busstops": [b.to_json() for b in busstops or []],
+        "sources": list(SOURCES),
+    }
 
 
 @dataclass
@@ -455,6 +539,7 @@ class FacilityReport:
     notes: dict[str, dict[str, int]] = field(default_factory=dict)
     # 指定された1次メッシュの外にあって書かなかった施設の数
     outside_mesh1: int = 0
+    # (1次メッシュ, ファイル, バイト数, 種類 → 件数)。件数には停留所(busstops)の数も "busstop" として入る
     files: list[tuple[str, Path, int, dict[str, int]]] = field(default_factory=list)
 
 
@@ -477,6 +562,7 @@ def run(raw: Path, out_dir: Path, mesh1_list: list[str] | None = None) -> Facili
         "P11": (_latest(list(raw.glob(BUSSTOP_GLOB))), "バス停留所", f"{raw / 'busstop'} に P11-22_01_GML(GML)", load_operators),
     }
     facilities: list[Facility] = []
+    busstops: list[BusStop] = []
     for code, (path, label, where, loader) in found.items():
         if path is None:
             report.missing.append(f"{label}({code})が無いので飛ばしました。展開して {where} に置いてください")
@@ -484,25 +570,32 @@ def run(raw: Path, out_dir: Path, mesh1_list: list[str] | None = None) -> Facili
         report.sources[code] = path.name
         loaded = loader(path, muni)
         facilities.extend(loaded.facilities)
+        busstops.extend(loaded.busstops)
         report.skipped[code] = loaded.skipped
         report.notes[code] = loaded.notes
     if not report.sources:
         return report
 
     by_mesh1 = group_by_mesh1(facilities)
+    stops_by_mesh1 = group_busstops_by_mesh1(busstops)
     if mesh1_list:
         targets = sorted(set(mesh1_list))
         report.outside_mesh1 = sum(len(v) for m, v in by_mesh1.items() if m not in targets)
     else:
-        targets = sorted(by_mesh1)
+        targets = sorted(set(by_mesh1) | set(stops_by_mesh1))
     out_dir.mkdir(parents=True, exist_ok=True)
     for mesh1 in targets:
         items = by_mesh1.get(mesh1, [])
+        stops_here = stops_by_mesh1.get(mesh1, [])
         path = out_dir / f"{mesh1}.json"
-        path.write_text(json.dumps(make_ref(mesh1, items), ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(make_ref(mesh1, items, stops_here), ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8"
+        )
         counts: dict[str, int] = {}
         for item in items:
             counts[item.kind] = counts.get(item.kind, 0) + 1
+        if stops_here:
+            counts["busstop"] = len(stops_here)
         report.files.append((mesh1, path, path.stat().st_size, counts))
     return report
 

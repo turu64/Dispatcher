@@ -183,6 +183,72 @@ def test_事業者は停留所のある1次メッシュごとに1件(muni: facil
     assert (town.lat, town.lon) == (43.7, 142.5)
 
 
+P11_HEAD = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<ksj:Dataset xmlns:ksj="http://nlftp.mlit.go.jp/ksj/schemas/ksj-app" '
+    'xmlns:gml="http://schemas.opengis.net/gml/3.2.1" xmlns:xlink="http://www.w3.org/1999/xlink">'
+)
+
+
+def _p11(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "P11-small.xml"
+    path.write_text(P11_HEAD + body + "</ksj:Dataset>", encoding="utf-8")
+    return path
+
+
+def _point(pid: str, lat: float, lon: float) -> str:
+    return f'<gml:Point gml:id="{pid}"><gml:pos>{lat} {lon}</gml:pos></gml:Point>'
+
+
+def _stop(sid: str, ref: str, name: str, operator: str, routes: list[str]) -> str:
+    bri = "".join(f"<ksj:bri><ksj:brn>{r}</ksj:brn><ksj:brt>1</ksj:brt></ksj:bri>" for r in routes)
+    return (
+        f'<ksj:BusStop gml:id="{sid}"><ksj:loc xlink:href="#{ref}"/><ksj:bsn>{name}</ksj:bsn>'
+        f"<ksj:boc>{operator}</ksj:boc>{bri}</ksj:BusStop>"
+    )
+
+
+def test_停留所ごとの位置と停留所名と系統名(muni: facilities.Municipalities, tmp_path: Path):
+    path = _p11(
+        tmp_path,
+        _point("n1", 43.7700001, 142.3600004)
+        + _point("n2", 43.78, 142.37)
+        + _point("n3", 43.79, 142.38)
+        # 系統(bri)が3つ。重複と空の系統名は除き、名前の順に並べる。全角の数字は NFKC で整える
+        + _stop("bs1", "n1", "旭川駅前", "テスト電気軌道（株）", ["2番", "１番", "2番", " "])
+        # 系統の無い停留所(停留所としては入れ、系統名は空)
+        + _stop("bs2", "n2", "大学前", "テスト電気軌道（株）", [])
+        # 座標の無い停留所(位置の参照が無い)は飛ばす
+        + _stop("bs3", "n99", "位置の無い停留所", "テスト電気軌道（株）", ["1番"])
+        # 同じ位置・同じ名前でも事業者が違えば別の停留所(系統名をその事業者のものとして数えるため)
+        + _stop("bs4", "n1", "旭川駅前", "ほかのバス", ["快速"])
+        # 同じ事業者が同じ停留所を二重に載せているときは1件にまとめ、系統名を合わせる
+        + _stop("bs5", "n1", "旭川駅前", "テスト電気軌道(株)", ["3番"])
+        # 停留所名が空なら、事業者には数えるが停留所には入れない
+        + _stop("bs6", "n3", "", "テスト電気軌道（株）", ["1番"]),
+    )
+    res = load_operators(path, muni)
+    assert res.skipped == {"座標が無い・不正": 1}
+    assert res.notes == {"停留所名が空(事業者には数え、停留所の一覧には入れない)": 1}
+    assert [b.to_json() for b in res.busstops] == [
+        {"name": "旭川駅前", "lat": 43.77, "lon": 142.36, "operators": ["P11:ほかのバス"], "routes": ["快速"]},
+        {
+            "name": "旭川駅前",
+            "lat": 43.77,
+            "lon": 142.36,
+            "operators": ["P11:テスト電気軌道(株)"],
+            "routes": ["1番", "2番", "3番"],
+        },
+        {"name": "大学前", "lat": 43.78, "lon": 142.37, "operators": ["P11:テスト電気軌道(株)"], "routes": []},
+    ]
+    # 事業者の数え方は今までどおり(停留所名の空のものも事業者の停留所には数える)
+    (op,) = [f for f in res.facilities if f.target_id == "P11:テスト電気軌道(株)"]
+    assert op.detail["stops"] == 4
+    # 停留所の target_id は事業者の target_id と同じ形
+    ids = {f.target_id for f in res.facilities}
+    assert {o for b in res.busstops for o in b.operators} <= ids
+
+
 def test_GMLのDOCTYPEは読まない(muni: facilities.Municipalities, tmp_path: Path):
     path = tmp_path / "P11-bad.xml"
     path.write_text(
@@ -222,7 +288,7 @@ def test_1次メッシュごとにJSONを書く(tmp_path: Path):
         "6642.json",  # 名寄
     ]
     ref = _read(tmp_path / "6542.json")
-    assert list(ref) == ["mesh1", "facilities", "sources"]
+    assert list(ref) == ["mesh1", "facilities", "busstops", "sources"]
     assert ref["mesh1"] == "6542"
     assert ref["sources"] == facilities.SOURCES
     ids = [f["target_id"] for f in ref["facilities"]]
@@ -235,6 +301,16 @@ def test_1次メッシュごとにJSONを書く(tmp_path: Path):
     assert "P11:テスト電気軌道(株)" in [f["target_id"] for f in _read(tmp_path / "6642.json")["facilities"]]
     # 緯度経度は小数6桁に丸める
     assert all(f["lat"] == round(f["lat"], 6) and f["lon"] == round(f["lon"], 6) for f in ref["facilities"])
+    # 停留所は位置の1次メッシュのファイルにだけ入る(6542 に2つ、6642 に2つ、東川町の1つは 6542)
+    assert ref["busstops"] == [
+        {"name": "東川役場", "lat": 43.7, "lon": 142.5, "operators": ["P11:東川町"], "routes": ["東川線"]},
+        {"name": "旭川駅前", "lat": 43.76, "lon": 142.36, "operators": ["P11:テスト電気軌道(株)"], "routes": ["1"]},
+        {"name": "大学前", "lat": 43.78, "lon": 142.38, "operators": ["P11:テスト電気軌道(株)"], "routes": ["1"]},
+    ]
+    assert [b["name"] for b in _read(tmp_path / "6642.json")["busstops"]] == ["名寄駅前", "公園前"]
+    # 停留所の無い1次メッシュは空の配列
+    assert _read(tmp_path / "6441.json")["busstops"] == []
+    assert dict(report.files[[f[0] for f in report.files].index("6542")][3])["busstop"] == 3
 
 
 def test_同じ入力なら同じバイト列(tmp_path: Path):
@@ -263,6 +339,7 @@ def test_1次メッシュを指定すると空でも書きほかは書かない(
     assert sorted(p.name for p in tmp_path.iterdir()) == ["6542.json", "9999.json"]
     empty = _read(tmp_path / "9999.json")
     assert empty["facilities"] == [] and empty["mesh1"] == "9999" and empty["sources"] == facilities.SOURCES
+    assert empty["busstops"] == []
     assert report.outside_mesh1 > 0
     assert [f[0] for f in report.files] == ["6542", "9999"]
 
@@ -397,3 +474,16 @@ def test_実データの医療機関のIDは名称と所在地から再計算で
     for f in sample:
         key = normalize_text(f["name"]) + "|" + normalize_text(f["detail"]["address"])
         assert f["target_id"] == "P04:" + hashlib.sha1(key.encode()).hexdigest()[:12]
+
+
+def test_実データの停留所(real_report):
+    out, report = real_report
+    stops = [b for p in sorted(out.glob("*.json")) for b in _read(p)["busstops"]]
+    # P11 の停留所 14,474 から、座標の不正なものと、同じ事業者の二重の登録(1件)を除いた数
+    skipped = sum(report.skipped["P11"].values())
+    assert len(stops) == 14474 - skipped - 1
+    assert all(len(b["operators"]) == 1 and b["operators"][0].startswith("P11:") for b in stops)
+    assert all(b["name"] and b["routes"] == sorted(set(b["routes"])) for b in stops)
+    # 停留所の事業者は、どれも事業者の対象としてある
+    operator_ids = {f["target_id"] for f in _real_all(out) if f["kind"] == "operator"}
+    assert {b["operators"][0] for b in stops} <= operator_ids

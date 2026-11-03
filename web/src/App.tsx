@@ -60,7 +60,7 @@ export default function App() {
         <header className="print-hide flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2">
           <div className="flex min-w-0 items-baseline gap-2">
             <h1 className="text-lg font-semibold">Dispatcher</h1>
-            <p className="truncate text-xs text-muted-foreground">減便ダイヤの判断支援(準備中)</p>
+            <p className="truncate text-xs text-muted-foreground">減便ダイヤの判断支援</p>
           </div>
           <a href={ABOUT_HASH} className="shrink-0 text-xs underline underline-offset-4 hover:text-foreground/80">
             このサイトについて・データの出典

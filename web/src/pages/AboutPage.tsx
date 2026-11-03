@@ -8,7 +8,6 @@ export const ABOUT_HASH = '#/about'
 /** 元の画面(手順と地図)に戻るときのハッシュ */
 export const MAIN_HASH = '#/'
 
-/** お問い合わせ先。連絡先が決まったら、この1か所だけを差し替える */
 /** お問い合わせ先(利用者の決定 11/3:GitHub の Issues) */
 export const CONTACT_TEXT = 'ご意見・不具合の報告は、GitHub のリポジトリの Issues にお寄せください。'
 export const CONTACT_URL = 'https://github.com/turu64/Dispatcher/issues'

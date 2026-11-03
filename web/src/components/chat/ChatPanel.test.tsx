@@ -24,6 +24,7 @@ import {
   type TokenStorage,
 } from '@/store/chat'
 import { useEditStore } from '@/store/edit'
+import { useSidePanelStore } from '@/store/sidePanel'
 import { useStepStore } from '@/store/steps'
 import { AskRestoreButton } from './AskRestoreButton'
 import ChatPanel from './ChatPanel'
@@ -100,28 +101,59 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   act(() => useEditStore.getState().setBase(null))
+  act(() => useSidePanelStore.setState({ tab: 'edit' }))
+  act(() => useStepStore.setState({ current: 'load' }))
   setChatToolProviders({ policyServices: null, hintContext: null })
   vi.restoreAllMocks()
 })
 
-describe('AI に相談の欄', () => {
+describe('「AI に相談」のタブ', () => {
   it('GTFS を読み込むまでは出さず、読み込むと出る', () => {
     act(() => useEditStore.getState().setBase(null))
     const { store } = setup()
     const { container } = render(<ChatPanel store={store} />)
     expect(container.textContent).toBe('')
     act(() => useEditStore.getState().setBase({ feed: smallFeed(), zip: new ArrayBuffer(0), label: 'test.zip', sample: null }))
-    expect(screen.getByRole('region', { name: 'AI に相談' })).toBeTruthy()
+    expect(screen.getByRole('log', { name: 'AI との会話' })).toBeTruthy()
+    // 名前は外側のタブの中身が持つので、ここでは「AI に相談」の区域を作らない(読み上げで二重にしない)
+    expect(screen.queryByRole('region', { name: 'AI に相談' })).toBeNull()
   })
 
-  it('見出しを押すと折りたためる', () => {
+  it('タブの中身なので、折りたたみの見出しのボタンは無い', () => {
     const { store } = setup()
     render(<ChatPanel store={store} />)
-    const toggle = screen.getByRole('button', { name: 'AI に相談' })
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(toggle)
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(document.getElementById('chat-body')?.hidden).toBe(true)
+    expect(screen.queryByRole('button', { name: 'AI に相談' })).toBeNull()
+    expect(screen.getByRole('log', { name: 'AI との会話' })).toBeTruthy()
+  })
+
+  it('隠れている間に増えた発言は、タブを開いたときにいちばん下まで流す。増えていなければ前のスクロールの位置に戻す', () => {
+    const { store } = setup()
+    const { rerender } = render(<ChatPanel store={store} active={false} />)
+    const log = screen.getByRole('log', { name: 'AI との会話' })
+    // jsdom は高さを持たないので、会話の箱の中身の高さを決めておく
+    Object.defineProperty(log, 'scrollHeight', { configurable: true, value: 500 })
+    act(() => store.setState({ items: [{ id: 1, kind: 'assistant', messageId: 'm1', text: '返答', streaming: false }] }))
+    // 隠れている間は流さない(隠れていると高さが 0 のため)
+    expect(log.scrollTop).toBe(0)
+    rerender(<ChatPanel store={store} active />)
+    expect(log.scrollTop).toBe(500)
+
+    log.scrollTop = 120
+    fireEvent.scroll(log)
+    rerender(<ChatPanel store={store} active={false} />)
+    // 隠すと位置が 0 に戻るブラウザの代わり
+    log.scrollTop = 0
+    rerender(<ChatPanel store={store} active />)
+    expect(log.scrollTop).toBe(120)
+  })
+
+  it('利用者の文が増えたら「AI に相談」のタブに切り替える', async () => {
+    const { store } = setup()
+    render(<ChatPanel store={store} active={false} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    expect(useSidePanelStore.getState().tab).toBe('edit')
+    await typeAndSend('土曜ダイヤにして')
+    expect(useSidePanelStore.getState().tab).toBe('chat')
   })
 
   it('AI が使えないときは理由を出し、入力欄と送るボタンを押せなくする。ほかの手順はそのまま動く', async () => {
@@ -382,7 +414,7 @@ describe('AI に相談の欄', () => {
     expect(screen.getByText('調査の間はこの画面を開いたままにしてください。')).toBeTruthy()
   })
 
-  it('下書きの知らせに、該当する手順へ移るボタンが付く。押すとその手順が開き、欄に焦点が移る', async () => {
+  it('下書きの知らせに「編集で確かめる」が付く。タブは勝手に切り替えず、押すと「編集」のタブでその手順が開き、欄に焦点が移る', async () => {
     const scroll = vi.fn()
     Element.prototype.scrollIntoView = scroll
     const { store, fake } = setup()
@@ -394,16 +426,24 @@ describe('AI に相談の欄', () => {
     )
     await waitFor(() => expect(box().disabled).toBe(false))
     await typeAndSend('土曜ダイヤにして')
+    expect(useSidePanelStore.getState().tab).toBe('chat')
+    // 送ったあとで「編集」のタブに戻った利用者がいる。AI が下書きを作っても、「AI に相談」には切り替えない
+    act(() => useSidePanelStore.getState().show('edit'))
     act(() => {
       fake.last().push({ type: 'tool_call', id: 'sevt_1', name: 'apply_policy', input: POLICY_INPUT })
     })
-    // 番号と名前は手順の一覧(steps/registry.ts)の並びから出す
-    const jump = await screen.findByRole('button', { name: '手順3「減便の方針」へ移る' })
-    expect(screen.getByText('下書き #1 を作りました。上の欄で確かめて承認してください。')).toBeTruthy()
+    // 開く手順の番号と名前は手順の一覧(steps/registry.ts)の並びから出し、ボタンの説明にする
+    const jump = await screen.findByRole('button', { name: '編集で確かめる' })
+    expect(jump.getAttribute('aria-describedby')).toBeTruthy()
+    expect(document.getElementById(jump.getAttribute('aria-describedby')!)?.textContent).toBe('開く手順:「3. 減便の方針」')
+    expect(screen.getByText('下書き #1 を作りました。確かめて承認してください。')).toBeTruthy()
+    expect(useSidePanelStore.getState().tab).toBe('edit')
     // まだ読み込みの手順を開いていて、方針の手順は隠れている
     expect(useStepStore.getState().current).toBe('load')
     expect(screen.queryByRole('heading', { name: '3. 減便の方針' })).toBeNull()
+    act(() => useSidePanelStore.getState().show('chat'))
     fireEvent.click(jump)
+    expect(useSidePanelStore.getState().tab).toBe('edit')
     expect(useStepStore.getState().current).toBe('policy')
     expect(screen.getByRole('heading', { name: '3. 減便の方針' })).toBeTruthy()
     expect(scroll).toHaveBeenCalled()
@@ -430,6 +470,23 @@ describe('AI に候補を聞く', () => {
     })
     const message = fake.posts.find((p) => p.body.kind === 'message')!.body as Extract<SessionPostBody, { kind: 'message' }>
     expect(message.content.at(-1)).toEqual({ type: 'text', text: ASK_RESTORE_PROMPT })
+  })
+
+  it('押すと、左の欄が「AI に相談」のタブに切り替わる', async () => {
+    const { store } = setup()
+    render(
+      <>
+        <AskRestoreButton store={store} />
+        <ChatPanel store={store} active={false} />
+      </>,
+    )
+    const button = screen.getByRole('button', { name: 'AI に候補を聞く' }) as HTMLButtonElement
+    await waitFor(() => expect(button.disabled).toBe(false))
+    expect(useSidePanelStore.getState().tab).toBe('edit')
+    await act(async () => {
+      fireEvent.click(button)
+    })
+    expect(useSidePanelStore.getState().tab).toBe('chat')
   })
 
   it('AI が使えない・合言葉が無い・ツールを実行している・上限に達したときは押せず、理由を出す', async () => {

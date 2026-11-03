@@ -1,9 +1,9 @@
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { stepOf } from '@/components/steps/registry'
-import { jumpToStep, type JumpStepKey } from '@/components/steps/stepIds'
+import { jumpToStep } from '@/components/steps/stepIds'
 import type { ChatItem } from '@/store/chat'
 import SimpleMarkdown from './simpleMarkdown'
+import { stepTitle } from './stepLabel'
 
 const DONE_LABELS: Record<string, string> = {
   apply_policy: '減便の方針の下書きを作りました',
@@ -15,12 +15,6 @@ const DONE_LABELS: Record<string, string> = {
   get_research_targets: '調査の対象を読みました',
   get_research_results: '調査の結果を読みました',
   save_research: '調査の結果を保存しました',
-}
-
-/** 下書きの知らせの「手順へ移る」ボタンの文。番号は手順の一覧(steps/registry.ts)の並びから出す */
-function jumpLabel(step: JumpStepKey): string {
-  const found = stepOf(step)
-  return found ? `手順${found.number}「${found.def.title}」へ移る` : '手順へ移る'
 }
 
 function stripEllipsis(label: string): string {
@@ -52,7 +46,7 @@ function ToolLine({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
   )
 }
 
-/** 発言の並び。利用者の文、AI の返答、ツールの動き、下書きの知らせ(手順へ移るボタンつき)、知らせ、エラー */
+/** 発言の並び。利用者の文、AI の返答、ツールの動き、下書きの知らせ(「編集で確かめる」ボタンつき)、知らせ、エラー */
 export default function ChatMessages({ items }: { items: readonly ChatItem[] }) {
   return (
     <ul className="flex flex-col gap-2" aria-label="会話">
@@ -82,9 +76,15 @@ export default function ChatMessages({ items }: { items: readonly ChatItem[] }) 
             return (
               <li key={item.id} data-kind="draft" className="flex flex-col gap-1.5 rounded-md border border-dashed px-2 py-1.5 text-xs">
                 <p className="break-words">{item.text}</p>
-                <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => jumpToStep(item.step)}>
-                  {jumpLabel(item.step)}
-                </Button>
+                {/* 左の欄を「編集」のタブにして、下書きを承認する手順を開く(AI が下書きを作っても、タブは勝手に切り替えない) */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <Button type="button" size="sm" variant="outline" aria-describedby={`draft-step-${item.id}`} onClick={() => jumpToStep(item.step)}>
+                    編集で確かめる
+                  </Button>
+                  <span id={`draft-step-${item.id}`} className="text-muted-foreground">
+                    開く手順:{stepTitle(item.step) ?? '下書きの手順'}
+                  </span>
+                </div>
               </li>
             )
           case 'notice':

@@ -39,7 +39,7 @@ export function canOpenStep(key: StepKey, order: readonly StepKey[], isLoaded: b
 
 /**
  * 左の欄の手順の切り替え(ステッパー)。開いている手順だけを見せ、ほかの手順は隠す(消さないので、入力中の値は残る)。
- * 移るのは、見出しのボタン(layout/Stepper)、下の「次へ」「戻る」(layout/StepNav)、AI の下書きの「手順へ移る」(steps/stepIds.ts)
+ * 移るのは、見出しのボタン(layout/Stepper)、下の「次へ」「戻る」(layout/StepNav)、AI の下書きの知らせの「編集で確かめる」(steps/stepIds.ts)
  */
 export const useStepStore = create<StepState>()((set, get) => ({
   order: STEP_KEYS,

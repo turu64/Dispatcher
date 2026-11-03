@@ -1,5 +1,4 @@
-import { ChevronDown, ChevronRight } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -20,6 +19,7 @@ import {
   usageText,
 } from '@/store/chat'
 import { useEditStore } from '@/store/edit'
+import { useSidePanelStore } from '@/store/sidePanel'
 import ChatMessages from './ChatMessages'
 import SentLog from './SentLog'
 import { useEnsureChatStatus, type ChatStoreHook } from './chatStatus'
@@ -27,20 +27,20 @@ import { useEnsureChatStatus, type ChatStoreHook } from './chatStatus'
 const EXAMPLE = '例:「平日を土曜ダイヤにしてください。期間は 11/9 から当面の間」'
 
 /**
- * 左の手順の欄の下の「AI に相談」(docs/interfaces-1105.md §6.4)。折りたためる。GTFS を読み込むまでは出さない。
- * どの手順を開いていても同じ場所に出す(方針の指示と質問は、どの手順からも出るため)。
+ * 左の欄の「AI に相談」のタブの中身(docs/interfaces-1105.md §6.4)。左の欄の高さいっぱいに出す。GTFS を読み込むまでは出さない。
+ * どの手順を開いていても同じ中身(方針の指示と質問は、どの手順からも出るため)。タブを切り替えても消さずに隠す(入力中の文を残すため)。
  * 方針の指示と質問だけを送る(操作はほかの手順のボタンで行う)。AI が使えなくても、ほかの手順はすべてボタンで動く。
- * 会話の箱は overscroll-behavior: contain にし、中のスクロールが端に着いても左の欄やページに伝わらないようにする
+ * 会話の箱は overscroll-behavior: contain にし、中のスクロールが端に着いても左の欄やページに伝わらないようにする。
+ * active は、このタブを開いているか(隠れている間は会話の箱の高さが 0 になるため、開いたときに位置を合わせ直す)
  */
-export default function ChatPanel({ store = useChatStore }: { store?: ChatStoreHook }) {
+export default function ChatPanel({ store = useChatStore, active = true }: { store?: ChatStoreHook; active?: boolean }) {
   const base = useEditStore((s) => s.base)
   if (!base) return null
-  return <ChatPanelBody store={store} />
+  return <ChatPanelBody store={store} active={active} />
 }
 
-function ChatPanelBody({ store }: { store: ChatStoreHook }) {
+function ChatPanelBody({ store, active }: { store: ChatStoreHook; active: boolean }) {
   const s = store()
-  const [open, setOpen] = useState(true)
   const [text, setText] = useState('')
   const [tokenText, setTokenText] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
@@ -57,21 +57,40 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
     if (unsent !== null) store.setState({ unsent: null })
   }, [unsent, store])
 
-  // 手順の「AI に候補を聞く」などで利用者の文や下書きの知らせが増えたとき、閉じていれば開く
+  // 手順の「AI に候補を聞く」などで利用者の文が増えたら(利用者が押した操作なので)、左の欄を「AI に相談」のタブにする。
+  // AI が下書きを作ったとき(draft)は切り替えない(「編集」のタブに「承認待ち」の印が出て、知らせの「編集で確かめる」で移る)
   const last = s.items[s.items.length - 1]
   const lastId = last?.id
-  const [seenId, setSeenId] = useState(lastId)
-  if (lastId !== seenId) {
-    setSeenId(lastId)
-    if (last?.kind === 'user' || last?.kind === 'draft') setOpen(true)
-  }
-
-  // 新しい発言が出たら、いちばん下まで流す
-  const textLength = last?.kind === 'assistant' ? last.text.length : 0
+  const lastKind = last?.kind
+  // 隠れていたこのタブに切り替えたときは、押したボタン(隠れた「編集」のタブの中)にあった焦点を、開いた後で会話の箱に移す
+  const seenId = useRef(lastId)
+  const focusOnShow = useRef(false)
   useEffect(() => {
+    if (lastId === seenId.current) return
+    seenId.current = lastId
+    if (lastKind !== 'user') return
+    if (!active) focusOnShow.current = true
+    useSidePanelStore.getState().show('chat')
+  }, [lastId, lastKind, active])
+  useEffect(() => {
+    if (!active || !focusOnShow.current) return
+    focusOnShow.current = false
+    listRef.current?.focus({ preventScroll: true })
+  }, [active])
+
+  // 新しい発言が出たら、いちばん下まで流す。隠れている間に増えた分は、タブを開いたときに流す。
+  // 増えていなければ、開いたときに前のスクロールの位置に戻す(隠すと位置が 0 に戻るブラウザがあるため)
+  const textLength = last?.kind === 'assistant' ? last.text.length : 0
+  const contentKey = `${s.items.length}:${textLength}:${s.replying ? 1 : 0}`
+  const shownKey = useRef<string | null>(null)
+  const savedTop = useRef(0)
+  useLayoutEffect(() => {
     const el = listRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [s.items.length, textLength, s.replying, open])
+    if (!active || !el) return
+    if (shownKey.current !== contentKey) el.scrollTop = el.scrollHeight
+    else el.scrollTop = savedTop.current
+    shownKey.current = contentKey
+  }, [contentKey, active])
 
   const status = s.status
   const unavailable = status.state === 'ready' && !status.available
@@ -109,21 +128,21 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
   }
 
   return (
-    <section aria-label="AI に相談" className="print-hide flex max-h-[40vh] shrink-0 flex-col border-t bg-background">
-      <h2 className="shrink-0 text-sm font-semibold">
-        <button
-          type="button"
-          className="flex w-full items-center gap-1 px-4 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-expanded={open}
-          aria-controls="chat-body"
-          onClick={() => setOpen((o) => !o)}
+    // 名前は外側のタブの中身(tabpanel「AI に相談」)が持つので、ここでは付けない(読み上げで二重にしない)
+    <section className="print-hide flex min-h-0 flex-1 flex-col">
+      {/* 地図を隠す手順では左の欄が広いので、会話が横に伸びすぎないよう幅を抑えて中央にそろえる */}
+      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-2 px-4 pt-2 pb-3">
+        <div
+          ref={listRef}
+          role="log"
+          aria-label="AI との会話"
+          aria-live="polite"
+          tabIndex={-1}
+          className="min-h-16 flex-1 overflow-y-auto overscroll-contain rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          onScroll={(e) => {
+            if (active) savedTop.current = e.currentTarget.scrollTop
+          }}
         >
-          {open ? <ChevronDown className="size-4" aria-hidden="true" /> : <ChevronRight className="size-4" aria-hidden="true" />}
-          AI に相談
-        </button>
-      </h2>
-      <div id="chat-body" hidden={!open} className="flex min-h-0 flex-1 flex-col gap-2 px-4 pb-3">
-        <div ref={listRef} role="log" aria-label="AI との会話" aria-live="polite" className="min-h-16 flex-1 overflow-y-auto overscroll-contain">
           {s.items.length === 0 && !checking && !unavailable && !statusFailed && (
             <p className="text-xs text-muted-foreground">
               減便の方針の指示や質問を送れます。{EXAMPLE}。AI は GTFS を直接書き換えず、下書きを作成します。内容を確かめてから「承認する」を押してください。
@@ -153,7 +172,7 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
           )}
         </div>
 
-        <div className="flex shrink-0 flex-col gap-2 overflow-y-auto overscroll-contain">
+        <div className="flex max-h-[50%] shrink-0 flex-col gap-2 overflow-y-auto overscroll-contain border-t pt-2">
           {checking && <p className="text-xs text-muted-foreground">AI の状態を確かめています…</p>}
           {unavailable && (
             <p role="status" className="text-xs">

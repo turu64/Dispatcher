@@ -1,9 +1,6 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import ChatPanel from '@/components/chat/ChatPanel'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import SidePanel from '@/components/layout/SidePanel'
 import SplitPane from '@/components/layout/SplitPane'
-import StepNav from '@/components/layout/StepNav'
-import StepPanels from '@/components/layout/StepPanels'
-import Stepper from '@/components/layout/Stepper'
 import { stepOf, STEPS } from '@/components/steps/registry'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import BaseMap from '@/map/BaseMap'
@@ -26,7 +23,7 @@ function useHash(): string {
 }
 
 // 1画面構成:上の端にアプリ名と運営情報(#/about)へのリンク、左に手順、右に地図。
-// 左の欄は、上の手順の見出し(ステッパー)・開いている手順の中身・下の「戻る」「次へ」・「AI に相談」の順。
+// 左の欄は、上の端のタブで「編集」(手順の見出し(ステッパー)・開いている手順の中身・下の「戻る」「次へ」)と「AI に相談」を切り替える(layout/SidePanel)。
 // 手順の並びと、手順ごとに地図を出すか・地図に何を重ねるかは components/steps/registry.ts の一覧が決める(ここは一覧を描くだけ)。
 // 運営情報のページを開いている間も、手順と地図は消さずに隠しておく(入力中の値と地図の表示を残すため)
 export default function App() {
@@ -47,13 +44,6 @@ export default function App() {
     if (holidays.status === 'idle') void load()
   }, [])
 
-  // 手順を切り替えたら、左の欄の先頭から見せる
-  const scrollRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = scrollRef.current
-    if (el) el.scrollTop = 0
-  }, [current])
-
   return (
     <TooltipProvider>
       <div className="flex size-full flex-col">
@@ -70,19 +60,7 @@ export default function App() {
         <div hidden={about} className="min-h-0 flex-1">
           <SplitPane
             showRight={showMap}
-            left={
-              <aside className="flex h-full flex-col bg-muted/30" aria-label="手順">
-                <Stepper />
-                <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-                  <div className={showMap ? 'flex flex-col gap-4 p-4' : 'mx-auto flex w-full max-w-5xl flex-col gap-4 p-4'}>
-                    <StepPanels />
-                  </div>
-                </div>
-                <StepNav />
-                {/* GTFS を読み込むまでは出さない。どの手順でも、左の欄の下に固定で出す */}
-                <ChatPanel />
-              </aside>
-            }
+            left={<SidePanel wide={!showMap} />}
             right={
               <main className="relative size-full" aria-label="地図">
                 <BaseMap visible={showMap && !about} />

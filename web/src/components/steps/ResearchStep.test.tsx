@@ -280,7 +280,7 @@ describe('ResearchStep', () => {
     const { research, fake } = setup({ tokenRequired: true })
     fireEvent.click(screen.getByRole('button', { name: RESEARCH_START }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain(TOKEN_MISSING))
-    expect(screen.getByRole('alert').textContent).toContain('「AI に相談」の欄')
+    expect(screen.getByRole('alert').textContent).toContain('「AI に相談」のタブ')
     expect(research.start).not.toHaveBeenCalled()
     expect(fake.api.create).not.toHaveBeenCalled()
   })

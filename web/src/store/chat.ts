@@ -82,12 +82,12 @@ export function budgetReachedMessage(budgetCents: number | null): string {
 
 /** 下書きの知らせの文 */
 export function draftMessage(id: string): string {
-  return `${draftName(id)} を作りました。上の欄で確かめて承認してください。`
+  return `${draftName(id)} を作りました。確かめて承認してください。`
 }
 
 // ---- 状態 ----
 
-/** 下書きを確かめる手順(該当する手順へ移るボタン用) */
+/** 下書きを確かめる手順(下書きの知らせの「編集で確かめる」で開く) */
 export type DraftStep = 'policy' | 'restore'
 
 export type ChatItem =
@@ -594,7 +594,7 @@ export function createChatStore(deps: ChatStoreDeps) {
                 : status.state === 'ready' && !status.available
                   ? CLAUDE_UNAVAILABLE
                   : tokenError
-                    ? `${tokenError}入力欄は「AI に相談」の欄にあります。`
+                    ? `${tokenError}入力欄は「AI に相談」のタブにあります。`
                     : budgetReached
                       ? budgetReachedMessage(budgetCents)
                       : TOOLS_WAITING
@@ -629,7 +629,7 @@ export function createChatStore(deps: ChatStoreDeps) {
               }
               if (e instanceof ClaudeRequestError && e.status === 401) {
                 deps.storage.set(null)
-                set({ token: null, tokenError: TOKEN_WRONG, researchError: `${TOKEN_WRONG}入力欄は「AI に相談」の欄にあります。` })
+                set({ token: null, tokenError: TOKEN_WRONG, researchError: `${TOKEN_WRONG}入力欄は「AI に相談」のタブにあります。` })
                 return null
               }
               set({ researchError: errorText(e, '調査を始められませんでした。もう一度試してください。') })

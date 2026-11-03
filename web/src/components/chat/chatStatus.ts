@@ -21,7 +21,7 @@ export function askRestoreBlockedReason(
 ): string | null {
   if (s.status.state === 'unknown' || s.status.state === 'loading') return 'AI の状態を確かめています…'
   if (s.status.state === 'ready' && s.status.available && s.status.tokenRequired && !s.token) {
-    return '認証コードを入れると使えます(左下の「AI に相談」の欄)。'
+    return '認証コードを入れると使えます(「AI に相談」のタブ)。'
   }
   if (s.status.state === 'ready' && !s.status.available) return `${CLAUDE_UNAVAILABLE}ほかの手順はボタンで使えます。`
   return sendBlockedReason(s)

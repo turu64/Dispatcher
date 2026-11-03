@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest'
+import { buildReachStops, originStops } from '../../reach/input'
 import { cellsWithinRadius, distanceM, meshCenter } from '../../reach/mesh'
+import { computeReach, type RefData } from '../../reach/reach'
+import { servicesFor } from '../calendar'
+import { departureCountsByBand, makeBands } from '../departures'
+import type { GtfsFeed } from '../load'
+import { toStops } from '../parse'
 import { diffWeekdayTrips } from './diff'
 import { applyForm2 } from './form2'
 import { basePlan, smallFeed } from './form2.fixture'
+import type { Form2Plan } from './ops'
 import { compareByHints, createRestoreHinter, restoreHints, type RestoreHint, type RestoreHintContext } from './restore'
-import { cellAt, centerAt, reachSetup, STATION_CELL, STOP_CELLS } from './restore.fixture'
+import { cellAt, centerAt, DATE, REACH_PARAMS, reachBaseFeed, reachPlan, reachRef, reachSetup, STATION_CELL, STOP_CELLS } from './restore.fixture'
 
 // 小さなフィード(form2.fixture.ts)を「平日を土曜ダイヤに」した版で、消える平日便は R1_0800_WK・R2_0900_WK・R3_0730_WK
 function setup() {
@@ -199,5 +206,189 @@ describe('足し戻しの手がかり:到達圏を使う2つ(onlyServiceAtStop�
     const { hinter, byId, ctx } = reachHinter()
     const broken: RestoreHintContext = { ...ctx, bands: ctx.bands.slice(0, 3) }
     expect(() => hinter(byId.get('A_0700_WK')!, broken)).toThrow('到達圏の比較の形が合いません')
+  })
+})
+
+// ---- 到達圏の計算と照らす(取り決めの定義を写した計算どうしの比較では見つからない、定義のずれを見つける) ----
+
+/** reachSetup と同じ手順で、基準・方針・参照データ・時間帯の幅を変えた ctx を作る(起点と分母は基準から。1103 の追記3) */
+function ctxFor(o: { base?: GtfsFeed; plan?: Form2Plan; ref?: RefData; stepHours?: 1 | 3 } = {}) {
+  const base = o.base ?? reachBaseFeed()
+  const plan = o.plan ?? reachPlan()
+  const ref = o.ref ?? reachRef()
+  const bands = makeBands(o.stepHours ?? 3)
+  const origins = originStops(base, toStops(base).stops)
+  const edit = (p: Form2Plan) => {
+    const outcome = applyForm2(base, p, { generatedAt: '202611041200' })
+    if (!outcome.ok) throw new Error(outcome.message)
+    return outcome.result.feed
+  }
+  const countsOf = (feed: GtfsFeed) => departureCountsByBand(feed, servicesFor(feed, DATE), bands)
+  const reachOf = (counts: Map<string, number[]>) =>
+    computeReach({
+      stops: buildReachStops(origins.stops, counts, bands.length),
+      ref,
+      fallbackClass: 'suburban',
+      params: REACH_PARAMS,
+      bandCount: bands.length,
+    })
+  const edited = edit(plan)
+  const before = countsOf(base)
+  const after = countsOf(edited)
+  const ctx: RestoreHintContext = {
+    before,
+    after,
+    bands,
+    beforeResult: reachOf(before.counts),
+    afterResult: reachOf(after.counts),
+    date: DATE,
+    params: REACH_PARAMS,
+    stops: origins.stops,
+  }
+  const diff = diffWeekdayTrips(base, edited, plan.weekdayService)
+  const hinter = createRestoreHinter(base, edited, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
+  const byId = new Map(diff.removed.map((t) => [t.tripId, t]))
+  return { base, plan, edited, ctx, hinter, byId, edit, countsOf, reachOf }
+}
+
+/** A_0700_WK の P の行(乗れる行)の時刻を変えた基準のフィード */
+function baseWithATime(time: string): GtfsFeed {
+  const base = reachBaseFeed()
+  for (const row of base.tables.get('stop_times')!.rows) {
+    if (row.trip_id === 'A_0700_WK' && row.stop_id === 'P') {
+      row.arrival_time = time
+      row.departure_time = time
+    }
+  }
+  return base
+}
+
+describe('足し戻しの手がかり:到達圏の計算との往復', () => {
+  for (const stepHours of [3, 1] as const) {
+    it(`候補を1便ずつ足し戻して到達圏を計算し直すと、戻るセルと出発が 0 から増える停留所が手がかりと一致する(${stepHours}時間ごと)`, () => {
+      const { plan, ctx, hinter, byId, edit, countsOf, reachOf } = ctxFor({ stepHours })
+      const { beforeResult: before, afterResult: after } = ctx
+      expect(byId.size).toBe(5)
+      for (const [tripId, trip] of byId) {
+        const added = edit({ ...plan, addBackTripIds: [tripId] })
+        const counts = countsOf(added)
+        const result = reachOf(counts.counts)
+        // 足し戻した後に到達できるようになった「減便で外れた」セル(時間帯をまたいで重なりを除く)
+        const restored = new Set<number>()
+        ctx.bands.forEach((_, b) => {
+          before.cells.forEach((_, i) => {
+            if (before.coverable[i] && before.reachable[b][i] && !after.reachable[b][i] && result.reachable[b][i]) restored.add(i)
+          })
+        })
+        let population = 0
+        for (const i of restored) population += before.cellPopulation[i]
+        const detail = hinter(trip, ctx)
+        expect(detail.lostCells, tripId).toEqual(restored.size > 0 ? { cells: restored.size, population } : null)
+        expect(detail.hints.includes('restoresLostCells'), tripId).toBe(restored.size > 0)
+        // 編集後の出発が 0 で、足し戻すと 1 以上になる停留所と時間帯があるか
+        let zeroToSome = false
+        for (const [stop, list] of counts.counts) {
+          list.forEach((n, b) => {
+            if (n > 0 && (ctx.after.counts.get(stop)?.[b] ?? 0) === 0) zeroToSome = true
+          })
+        }
+        expect(detail.hints.includes('onlyServiceAtStop'), tripId).toBe(zeroToSome)
+      }
+    })
+  }
+
+  it('時間帯は開始を含み終わりを含まない。24時以降の出発は数えない', () => {
+    // 比較(ctx)は元のフィードのもの:6〜9時に外れるのは P(9 セル)・D・E のまわり、9〜12時は Q のまわり(P と重なるのは 2 セル)
+    const { ctx } = reachSetup()
+    const hintsAt = (time: string) => {
+      const base = baseWithATime(time)
+      const { edited, plan } = reachSetup()
+      const diff = diffWeekdayTrips(base, edited, plan.weekdayService)
+      const hinter = createRestoreHinter(base, edited, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
+      return hinter(diff.removed.find((t) => t.tripId === 'A_0700_WK')!, ctx)
+    }
+    // 08:59:59 は 6〜9時:P のまわりの 9 セル
+    expect(hintsAt('08:59:59').lostCells).toEqual({ cells: 9, population: 90 })
+    // 09:00:00 は 9〜12時:9〜12時に外れるのは Q のまわりで、P から届くのは重なりの 2 セル
+    expect(hintsAt('09:00:00').lostCells).toEqual({ cells: 2, population: 20 })
+    expect(hintsAt('09:00:00').hints).toContain('onlyServiceAtStop')
+    // 24:00:00 と 25:10:00 は 6〜24時の外
+    for (const t of ['24:00:00', '25:10:00']) {
+      const d = hintsAt(t)
+      expect(d.lostCells, t).toBeNull()
+      expect(d.hints.some((h) => REACH_HINTS.includes(h)), t).toBe(false)
+    }
+  })
+
+  it('出発が空で到着だけの行は、到達圏の出発の数と同じく数えない(到着の時刻で代えない)', () => {
+    const { ctx } = reachSetup()
+    const hintsWith = (arrival: string, departure: string) => {
+      const base = reachBaseFeed()
+      for (const row of base.tables.get('stop_times')!.rows) {
+        if (row.trip_id === 'A_0700_WK' && row.stop_id === 'P') {
+          row.arrival_time = arrival
+          row.departure_time = departure
+        }
+      }
+      const { edited, plan } = reachSetup()
+      const diff = diffWeekdayTrips(base, edited, plan.weekdayService)
+      const hinter = createRestoreHinter(base, edited, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
+      return hinter(diff.removed.find((t) => t.tripId === 'A_0700_WK')!, ctx)
+    }
+    const withDeparture = hintsWith('07:00:00', '07:00:00')
+    const arrivalOnly = hintsWith('07:00:00', '')
+    const noTime = hintsWith('', '')
+    // 出発がある行は P のまわり(6〜9時)を数える
+    expect(withDeparture.lostCells?.cells ?? 0).toBeGreaterThanOrEqual(9)
+    // 到着だけの行は、時刻の無い行と同じ扱い(P を数えない)。到達圏と関係ない手がかり(始発の時刻から決まるもの)は比べない
+    const reachPart = (d: typeof arrivalOnly) => ({
+      hints: d.hints.filter((h) => REACH_HINTS.includes(h)),
+      lostCells: d.lostCells,
+    })
+    expect(reachPart(arrivalOnly)).toEqual(reachPart(noTime))
+    expect(reachPart(arrivalOnly)).not.toEqual(reachPart(withDeparture))
+  })
+
+  it('1時間ごとの時間帯でも、乗れる行の時刻が入る時間帯で数える', () => {
+    const { ctx, hinter, byId } = ctxFor({ stepHours: 1 })
+    expect(ctx.bands).toHaveLength(18)
+    // B は 8〜9時の P(9 セル)と 9〜10時の Q(11 セル)。重なりの 2 セルは1つと数える
+    expect(hinter(byId.get('B_0855_WK')!, ctx).lostCells).toEqual({ cells: 18, population: 180 })
+    // A は 7〜8時の P だけ
+    expect(hinter(byId.get('A_0700_WK')!, ctx).lostCells).toEqual({ cells: 9, population: 90 })
+    const rows: Record<string, [string, number][]> = {
+      A_0700_WK: [['P', 1]],
+      B_0855_WK: [
+        ['P', 2],
+        ['Q', 3],
+      ],
+      D_0745_WK: [['D', 1]],
+      E_0750_WK: [['E', 1]],
+    }
+    for (const [id, list] of Object.entries(rows)) {
+      const expected = bruteForce(ctx, list)
+      expect(hinter(byId.get(id)!, ctx).lostCells, id).toEqual(expected.cells > 0 ? expected : null)
+    }
+  })
+
+  it('セルの区分ごとのバス停の距離で数える(DID の中の都市部は短い)', () => {
+    // P のまわりのセルを DID にすると都市部になり、バス停の距離は 1分(80m)。P のセルの中心だけが届く
+    const ref = reachRef()
+    const did125 = new Set(cellsNear('P', 240))
+    const { ctx, hinter, byId } = ctxFor({ ref: { ...ref, did125 } })
+    const pCells = [...cellsNear('P', 240)]
+    const indexOf = new Map(ctx.beforeResult.cells.map((c, i) => [c, i]))
+    for (const c of pCells) expect(ctx.beforeResult.classes[indexOf.get(c)!]).toBe('urban')
+    expect(hinter(byId.get('A_0700_WK')!, ctx).lostCells).toEqual({ cells: 1, population: 10 })
+    // 中山間・地方のまま(240m)なら 9 セル
+    const rural = ctxFor()
+    expect(rural.hinter(rural.byId.get('A_0700_WK')!, rural.ctx).lostCells).toEqual({ cells: 9, population: 90 })
+    // 総当たり(区分ごとの距離)とも一致する
+    expect(hinter(byId.get('B_0855_WK')!, ctx).lostCells).toEqual(
+      bruteForce(ctx, [
+        ['P', 0],
+        ['Q', 1],
+      ]),
+    )
   })
 })

@@ -8,6 +8,7 @@
 | --- | --- |
 | `form2_ref.py` | 形2の参照実装。標準ライブラリだけで動き、ほかのスクリプトを import しない |
 | `policies/*.json` | 場面ごとの方針の JSON(5 つ。下の「場面」) |
+| `restore_hints_check.py` | 足し戻しの手がかりのうち到達圏を使う2つ(`restoresLostCells`・`onlyServiceAtStop`)を、取り決めから別に計算する。`web/src/gtfs/edit/restore.verify.test.ts` の照合の相手(下の「足し戻しの手がかりの照合」) |
 
 テストは `data/tests/test_form2_ref.py`(手で作った小さな GTFS と、道北バスの GTFS があれば 5 つの場面の出力の SHA-256)。
 
@@ -32,6 +33,27 @@ python3 -I data/tools/form2_ref.py \
 - Python 3.9.6 と 3.13 で動き、`main` の出力が下の SHA-256 と同じになることを確かめた(これより古い版は試していない)。標準ライブラリ以外は要らないので、`uv` も要らない
 
 道北バスの GTFS が手元にある利用者向けの手順は、`data/raw/README.md` と、このフォルダの `policies/` を見てください。標準出力に平日の便数(`weekday trips 382 (from replacement 354, kept 8, added back 20), warnings 0`)が出ます。
+
+## 足し戻しの手がかりの照合
+
+`restore_hints_check.py` は、道北バスの main の場面で、足し戻しの候補(273 便)ごとの `restoresLostCells`(戻るセルの数と推計人口)と `onlyServiceAtStop` を計算する(`docs/interfaces-1105.md` §7)。web のコード(`web/src/gtfs/edit/restore.ts`)は import も写しもせず、取り決めと地域メッシュの定義から書いた。標準ライブラリだけで動く。リポジトリの最上位から:
+
+```bash
+# 1. 編集後の GTFS を参照実装で作る(上の「使い方」と同じ)
+python3 -I data/tools/form2_ref.py \
+  --gtfs data/raw/gtfs/dohoku_bus_減便前.zip \
+  --policy data/tools/policies/main.json \
+  --out data/out/form2/main \
+  --generated-at 202611041200
+# 2. 手がかりを計算する(参照データ data/out/ref の 6541・6542・6543・6641・6642・6643 が要る)
+python3 -I data/tools/restore_hints_check.py \
+  data/raw/gtfs/dohoku_bus_減便前.zip data/out/form2/main data/out/ref data/out/restore_hints_main.json
+```
+
+- 比較の日付は 2026-11-04(水)、3時間ごとの 6 つの時間帯、徒歩の分数・分速・人口密度のしきい値は既定値(スクリプトの先頭の定数)
+- 標準出力の最後の `sha` と、`lost per band`・`with restoresLostCells`・`with onlyServiceAtStop` の数を、`restore.verify.test.ts` の `PYTHON` に写す。2026-11-03 に動かした値は、外れたセルが時間帯ごとに 281・101・233・174・420・4、`restoresLostCells` 25 便、`onlyServiceAtStop` 36 便、`sha` `7b127b005ddbf239d7814bd2c90a26a6051c8c0e956fcf98de2c2b8d5f923fdd`
+- 出力の JSON(4 つ目の引数)には、便ごとの値(`cells`、推計人口の 4 倍の `pop4`、`only`)を書く。`data/out/` はコミットしない
+- 乗れる行の時刻は、取り決め(1105 §7)のとおり出発の時刻だけ。出発が空の行は数えない(到達圏の出発の数と同じ。道北バスの 9/17 版には出発が空の行が無い)
 
 ## データの出典
 

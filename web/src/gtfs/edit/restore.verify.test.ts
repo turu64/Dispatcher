@@ -3,7 +3,7 @@
 // あるときだけ走る(どれもコミットしない。方針はリポジトリにある)。
 // 画面と同じ流れ(到達圏の store の setSource → setEdited → buildRestoreHintContext)で ctx を作り、main の場面の候補
 // (基準の平日便のうち、編集後に同じ署名の便が無いもの)すべての手がかりを出して、計算の時間を出力する。
-// 入力の指紋が変わっていれば、Python の値との照合だけを飛ばす。
+// 入力の指紋が変わっていれば、Python の値との照合だけを飛ばす(it.skipIf。飛ばしたことはテストの結果に skipped として出る)。
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -29,7 +29,7 @@ const ready = existsSync(ZIP) && existsSync(POLICY) && MESHES.every((m) => exist
 /**
  * 検証担当が Python(python3 -I、標準ライブラリだけ)で別に計算した値。web のコードは見ずに、取り決め
  * (1105 §7、1104 §7・§8、1103 の追記2・追記3、CLAUDE.md の到達圏の計算条件)と JIS X 0410 の定義から書いた
- * (作業場所の restore_hints_check.py。リポジトリには入れていない)。
+ * (data/tools/restore_hints_check.py。動かし方は data/tools/README.md の「足し戻しの手がかりの照合」)。
  *
  * 入力:9/17 版の ZIP、参照データの 6 ファイル(pop250・did125・stations)、編集後は参照実装 data/tools/form2_ref.py を
  * policies/main.json と --generated-at 202611041200 で動かした出力(trips・stop_times・calendar・calendar_dates)。
@@ -141,6 +141,10 @@ async function settle(store: ReturnType<typeof createReachStore>) {
   for (let i = 0; i < 2000 && store.getState().computing; i++) await new Promise((r) => setTimeout(r, 5))
 }
 
+/** 入力(参照データ・ZIP・方針)が、Python で計算したときと同じか。テストを集める時点で決める(it.skipIf に使うため) */
+const matches =
+  ready && fingerprint() === PYTHON.fingerprint && createHash('sha256').update(readFileSync(POLICY)).digest('hex') === PYTHON.policySha
+
 describe.skipIf(!ready)('足し戻しの手がかり(到達圏を使う2つ)を道北バスの main の場面で出す', () => {
   let base: GtfsFeed
   let edited: GtfsFeed
@@ -148,11 +152,9 @@ describe.skipIf(!ready)('足し戻しの手がかり(到達圏を使う2つ)を�
   let ctx: RestoreHintContext | null = null
   let removed: TripBrief[] = []
   let details = new Map<string, RestoreHintDetail>()
-  let matches = false
 
   beforeAll(async () => {
-    matches =
-      fingerprint() === PYTHON.fingerprint && createHash('sha256').update(readFileSync(POLICY)).digest('hex') === PYTHON.policySha
+    if (!matches) console.warn('参照データか GTFS か方針が変わったため、Python の値との照合を飛ばします(skipped として出ます)')
     base = await loadGtfsZip(new Uint8Array(readFileSync(ZIP)).buffer)
     const policy = JSON.parse(readFileSync(POLICY, 'utf8')) as Omit<Form2Plan, 'kind'>
     plan = { kind: 'weekdayToSaturday', ...policy }
@@ -208,11 +210,7 @@ describe.skipIf(!ready)('足し戻しの手がかり(到達圏を使う2つ)を�
     expect(ctx!.date).toBe('20261104')
   })
 
-  it('restoresLostCells の値が、Python で独立に計算した値と一致する(25 便すべて)。onlyServiceAtStop の便も一致する', () => {
-    if (!matches) {
-      console.warn('参照データか GTFS か方針が変わったため、Python の値との照合を飛ばしました')
-      return
-    }
+  it.skipIf(!matches)('restoresLostCells の値が、Python で独立に計算した値と一致する(25 便すべて)。onlyServiceAtStop の便も一致する', () => {
     expect(removed).toHaveLength(PYTHON.candidates)
     // 時間帯ごとの外れたセル(ctx の前後の結果から数える)
     const lost = ctx!.bands.map(

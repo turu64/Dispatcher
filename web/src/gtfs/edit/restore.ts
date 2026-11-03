@@ -112,7 +112,7 @@ function firstSecondsByRoute(trips: readonly TripBrief[]): Map<string, number[]>
 
 // ---- 到達圏を使う手がかり(11/5)----
 
-/** 便の乗れる行の1つ(停留所と、出発の時刻。出発が空なら到着の時刻) */
+/** 便の乗れる行の1つ(停留所と、出発の時刻。出発が空の行は入れない) */
 interface BoardingRow {
   stopId: string
   seconds: number
@@ -136,7 +136,7 @@ function isLaterSequence(a: string, b: string): boolean {
 /**
  * 便の乗れる行(docs/interfaces-1104.md §7 の「乗れる行」:pickup_type が '1' でなく、その便の最後の停留所でない行)。
  * 最後の停留所は stop_sequence を数として比べて最大の行(同じ値の行が複数あれば、どれも最後)。
- * 時刻は出発、空なら到着(docs/interfaces-1105.md §7)。読めない行と、stop_id が空の行は除く
+ * 時刻は出発だけ(到達圏の出発の数と同じ。docs/interfaces-1105.md §7)。出発が空・読めない行と、stop_id が空の行は除く
  */
 function boardingRowsOf(rows: readonly GtfsRow[]): BoardingRow[] {
   let last: string | null = null
@@ -151,8 +151,8 @@ function boardingRowsOf(rows: readonly GtfsRow[]): BoardingRow[] {
     if (seq !== null && seq === last) continue
     const stopId = trimmed(row.stop_id)
     if (stopId === '') continue
-    const departure = trimmed(row.departure_time)
-    const seconds = parseGtfsTime(departure !== '' ? departure : row.arrival_time)
+    // 到達圏の出発の数(departures.ts)と同じく、departure_time だけを使う。空の行は数えない(取り決め 1105 §7)
+    const seconds = parseGtfsTime(trimmed(row.departure_time))
     if (seconds === null) continue
     out.push({ stopId, seconds })
   }
@@ -269,7 +269,7 @@ function bandOf(index: LostCellIndex, seconds: number): number {
  *
  * ctx を渡すと、到達圏を使う2つ(onlyServiceAtStop・restoresLostCells)も判定する(docs/interfaces-1105.md §7)。
  * - 対象は、feed が base で、ctx.date に基準で走る平日(plan.weekdayService)の便だけ。ほかの便には2つを出さない
- * - 乗れる行(pickup_type が 1 でなく、最後の行でない)の出発の時刻(空なら到着)が入る時間帯で数える。6〜24時の外は数えない
+ * - 乗れる行(pickup_type が 1 でなく、最後の行でない)の出発の時刻が入る時間帯で数える(出発が空の行は数えない)。6〜24時の外は数えない
  * - 停留所ごとのまわりの外れたセルは ctx ごとに1回だけ探して覚えておくので、候補の一覧をまとめて調べても速い
  * - ctx は、edited から作った到達圏の比較を渡す(別の版の比較を渡すと、出発の数が合わない)
  */

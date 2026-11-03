@@ -1,21 +1,14 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import StepSection from '@/components/StepSection'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createTripBriefer, restoreTotals, type TripBrief } from '@/gtfs/edit/diff'
 import type { Form2Result } from '@/gtfs/edit/form2'
 import { addBackReasons, planOf, type EditOp, type Form2Plan } from '@/gtfs/edit/ops'
-import {
-  compareByHints,
-  createRestoreHinter,
-  RESTORE_HINT_LABELS,
-  type RestoreHint,
-  type RestoreHintContext,
-  type RestoreHintDetail,
-} from '@/gtfs/edit/restore'
+import { createRestoreHinter, RESTORE_HINT_LABELS, type RestoreHint, type RestoreHintContext } from '@/gtfs/edit/restore'
+import { createRouteDirectionTimeline } from '@/gtfs/edit/stopDiff'
 import { activeServiceIds } from '@/gtfs/calendar'
 import { formatDateJa } from '@/lib/dates'
 import { diffOf, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
@@ -27,13 +20,16 @@ import { InlineConfirm, NoteList } from './editParts'
 import {
   ACTOR_LABELS,
   addBackRejections,
-  lostCellsText,
   RESTORE_DUTY_NOTE,
   restoreTotalsText,
   SCHOOL_HOLIDAY_NOTE,
   shortDateTime,
 } from './editText'
 import { STEP_IDS } from './stepIds'
+import { CandidateGroups } from './restore/CandidateGroups'
+import { compareByTime, compareCandidates, groupCandidates, tripEndpoints, type Candidate } from './restore/grouping'
+import { AiPicks, SelectedTrips } from './restore/PickLists'
+import { TripLine } from './restore/TripLine'
 
 /** 到達圏を使う2つの手がかりの説明(date は比較の日付 'YYYYMMDD') */
 function reachHintNote(date: string): string {
@@ -68,13 +64,14 @@ function reachHintStatus(o: {
   return { kind: 'absent', text: REACH_HINTS_ABSENT.none }
 }
 
-/** 一度に並べる候補の数(「さらに表示」で増やす) */
-const PAGE = 50
-
 /**
  * 足し戻しの手順(docs/interfaces-1104.md §8)。手順の番号は components/steps/registry.ts の並びで決まるので、文言に番号を書かない。
- * 候補は、基準の平日便のうち、承認済みの編集後に同じ署名の便が無いもの(消える便)。手がかり(コードが出す)の多い順に並べ、
- * 系統・始発の時間帯・停留所名・手がかりで絞り込む。「足し戻す」「取り消す」は押したことを承認とみなす。
+ * 候補は、基準の平日便のうち、承認済みの編集後に同じ署名の便が無いもの(消える便)。系統・始発の時間帯・停留所名・手がかりで絞り込む。
+ * 一覧は系統ごとに折りたたみ(全曜日で便がなくなる系統が先頭)、開くと方向ごとに時刻の順に並べて編集後の最大間隔を添える。
+ * 最初は手がかりのある便だけを出し、残りは「ほかの便を見る」で開く(docs/tasks-1103.md の指摘5。並べ方は restore/grouping.ts)。
+ * 「AI に候補を聞く」の結果(Claude の足し戻しの下書き)の便は、一覧の先頭の「AI のおすすめ」にまとめる。
+ * 足し戻す便ごとに「休校日運休(学)」の印を付けられる(addBack の schoolDaysOnly。GTFS には入れない)。
+ * 「足し戻す」「取り消す」は押したことを承認とみなす。
  */
 export default function RestoreStep() {
   const base = useEditStore((s) => s.base)
@@ -87,7 +84,7 @@ export default function RestoreStep() {
   return (
     <StepSection title="5. 足し戻し" id={STEP_IDS.restore}>
       {!base ? (
-        <p className="text-sm text-muted-foreground">手順1で GTFS を読み込み、減便の方針を承認すると、足し戻す便を選べます。</p>
+        <p className="text-sm text-muted-foreground">GTFS を読み込み、減便の方針を承認すると、足し戻す便を選べます。</p>
       ) : !plan || !version ? (
         <p className="text-sm text-muted-foreground">減便の方針を承認すると、消える平日便から足し戻す便を選べます。</p>
       ) : (
@@ -108,11 +105,6 @@ function startBandOf(seconds: number | null): string {
 }
 
 const START_BAND_ORDER = ['6時より前', '6〜9時', '9〜12時', '12〜15時', '15〜18時', '18〜21時', '21〜24時', '24時以降', '時刻なし']
-
-interface Candidate {
-  trip: TripBrief
-  detail: RestoreHintDetail
-}
 
 function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Form2Plan; version: Form2Result; draft: Draft | null }) {
   const history = useEditStore((s) => s.history)
@@ -135,16 +127,33 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   )
   const candidates = useMemo<Candidate[]>(() => {
     const hinter = createRestoreHinter(base.feed, version.feed, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
-    return diff.removed.map((trip) => ({ trip, detail: hinter(trip, ctx ?? undefined) })).sort(compareByHints)
+    return diff.removed.map((trip) => ({ trip, detail: hinter(trip, ctx ?? undefined) })).sort(compareCandidates)
   }, [base.feed, version.feed, plan, diff, ctx])
+  // 方向は基準の便の始発・終着の stop_id で分ける(候補は基準の平日便なので、比べる日に走るとは限らず、編集後の並びからは取らない)
+  const endpoints = useMemo(() => tripEndpoints(base.feed), [base.feed])
+  const vanishing = useMemo(() => new Set(diff.byRoute.filter((r) => r.vanishes).map((r) => r.routeId)), [diff])
+  // 編集後の最大間隔は、到達圏を比べる日の、承認済みの編集後のフィードで数える(比べる日が無いか不正なら出さない)
+  const compareDate = useReachStore((s) => s.date)
+  const editedTimeline = useMemo(() => {
+    if (!compareDate) return null
+    try {
+      return createRouteDirectionTimeline(version.feed, compareDate)
+    } catch {
+      return null
+    }
+  }, [version.feed, compareDate])
 
   const [route, setRoute] = useState('')
   const [band, setBand] = useState('')
   const [stopName, setStopName] = useState('')
   const [hint, setHint] = useState<RestoreHint | ''>('')
   const [selected, setSelected] = useState<string[]>([])
+  // 休校日運休(学)の印を付けた便(選んだ便のうち)
+  const [school, setSchool] = useState<string[]>([])
+  // 開いた系統と、「ほかの便を見る」を押した系統
+  const [opened, setOpened] = useState<string[]>([])
+  const [showAll, setShowAll] = useState<string[]>([])
   const [reason, setReason] = useState('')
-  const [limit, setLimit] = useState(PAGE)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
   // Claude の下書きを捨ててよいかを確かめている操作(画面の中で確かめる。ブラウザ標準の確認ダイアログは使わない)
   const [pending, setPending] = useState<{ op: EditOp; done: string; draftId: string; from: 'add' | 'withdraw' } | null>(null)
@@ -184,13 +193,37 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       (query === '' || c.trip.stopNames.some((n) => n.includes(query))) &&
       (activeHint === '' || c.detail.hints.includes(activeHint)),
   )
-  const shown = filtered.slice(0, limit)
-  const candidateIds = new Set(candidates.map((c) => c.trip.tripId))
-  const selectedNow = selected.filter((id) => candidateIds.has(id))
+  const groups = groupCandidates(filtered, endpoints, vanishing, editedTimeline)
+  // 絞り込んでいる間は、当てはまる便のある系統を開いて出す
+  const filtering = route !== '' || band !== '' || query !== '' || activeHint !== ''
+  const candidateById = new Map(candidates.map((c) => [c.trip.tripId, c]))
+  const selectedNow = selected.filter((id) => candidateById.has(id))
+  const selectedSet = new Set(selectedNow)
+  const schoolSet = new Set(school)
 
   // 利用者が方針の下書きを確かめている間は、足し戻さない(下書きを黙って置き換えないため)
   const policyDraft = draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draftActor(draft) === 'user'
   const claudeDraft = draft && draftActor(draft) === 'claude' && draft.kind === 'op' && draft.record.op.type !== 'applyPolicy' ? draft : null
+  // AI のおすすめ:Claude の足し戻しの下書きにある便のうち、候補にあるもの(時刻の順)
+  const aiOp = claudeDraft?.record.op.type === 'addBack' ? claudeDraft.record.op : null
+  const aiItems = new Map((aiOp?.items ?? []).map((item) => [item.tripId.trim(), item]))
+  const aiPicks = [...aiItems]
+    .flatMap(([id, item]) => {
+      const candidate = candidateById.get(id)
+      return candidate ? [{ candidate, item }] : []
+    })
+    .sort((a, b) => compareByTime(a.candidate, b.candidate))
+
+  function select(tripId: string, checked: boolean) {
+    setSelected((s) => (checked ? (s.includes(tripId) ? s : [...s, tripId]) : s.filter((id) => id !== tripId)))
+    // AI が休校日運休(学)とした便は、選んだときに印を付けておく(外せる)
+    if (checked && aiItems.get(tripId)?.schoolDaysOnly) setSchool((s) => (s.includes(tripId) ? s : [...s, tripId]))
+    if (!checked) setSchool((s) => s.filter((id) => id !== tripId))
+  }
+
+  function toggle(list: string[], id: string): string[] {
+    return list.includes(id) ? list.filter((x) => x !== id) : [...list, id]
+  }
 
   function run(op: EditOp, done: string, from: 'add' | 'withdraw', replaceClaudeDraft = false): boolean {
     setMessage(null)
@@ -215,30 +248,37 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         message={replaceClaudeDraftMessage({ id: confirming.draftId })}
         confirmLabel="捨てて続ける"
         onConfirm={() => {
-          if (run(confirming.op, confirming.done, from, true) && from === 'add') setSelected([])
+          if (run(confirming.op, confirming.done, from, true) && from === 'add') clearSelection()
         }}
         onCancel={() => setPending(null)}
       />
     ) : null
 
+  function clearSelection() {
+    setSelected([])
+    setSchool([])
+  }
+
   function addBack() {
     if (selectedNow.length === 0) return
     const done = run(
-      { type: 'addBack', items: selectedNow.map((tripId) => ({ tripId, reason: reason.trim(), schoolDaysOnly: false })) },
+      { type: 'addBack', items: selectedNow.map((tripId) => ({ tripId, reason: reason.trim(), schoolDaysOnly: schoolSet.has(tripId) })) },
       `${selectedNow.length} 便を足し戻しました。`,
       'add',
     )
     // 確かめの途中(まだ足し戻していない)なら、選んだ便は残す
-    if (done) setSelected([])
+    if (done) clearSelection()
   }
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
       {claudeDraft && <ClaudeDraftBanner draft={claudeDraft} />}
       <p className="text-sm">
-        消える平日便 <span className="tabular-nums">{candidates.length}</span> 便から選びます(手がかりの多い順)。
+        消える平日便 <span className="tabular-nums">{candidates.length}</span> 便から選びます。系統ごとにまとめ、全曜日で便がなくなる系統を先に出します。
+        系統を開くと、手がかりのある便を方向ごとに時刻の順に出します。
       </p>
       <AskRestoreButton blocked={policyDraft ? '減便の方針の下書きを承認するか、やめてから聞いてください。' : null} />
+      <AiPicks picks={aiPicks} selected={selectedSet} onSelect={select} />
       <fieldset className="grid grid-cols-2 gap-2" aria-label="候補の絞り込み">
         <div className="flex min-w-0 flex-col gap-1">
           <Label htmlFor="restore-route" className="text-xs">
@@ -292,35 +332,32 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         </div>
       </fieldset>
 
-      <ul className="flex flex-col divide-y rounded-md border text-xs" aria-label="足し戻す便の候補">
-        {shown.length === 0 && <li className="px-2 py-1.5 text-muted-foreground">当てはまる便がありません。</li>}
-        {shown.map((c) => {
-          const checked = selected.includes(c.trip.tripId)
-          return (
-            <li key={c.trip.tripId} className="px-2 py-1">
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 size-4 shrink-0 accent-primary"
-                  checked={checked}
-                  onChange={(e) =>
-                    setSelected((s) => (e.target.checked ? [...s, c.trip.tripId] : s.filter((id) => id !== c.trip.tripId)))
-                  }
-                  aria-label={`${c.trip.firstDeparture ?? '時刻なし'} ${c.trip.routeName} ${c.trip.tripId} を選ぶ`}
-                />
-                <TripLine trip={c.trip} hints={c.detail.hints} lostCells={c.detail.lostCells} />
-              </label>
-            </li>
-          )
-        })}
-      </ul>
+      <p className="text-xs text-muted-foreground">
+        {compareDate && editedTimeline
+          ? `編集後の最大間隔は、到達圏を比べる日(${formatDateJa(compareDate)})の、承認済みの編集後の便で数えています。`
+          : '到達圏を比べる日が決まると、方向ごとに編集後の最大間隔を出します。'}
+      </p>
+      <CandidateGroups
+        groups={groups}
+        isOpen={(id) => filtering || opened.includes(id)}
+        onToggle={(id) => {
+          // 絞り込みで開いている系統を閉じるときは、絞り込みを外すまで閉じたことにしない(開いた一覧にも入れない)
+          if (!filtering) setOpened((o) => toggle(o, id))
+        }}
+        showsAll={(id) => showAll.includes(id)}
+        onShowAll={(id) => setShowAll((s) => (s.includes(id) ? s : [...s, id]))}
+        selected={selectedSet}
+        onSelect={select}
+        aiIds={new Set(aiPicks.map((p) => p.candidate.trip.tripId))}
+      />
       {(reachStatus.kind === 'absent' || hintsPresent.includes('onlyServiceAtStop') || hintsPresent.includes('restoresLostCells')) &&
         candidates.length > 0 && <p className="text-xs text-muted-foreground">{reachStatus.text}</p>}
-      {filtered.length > shown.length && (
-        <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setLimit((n) => n + PAGE)}>
-          さらに表示(残り {filtered.length - shown.length} 便)
-        </Button>
-      )}
+      <SelectedTrips
+        trips={selectedNow.map((id) => candidateById.get(id)!)}
+        school={schoolSet}
+        onSchool={(id, checked) => setSchool((s) => (checked ? (s.includes(id) ? s : [...s, id]) : s.filter((x) => x !== id)))}
+        onRemove={(id) => select(id, false)}
+      />
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="restore-reason" className="text-xs">
@@ -350,41 +387,6 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       />
       <NoteList items={[SCHOOL_HOLIDAY_NOTE, RESTORE_DUTY_NOTE]} label="足し戻しの注意" />
     </div>
-  )
-}
-
-/** 便の1行(始発時刻、系統、始発 → 終着、行き先、trip_id、手がかり) */
-function TripLine({
-  trip,
-  hints,
-  lostCells,
-}: {
-  trip: TripBrief
-  hints?: readonly RestoreHint[]
-  /** 外れた場所が戻る手がかりの、戻るセルの数と推計人口 */
-  lostCells?: RestoreHintDetail['lostCells']
-}) {
-  return (
-    <span className="flex min-w-0 flex-col gap-0.5">
-      <span className="break-words">
-        <span className="font-medium tabular-nums">{trip.firstDeparture ?? '—'}</span> {trip.routeName}:{trip.firstStopName} →{' '}
-        {trip.lastStopName}
-        {trip.headsign && `(${trip.headsign})`}
-      </span>
-      <span className="font-mono text-[10px] text-muted-foreground">
-        {trip.tripId}
-        {trip.feed === 'base' ? '(基準)' : '(編集後)'}
-      </span>
-      {hints && hints.length > 0 && (
-        <span className="flex flex-wrap gap-1">
-          {hints.map((h) => (
-            <Badge key={h} variant="secondary" className="px-1 py-0 text-[10px]">
-              {h === 'restoresLostCells' && lostCells ? lostCellsText(lostCells) : RESTORE_HINT_LABELS[h]}
-            </Badge>
-          ))}
-        </span>
-      )}
-    </span>
   )
 }
 
@@ -435,6 +437,7 @@ function AddedBackList({
                 {r && (
                   <span className="text-muted-foreground">
                     理由:{r.reason === '' ? '(なし)' : r.reason}({ACTOR_LABELS[r.by]}、{shortDateTime(r.at)})
+                    {r.schoolDaysOnly && '・休校日運休(学)'}
                   </span>
                 )}
               </span>

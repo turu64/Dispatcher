@@ -12,6 +12,8 @@ describe('useGtfsStore', () => {
     expect(s.feed).toBeNull()
     expect(s.label).toBeNull()
     expect(s.sample).toBeNull()
+    expect(s.size).toBeNull()
+    expect(s.loadedAt).toBeNull()
   })
 
   it('読み込んだ GTFS とファイル名を持つ', () => {
@@ -26,6 +28,24 @@ describe('useGtfsStore', () => {
     const sample = { available: true, name: '道北バス', source: '北海道オープンデータプラットフォーム', license: 'CC BY 4.0' }
     useGtfsStore.getState().setLoaded({ label: sample.name, feed, sample })
     expect(useGtfsStore.getState().sample).toEqual(sample)
+  })
+
+  it('ZIP の大きさと読み込んだ時刻を持ち、clear で捨てる', () => {
+    useGtfsStore.getState().setLoaded({ label: 'gtfs.zip', feed, size: 2048, loadedAt: 1_700_000_000_000 })
+    expect(useGtfsStore.getState().size).toBe(2048)
+    expect(useGtfsStore.getState().loadedAt).toBe(1_700_000_000_000)
+    useGtfsStore.getState().clear()
+    expect(useGtfsStore.getState().size).toBeNull()
+    expect(useGtfsStore.getState().loadedAt).toBeNull()
+  })
+
+  it('時刻を渡さなければ、読み込んだ時刻は今になる', () => {
+    const before = Date.now()
+    useGtfsStore.getState().setLoaded({ label: 'gtfs.zip', feed })
+    const t = useGtfsStore.getState().loadedAt
+    expect(t).not.toBeNull()
+    expect(t!).toBeGreaterThanOrEqual(before)
+    expect(useGtfsStore.getState().size).toBeNull()
   })
 
   it('clear で捨てる', () => {

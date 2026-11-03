@@ -1,13 +1,20 @@
-import type { DepartureCounts, TimeBand } from '../departures'
-import type { GtfsFeed } from '../load'
-import type { ReachResult } from '../../reach/reach'
+import KDBush from 'kdbush'
+import { activeServiceIds } from '../calendar'
+import { parseGtfsTime, type DepartureCounts, type TimeBand } from '../departures'
+import type { GtfsFeed, GtfsRow } from '../load'
+import { NON_NEGATIVE_INTEGER } from '../parse'
+import { distanceM, meshCenter, type LatLon } from '../../reach/mesh'
+import type { ReachParams, ReachResult } from '../../reach/reach'
 import { createTripBriefer, notice47BandOf, type TripBrief } from './diff'
 import type { Form2Plan } from './ops'
+import { stopTimesByTrip } from './signature'
 
 /**
- * 足し戻しの手がかり(docs/interfaces-1104.md §8)。コードが出し、画面の並べ替え・絞り込みと、Claude の提案(11/5)の材料にする。
- * 11/4 は、基準と編集後の便の表だけで決まる手がかり(weekdayOnlyRoute〜evening)を出す。到達圏を使う
- * onlyServiceAtStop・restoresLostCells は 11/5(ctx を受け取る形だけ置き、今は判定しない)。
+ * 足し戻しの手がかり(docs/interfaces-1104.md §8、docs/interfaces-1105.md §7)。コードが出し、画面の並べ替え・絞り込みと、
+ * Claude の提案の材料にする。
+ * 基準と編集後の便の表だけで決まる手がかり(weekdayOnlyRoute〜evening)は、いつでも出す。
+ * 到達圏を使う onlyServiceAtStop・restoresLostCells は、到達圏の前後の比較(ctx。store/restoreHintContext.ts の
+ * buildRestoreHintContext で作る)を渡したときだけ出す。ctx を渡さなければ 11/4 と同じ結果になる。
  * 時間帯はすべて開始を含み終わりを含まない。
  */
 
@@ -33,17 +40,33 @@ export type RestoreHint =
 
 export interface RestoreHintDetail {
   hints: RestoreHint[]
-  /** restoresLostCells のとき、戻るセル数と推計人口(11/5)。ほかは null */
+  /**
+   * restoresLostCells のとき、この便だけを足し戻したときに戻るセルの数と、その推計人口の合計(11/5)。ほかは null。
+   * 同じセルは、2つの時間帯で戻っても1つと数える。ほかの便の足し戻しとの重なりは考えない
+   */
   lostCells: { cells: number; population: number } | null
 }
 
-/** 到達圏を使う手がかり(11/5)のときだけ渡す */
+/**
+ * 到達圏を使う手がかり(11/5)のときだけ渡す。到達圏の store の、同じ日付・同じ条件の基準と編集後の結果
+ * (docs/interfaces-1104.md §7 の比較。同じ起点・同じセル・同じ時間帯)から作る(store/restoreHintContext.ts)
+ */
 export interface RestoreHintContext {
+  /** 基準の時間帯ごとの出発の数(departureCountsByBand) */
   before: DepartureCounts
+  /** 編集後の時間帯ごとの出発の数 */
   after: DepartureCounts
+  /** 比較の時間帯(結果の reachable と同じ並び) */
   bands: TimeBand[]
+  /** 基準の到達圏。セル・区分・推計人口・coverable は、これを使う(編集後と等しい) */
   beforeResult: ReachResult
   afterResult: ReachResult
+  /** 比較の日付('YYYYMMDD')。この日に基準で走る平日の便にだけ、2つの手がかりを出す */
+  date: string
+  /** 到達圏の計算に使った条件。区分ごとのバス停の距離は walkMinutes[区分].bus × speedMPerMin */
+  params: ReachParams
+  /** 到達圏の起点の停留所(store の origins.stops)。停留所の位置はここから取る */
+  stops: readonly { id: string; lat: number; lon: number }[]
 }
 
 /** 画面に出す手がかりの名前(並びは RestoreHint の順) */
@@ -87,11 +110,168 @@ function firstSecondsByRoute(trips: readonly TripBrief[]): Map<string, number[]>
   return out
 }
 
+// ---- 到達圏を使う手がかり(11/5)----
+
+/** 便の乗れる行の1つ(停留所と、出発の時刻。出発が空なら到着の時刻) */
+interface BoardingRow {
+  stopId: string
+  seconds: number
+}
+
+/**
+ * stop_sequence を、先頭の 0 を除いた10進の文字列にする。0 以上の10進の整数でなければ null
+ * (読めない値は最後の停留所の判定に使わない。gtfs/departures.ts と reach/input.ts の boardingStopIds と同じ規則)
+ */
+function sequenceOf(row: GtfsRow): string | null {
+  const s = trimmed(row.stop_sequence)
+  if (!NON_NEGATIVE_INTEGER.test(s)) return null
+  return s.replace(/^0+(?=\d)/, '')
+}
+
+/** sequenceOf の値 a が b より大きいか(桁数が多いほど大きく、同じ桁数なら文字の並びで決まる) */
+function isLaterSequence(a: string, b: string): boolean {
+  return a.length !== b.length ? a.length > b.length : a > b
+}
+
+/**
+ * 便の乗れる行(docs/interfaces-1104.md §7 の「乗れる行」:pickup_type が '1' でなく、その便の最後の停留所でない行)。
+ * 最後の停留所は stop_sequence を数として比べて最大の行(同じ値の行が複数あれば、どれも最後)。
+ * 時刻は出発、空なら到着(docs/interfaces-1105.md §7)。読めない行と、stop_id が空の行は除く
+ */
+function boardingRowsOf(rows: readonly GtfsRow[]): BoardingRow[] {
+  let last: string | null = null
+  for (const row of rows) {
+    const seq = sequenceOf(row)
+    if (seq !== null && (last === null || isLaterSequence(seq, last))) last = seq
+  }
+  const out: BoardingRow[] = []
+  for (const row of rows) {
+    if (trimmed(row.pickup_type) === '1') continue
+    const seq = sequenceOf(row)
+    if (seq !== null && seq === last) continue
+    const stopId = trimmed(row.stop_id)
+    if (stopId === '') continue
+    const departure = trimmed(row.departure_time)
+    const seconds = parseGtfsTime(departure !== '' ? departure : row.arrival_time)
+    if (seconds === null) continue
+    out.push({ stopId, seconds })
+  }
+  return out
+}
+
+/** ctx ごとに1回だけ作る索引(停留所ごとの、まわりの「減便で外れた」セル) */
+interface LostCellIndex {
+  /** [時間帯][セル]。coverable で、基準では到達でき、編集後は外れるセルが 1 */
+  lost: Uint8Array[]
+  /**
+   * 停留所(stop_id)ごとの、どれかの時間帯で外れたセルのうち、停留所からの距離がそのセルの区分のバス停の距離以内のもの
+   * (セルの番号の昇順)。距離は到達圏の計算(reach.ts の computeReach)と同じく distanceM(meshCenter(セル), 停留所) で、
+   * ちょうどの距離は届くとする
+   */
+  near: Map<string, number[]>
+  bandStarts: number[]
+  bandEnds: number[]
+}
+
+const lostCellIndexes = new WeakMap<RestoreHintContext, LostCellIndex>()
+
+const RAD = Math.PI / 180
+/**
+ * 候補の箱の広さ。緯度 1度の長さは 110,574m 以上、経度 1度の長さは 111,319m × cos(緯度) 以上なので、
+ * 110,000m で割れば箱は実際の距離より広くなる(取りこぼさない)。箱は候補を絞るだけで、最後は distanceM で判定する
+ */
+const M_PER_DEG_LOWER = 110_000
+const BOX_MARGIN = 1.01
+
+function lostCellIndexOf(ctx: RestoreHintContext): LostCellIndex {
+  const cached = lostCellIndexes.get(ctx)
+  if (cached) return cached
+  const { beforeResult: before, afterResult: after, bands, params } = ctx
+  const n = before.cells.length
+  if (
+    after.cells.length !== n ||
+    before.reachable.length !== bands.length ||
+    after.reachable.length !== bands.length ||
+    before.classes.length !== n ||
+    before.coverable.length !== n ||
+    before.cellPopulation.length !== n
+  ) {
+    throw new Error('足し戻しの手がかりに渡した到達圏の比較の形が合いません(基準と編集後のセル、時間帯の数)。')
+  }
+
+  // 1. 時間帯ごとの「減便で外れた」セル(compareReach の lostCells と同じ定義)
+  const any = new Uint8Array(n)
+  const lost = bands.map((_, b) => {
+    const was = before.reachable[b]
+    const now = after.reachable[b]
+    const row = new Uint8Array(n)
+    for (let i = 0; i < n; i++) {
+      if (before.coverable[i] && was[i] === true && now[i] !== true) {
+        row[i] = 1
+        any[i] = 1
+      }
+    }
+    return row
+  })
+
+  // 2. 外れたセルごとに、区分のバス停の距離以内の起点の停留所を探し、停留所ごとに並べる(computeReach と同じ向き・同じ判定)
+  const points: { id: string; lat: number; lon: number }[] = ctx.stops.filter(
+    (s) => Number.isFinite(s.lat) && Number.isFinite(s.lon),
+  )
+  const near = new Map<string, number[]>()
+  if (points.length > 0) {
+    const index = new KDBush(points.length)
+    for (const p of points) index.add(p.lon, p.lat)
+    index.finish()
+    for (let i = 0; i < n; i++) {
+      if (!any[i]) continue
+      const minutes = params.walkMinutes[before.classes[i]]
+      if (!minutes) continue
+      const radius = minutes.bus * params.speedMPerMin
+      const center: LatLon = meshCenter(before.cells[i])
+      const dLat = (radius / M_PER_DEG_LOWER) * BOX_MARGIN
+      const north = Math.min(Math.abs(center.lat) + dLat, 89)
+      const dLon = (radius / (M_PER_DEG_LOWER * Math.cos(north * RAD))) * BOX_MARGIN
+      for (const k of index.range(center.lon - dLon, center.lat - dLat, center.lon + dLon, center.lat + dLat)) {
+        const p = points[k]
+        if (distanceM(center, p) > radius) continue
+        const list = near.get(p.id)
+        // 同じ stop_id の点が複数あっても、同じセルは1回だけ入れる(セルは番号の順に見るので、最後と比べればよい)
+        if (!list) near.set(p.id, [i])
+        else if (list[list.length - 1] !== i) list.push(i)
+      }
+    }
+  }
+
+  const index: LostCellIndex = {
+    lost,
+    near,
+    bandStarts: bands.map((b) => b.startHour * 3600),
+    bandEnds: bands.map((b) => b.endHour * 3600),
+  }
+  lostCellIndexes.set(ctx, index)
+  return index
+}
+
+/** 秒の時刻が入る時間帯の番号。どれにも入らなければ -1(6〜24時の外など) */
+function bandOf(index: LostCellIndex, seconds: number): number {
+  for (let b = 0; b < index.bandStarts.length; b++) {
+    if (seconds >= index.bandStarts[b] && seconds < index.bandEnds[b]) return b
+  }
+  return -1
+}
+
 /**
  * 手がかりを判定する関数を作る。基準と編集後の索引は1回だけ作り、候補の便ごとに使い回す。
  * baseWeekday は基準の平日便、editedWeekday は編集後の平日便。手がかりに使うのは系統と始発の時刻だけなので、
  * diffWeekdayTrips の結果から作れる(基準の平日 = removed + same、編集後の平日 = same + added。same は署名が同じなので
  * 系統と時刻は基準の便と等しい)。
+ *
+ * ctx を渡すと、到達圏を使う2つ(onlyServiceAtStop・restoresLostCells)も判定する(docs/interfaces-1105.md §7)。
+ * - 対象は、feed が base で、ctx.date に基準で走る平日(plan.weekdayService)の便だけ。ほかの便には2つを出さない
+ * - 乗れる行(pickup_type が 1 でなく、最後の行でない)の出発の時刻(空なら到着)が入る時間帯で数える。6〜24時の外は数えない
+ * - 停留所ごとのまわりの外れたセルは ctx ごとに1回だけ探して覚えておくので、候補の一覧をまとめて調べても速い
+ * - ctx は、edited から作った到達圏の比較を渡す(別の版の比較を渡すと、出発の数が合わない)
  */
 export function createRestoreHinter(
   base: GtfsFeed,
@@ -101,9 +281,14 @@ export function createRestoreHinter(
   editedWeekday: readonly TripBrief[],
 ): (trip: TripBrief, ctx?: RestoreHintContext) => RestoreHintDetail {
   const replacement = plan.replacementService.trim()
+  const weekday = plan.weekdayService.trim()
   const replacementRoutes = new Set<string>()
+  // 基準の便の service_id(到達圏を使う手がかりで、比較の日付に走るかを調べる)
+  const serviceOfTrip = new Map<string, string>()
   for (const t of base.tables.get('trips')?.rows ?? []) {
     if (trimmed(t.service_id) === replacement) replacementRoutes.add(trimmed(t.route_id))
+    const id = trimmed(t.trip_id)
+    if (!serviceOfTrip.has(id)) serviceOfTrip.set(id, trimmed(t.service_id))
   }
   const editedRoutes = new Set<string>()
   for (const t of edited.tables.get('trips')?.rows ?? []) editedRoutes.add(trimmed(t.route_id))
@@ -118,7 +303,55 @@ export function createRestoreHinter(
     editedBands.set(key, (editedBands.get(key) ?? 0) + 1)
   }
 
-  return (trip) => {
+  // 到達圏を使う手がかりの索引(ctx を渡されたときだけ作る)
+  let groups: Map<string, GtfsRow[]> | null = null
+  const boardingRows = new Map<string, BoardingRow[]>()
+  const activeOn = new Map<string, Set<string>>()
+
+  function boardingRowsOfTrip(tripId: string): BoardingRow[] {
+    let rows = boardingRows.get(tripId)
+    if (!rows) {
+      groups ??= stopTimesByTrip(base.tables.get('stop_times')?.rows ?? [])
+      rows = boardingRowsOf(groups.get(tripId) ?? [])
+      boardingRows.set(tripId, rows)
+    }
+    return rows
+  }
+
+  function runsOn(tripId: string, date: string): boolean {
+    const service = serviceOfTrip.get(tripId)
+    if (service === undefined || service !== weekday) return false
+    let active = activeOn.get(date)
+    if (!active) {
+      active = activeServiceIds(base, date)
+      activeOn.set(date, active)
+    }
+    return active.has(service)
+  }
+
+  function reachHints(trip: TripBrief, ctx: RestoreHintContext): { onlyServiceAtStop: boolean; lostCells: RestoreHintDetail['lostCells'] } {
+    const none = { onlyServiceAtStop: false, lostCells: null }
+    if (trip.feed !== 'base' || !runsOn(trip.tripId, ctx.date)) return none
+    const index = lostCellIndexOf(ctx)
+    let onlyServiceAtStop = false
+    const cells = new Set<number>()
+    for (const row of boardingRowsOfTrip(trip.tripId)) {
+      const b = bandOf(index, row.seconds)
+      if (b < 0) continue
+      if ((ctx.after.counts.get(row.stopId)?.[b] ?? 0) === 0) onlyServiceAtStop = true
+      const lostInBand = index.lost[b]
+      for (const i of index.near.get(row.stopId) ?? []) {
+        if (lostInBand[i]) cells.add(i)
+      }
+    }
+    if (cells.size === 0) return { onlyServiceAtStop, lostCells: null }
+    let population = 0
+    // 足す順を決めておく(推計人口は 0.25 人の倍数なので順によらないが、念のため)
+    for (const i of [...cells].sort((a, b) => a - b)) population += ctx.beforeResult.cellPopulation[i] ?? 0
+    return { onlyServiceAtStop, lostCells: { cells: cells.size, population } }
+  }
+
+  return (trip, ctx) => {
     const hints = new Set<RestoreHint>()
     if (!replacementRoutes.has(trip.routeId)) hints.add('weekdayOnlyRoute')
     if (!editedRoutes.has(trip.routeId)) hints.add('routeWouldVanish')
@@ -134,13 +367,23 @@ export function createRestoreHinter(
       if (h >= 6 && h < 9) hints.add('morning')
       if (h >= 15 && h < 19) hints.add('evening')
     }
-    return { hints: HINT_ORDER.filter((h) => hints.has(h)), lostCells: null }
+    let lostCells: RestoreHintDetail['lostCells'] = null
+    if (ctx) {
+      const reach = reachHints(trip, ctx)
+      if (reach.onlyServiceAtStop) hints.add('onlyServiceAtStop')
+      if (reach.lostCells) {
+        hints.add('restoresLostCells')
+        lostCells = reach.lostCells
+      }
+    }
+    return { hints: HINT_ORDER.filter((h) => hints.has(h)), lostCells }
   }
 }
 
 /**
  * 1つの便の手がかり。多くの便を調べるときは createRestoreHinter で索引を1回だけ作る
  * (画面は diffWeekdayTrips の結果から、基準の平日 = removed + same、編集後の平日 = same + added を渡す)。
+ * ctx の外れたセルの索引は ctx ごとに覚えておくが、便の索引は呼ぶたびに作り直す。
  */
 export function restoreHints(
   base: GtfsFeed,

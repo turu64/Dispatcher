@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
 import type { RouteDiff, WeekdayDiff } from '@/gtfs/edit/diff'
 import type { EditOp } from '@/gtfs/edit/ops'
+import { chatToolDeps } from '@/store/chat'
 import { useEditStore } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import PolicyStep, { Notice47Table } from './PolicyStep'
@@ -64,6 +65,16 @@ describe('PolicyStep', () => {
     expect(within(review).queryByLabelText('全曜日で便がなくなる系統があることを確かめました')).toBeNull()
     expect(within(review).getByRole('button', { name: 'この内容で進める' })).toHaveProperty('disabled', false)
     expect(review.querySelector('[data-route="R3"]')?.textContent).toContain('除')
+  })
+
+  it('画面で選んだ service を、チャットのツールに渡し、入力欄を閉じたら既定に戻す', () => {
+    const { unmount } = render(<PolicyStep />)
+    fireEvent.change(screen.getByLabelText('平日のダイヤ(入れ替える側)'), { target: { value: 'SU' } })
+    expect(chatToolDeps.policyServices(null)?.weekday).toBe('SU')
+    // 期間を渡しても、利用者が選んだ役割はそのまま
+    expect(chatToolDeps.policyServices({ start: '20261109', end: '20270331' })?.weekday).toBe('SU')
+    unmount()
+    expect(chatToolDeps.policyServices(null)?.weekday).not.toBe('SU')
   })
 
   it('平日の service が新しい有効期間の中で1日も走らない期間は、方針の確かめに誤りとして出て、「対象便を確かめる」を押せない', () => {

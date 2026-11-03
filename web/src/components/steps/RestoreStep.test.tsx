@@ -2,12 +2,38 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
+import type { RestoreHintContext } from '@/gtfs/edit/restore'
 import type { EditOp } from '@/gtfs/edit/ops'
+import { buildRestoreHintContext } from '@/store/restoreHintContext'
+import { useChatStore } from '@/store/chat'
 import { useEditStore } from '@/store/edit'
+import { useReachStore } from '@/store/reach'
 import RestoreStep from './RestoreStep'
 
 // 到達圏の store への受け渡し(setEdited)は、この画面では計算しない
 vi.mock('@/reach/workerClient', () => ({ computeReachInWorker: async () => new Promise(() => {}) }))
+
+// 到達圏の前後の比較(ctx)は、この画面では作らない。ctx を渡したときだけ、R3_0730_WK に到達圏を使う2つの手がかりを付ける
+// (手がかりの計算そのものは gtfs/edit/restore.test.ts で確かめている)
+// 比較の日付 2026-11-04(水)は smallFeed の平日(WK)の運行日
+const FAKE_CTX = { fake: true, date: '20261104' } as unknown as RestoreHintContext
+vi.mock('@/store/restoreHintContext', () => ({ buildRestoreHintContext: vi.fn(() => null) }))
+vi.mock('@/gtfs/edit/restore', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/gtfs/edit/restore')>()
+  return {
+    ...original,
+    createRestoreHinter: (...args: Parameters<typeof original.createRestoreHinter>) => {
+      const hinter = original.createRestoreHinter(...args)
+      return (trip: Parameters<typeof hinter>[0], ctx?: RestoreHintContext) => {
+        const detail = hinter(trip)
+        if (ctx !== FAKE_CTX || trip.tripId !== 'R3_0730_WK') return detail
+        return { hints: [...detail.hints, 'onlyServiceAtStop' as const, 'restoresLostCells' as const], lostCells: { cells: 1234, population: 5678.4 } }
+      }
+    },
+  }
+})
+
+const realAskRestore = useChatStore.getState().askRestore
 
 function policy(): EditOp {
   const { addBackTripIds: _a, ...settings } = basePlan()
@@ -33,6 +59,10 @@ afterEach(() => {
   cleanup()
   act(() => useEditStore.getState().setBase(null))
   vi.restoreAllMocks()
+  vi.mocked(buildRestoreHintContext).mockReset()
+  vi.mocked(buildRestoreHintContext).mockReturnValue(null)
+  useChatStore.setState({ status: { state: 'unknown' }, token: null, toolRunning: false, sending: false, budgetReached: false, askRestore: realAskRestore })
+  useReachStore.setState({ computing: false, error: null })
 })
 
 describe('RestoreStep', () => {
@@ -163,5 +193,82 @@ describe('RestoreStep', () => {
     fireEvent.click(screen.getByRole('button', { name: '承認する' }))
     expect(useEditStore.getState().history).toHaveLength(2)
     expect(screen.getByRole('region', { name: '足し戻した便' }).textContent).toContain('理由:通学(Claude(承認済み)')
+  })
+
+  it('到達圏の比較ができていれば、停留所で唯一の便と、外れたセルが戻る(セル数と人口)を手がかりに出す。できていなければ出さない', () => {
+    const { unmount } = render(<RestoreStep />)
+    const list = () => screen.getByRole('list', { name: '足し戻す便の候補' })
+    expect(list().textContent).not.toContain('外れたセルが戻る')
+    expect(list().textContent).not.toContain('停留所で唯一の便')
+    expect(screen.queryByText(/この便だけを足し戻したときの値/)).toBeNull()
+    unmount()
+
+    vi.mocked(buildRestoreHintContext).mockReturnValue(FAKE_CTX)
+    render(<RestoreStep />)
+    // 承認済みの編集後のフィードを渡して、手がかりの ctx を作っている
+    expect(vi.mocked(buildRestoreHintContext).mock.calls.at(-1)?.[1]).toBe(useEditStore.getState().versions.at(-1)?.feed)
+    expect(list().textContent).toContain('停留所で唯一の便')
+    expect(list().textContent).toContain('外れたセルが戻る(1,234 セル、約 5,678 人)')
+    expect(screen.getByText(/この便だけを足し戻したときの値です/)).toBeTruthy()
+    // 手がかりが付いた便が先頭に来る。手がかりでの絞り込みにも出る
+    expect(candidateIds()[0]).toBe('R3_0730_WK')
+    fireEvent.change(screen.getByLabelText('手がかり'), { target: { value: 'restoresLostCells' } })
+    expect(candidateIds()).toEqual(['R3_0730_WK'])
+    // 比較の日付を注記に出す
+    expect(screen.getByText(/2026年11月4日\(水\)の到達圏の前後の比較から出しています/)).toBeTruthy()
+  })
+
+  it('到達圏を使う手がかりで絞り込んだまま比較が無くなったら(計算中など)、絞り込みを「すべて」に戻し、出していない理由を出す', () => {
+    vi.mocked(buildRestoreHintContext).mockReturnValue(FAKE_CTX)
+    render(<RestoreStep />)
+    fireEvent.change(screen.getByLabelText('手がかり'), { target: { value: 'restoresLostCells' } })
+    expect(candidateIds()).toEqual(['R3_0730_WK'])
+    // 到達圏の計算が始まると、比較が無くなる(buildRestoreHintContext は null)
+    vi.mocked(buildRestoreHintContext).mockReturnValue(null)
+    act(() => useReachStore.setState({ computing: true }))
+    expect(candidateIds()).toHaveLength(3)
+    expect((screen.getByLabelText('手がかり') as HTMLSelectElement).value).toBe('')
+    expect(screen.getByText(/到達圏を計算しているので/)).toBeTruthy()
+    // 計算に失敗したとき
+    act(() => useReachStore.setState({ computing: false, error: '計算できませんでした' }))
+    expect(screen.getByText(/到達圏の計算に失敗したので/)).toBeTruthy()
+  })
+
+  it('下書きを確かめている間は、到達圏を使う手がかりを出していない理由を出す', () => {
+    act(() => {
+      useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R1_0800_WK', reason: '', schoolDaysOnly: false }] }, 'claude')
+    })
+    render(<RestoreStep />)
+    expect(screen.getByText(/下書きを確かめている間は/)).toBeTruthy()
+  })
+
+  it('比較の日付に平日の便が走らないときは、そう書く', () => {
+    // 20261103 は smallFeed の WK の運休日
+    vi.mocked(buildRestoreHintContext).mockReturnValue({ ...FAKE_CTX, date: '20261103' } as RestoreHintContext)
+    render(<RestoreStep />)
+    expect(screen.getByText(/2026年11月3日\(火\)\)は平日ダイヤの運行日ではない/)).toBeTruthy()
+  })
+
+  it('AI に候補を聞くボタン:AI が使えるときだけ押せて、押すと依頼を送る。使えないときは理由を出す', () => {
+    const askRestore = vi.fn(async () => true)
+    useChatStore.setState({ status: { state: 'ready', available: false, tokenRequired: false }, askRestore })
+    const { unmount } = render(<RestoreStep />)
+    const button = () => screen.getByRole('button', { name: 'AI に候補を聞く' }) as HTMLButtonElement
+    expect(button().disabled).toBe(true)
+    expect(screen.getByText(/AI は使えません/)).toBeTruthy()
+    unmount()
+
+    act(() => useChatStore.setState({ status: { state: 'ready', available: true, tokenRequired: false } }))
+    render(<RestoreStep />)
+    expect(button().disabled).toBe(false)
+    fireEvent.click(button())
+    expect(askRestore).toHaveBeenCalledTimes(1)
+
+    // 方針の下書きを確かめている間は、足し戻せないのと同じに、聞けない
+    act(() => {
+      useEditStore.getState().propose(policy(), 'user')
+    })
+    expect(button().disabled).toBe(true)
+    expect(screen.getAllByText('手順2の方針の下書きを承認するか、やめてから聞いてください。').length).toBeGreaterThan(0)
   })
 })

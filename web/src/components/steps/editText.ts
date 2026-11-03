@@ -130,3 +130,8 @@ export const SCHOOL_HOLIDAY_NOTE =
 
 export const UNDO_NOTE =
   '出力した GTFS だけでは元に戻せません。元に戻せるのは、この画面の編集の履歴と、読み込んだ元の GTFS を持っている間だけです(読み込み直すと履歴は消えます)。'
+
+/** 「外れた場所が戻る」の手がかりの表示(戻るセルの数と、そこの推計人口) */
+export function lostCellsText(lost: { cells: number; population: number }): string {
+  return `外れたセルが戻る(${lost.cells.toLocaleString('ja-JP')} セル、約 ${Math.round(lost.population).toLocaleString('ja-JP')} 人)`
+}

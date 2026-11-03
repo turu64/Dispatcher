@@ -13,12 +13,60 @@ import {
   createRestoreHinter,
   RESTORE_HINT_LABELS,
   type RestoreHint,
+  type RestoreHintContext,
   type RestoreHintDetail,
 } from '@/gtfs/edit/restore'
+import { activeServiceIds } from '@/gtfs/calendar'
+import { formatDateJa } from '@/lib/dates'
 import { diffOf, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
+import { useReachStore } from '@/store/reach'
+import { buildRestoreHintContext } from '@/store/restoreHintContext'
 import { draftActor, proposeAndCommit, replaceClaudeDraftMessage } from './editActions'
+import { AskRestoreButton } from '@/components/chat/AskRestoreButton'
 import { InlineConfirm, NoteList } from './editParts'
-import { ACTOR_LABELS, addBackRejections, RESTORE_DUTY_NOTE, restoreTotalsText, SCHOOL_HOLIDAY_NOTE, shortDateTime } from './editText'
+import {
+  ACTOR_LABELS,
+  addBackRejections,
+  lostCellsText,
+  RESTORE_DUTY_NOTE,
+  restoreTotalsText,
+  SCHOOL_HOLIDAY_NOTE,
+  shortDateTime,
+} from './editText'
+import { STEP_IDS } from './stepIds'
+
+/** 到達圏を使う2つの手がかりの説明(date は比較の日付 'YYYYMMDD') */
+function reachHintNote(date: string): string {
+  return `「停留所で唯一の便」と「外れたセルが戻る」は、${formatDateJa(date)}の到達圏の前後の比較から出しています。「外れたセルが戻る」の数は、この便だけを足し戻したときの値です(ほかの便の足し戻しとの重なりは考えていません)。`
+}
+
+/** 到達圏を使う2つの手がかりを出していない理由 */
+const REACH_HINTS_ABSENT = {
+  error: '到達圏の計算に失敗したので、「停留所で唯一の便」と「外れたセルが戻る」は出していません。',
+  draft: '下書きを確かめている間は、「停留所で唯一の便」と「外れたセルが戻る」を出しません(地図と到達圏は下書きの結果のため)。承認するか、やめると出します。',
+  computing: '到達圏を計算しているので、「停留所で唯一の便」と「外れたセルが戻る」は、計算が終わってから出します。',
+  none: '到達圏の前後の比較ができると、「停留所で唯一の便」と「外れたセルが戻る」も出します。',
+  notRunning: (date: string) =>
+    `到達圏を比べる日(${formatDateJa(date)})は平日ダイヤの運行日ではないので、「停留所で唯一の便」と「外れたセルが戻る」は出していません。比べる日を平日にすると出します。`,
+} as const
+
+/**
+ * 到達圏を使う2つの手がかりについて、手がかりの近くに出す注記。ctx があれば比較の日付つきの説明か、
+ * 比較の日付に平日の便が走らない旨。ctx が無ければ出していない理由(docs/interfaces-1105.md §7 のとおり、比較が無ければ2つは出さない)
+ */
+function reachHintStatus(o: {
+  ctx: RestoreHintContext | null
+  weekdayRuns: boolean
+  error: string | null
+  draft: boolean
+  computing: boolean
+}): { kind: 'note' | 'absent'; text: string } {
+  if (o.ctx) return o.weekdayRuns ? { kind: 'note', text: reachHintNote(o.ctx.date) } : { kind: 'absent', text: REACH_HINTS_ABSENT.notRunning(o.ctx.date) }
+  if (o.error !== null) return { kind: 'absent', text: REACH_HINTS_ABSENT.error }
+  if (o.draft) return { kind: 'absent', text: REACH_HINTS_ABSENT.draft }
+  if (o.computing) return { kind: 'absent', text: REACH_HINTS_ABSENT.computing }
+  return { kind: 'absent', text: REACH_HINTS_ABSENT.none }
+}
 
 /** 一度に並べる候補の数(「さらに表示」で増やす) */
 const PAGE = 50
@@ -37,7 +85,7 @@ export default function RestoreStep() {
   const version = lastVersion({ versions })
 
   return (
-    <StepSection title="5. 足し戻し">
+    <StepSection title="5. 足し戻し" id={STEP_IDS.restore}>
       {!base ? (
         <p className="text-sm text-muted-foreground">手順1で GTFS を読み込み、手順2で方針を承認すると、足し戻す便を選べます。</p>
       ) : !plan || !version ? (
@@ -69,10 +117,26 @@ interface Candidate {
 function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Form2Plan; version: Form2Result; draft: Draft | null }) {
   const history = useEditStore((s) => s.history)
   const diff = useMemo(() => diffOf(base.feed, version), [base.feed, version])
+  // 到達圏の前後の比較(基準と、承認済みの編集後の結果。同じ起点・同じセル・同じ時間帯)から、到達圏を使う2つの手がかり
+  // (停留所で唯一の便・外れた場所が戻る)の ctx を作る。比較ができていなければ null で、2つは出さない
+  // (承認前の下書きの結果を地図に出している間や、計算中も null。docs/interfaces-1105.md §7)
+  const reachEdited = useReachStore((s) => s.edited)
+  const reachOrigins = useReachStore((s) => s.origins)
+  const reachComputing = useReachStore((s) => s.computing)
+  const reachError = useReachStore((s) => s.error)
+  const reachSnapshot = useReachStore((s) => s.snapshot)
+  const ctx = useMemo(
+    () =>
+      buildRestoreHintContext(
+        { edited: reachEdited, origins: reachOrigins, computing: reachComputing, error: reachError, snapshot: reachSnapshot },
+        version.feed,
+      ),
+    [reachEdited, reachOrigins, reachComputing, reachError, reachSnapshot, version.feed],
+  )
   const candidates = useMemo<Candidate[]>(() => {
     const hinter = createRestoreHinter(base.feed, version.feed, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
-    return diff.removed.map((trip) => ({ trip, detail: hinter(trip) })).sort(compareByHints)
-  }, [base.feed, version.feed, plan, diff])
+    return diff.removed.map((trip) => ({ trip, detail: hinter(trip, ctx ?? undefined) })).sort(compareByHints)
+  }, [base.feed, version.feed, plan, diff, ctx])
 
   const [route, setRoute] = useState('')
   const [band, setBand] = useState('')
@@ -98,6 +162,19 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
     const present = new Set(candidates.flatMap((c) => c.detail.hints))
     return (Object.keys(RESTORE_HINT_LABELS) as RestoreHint[]).filter((h) => present.has(h))
   }, [candidates])
+  // 選んだ手がかりが候補から消えたら(到達圏の計算中・下書きの間は到達圏を使う2つが消える)、絞り込みは「すべて」に戻す
+  const activeHint: RestoreHint | '' = hint !== '' && hintsPresent.includes(hint) ? hint : ''
+  const weekdayRuns = useMemo(
+    () => (ctx ? activeServiceIds(base.feed, ctx.date).has(plan.weekdayService.trim()) : false),
+    [ctx, base.feed, plan.weekdayService],
+  )
+  const reachStatus = reachHintStatus({
+    ctx,
+    weekdayRuns,
+    error: reachError,
+    draft: draft !== null && reachEdited?.feed !== version.feed,
+    computing: reachComputing,
+  })
 
   const query = stopName.trim()
   const filtered = candidates.filter(
@@ -105,7 +182,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       (route === '' || c.trip.routeId === route) &&
       (band === '' || startBandOf(c.trip.firstSeconds) === band) &&
       (query === '' || c.trip.stopNames.some((n) => n.includes(query))) &&
-      (hint === '' || c.detail.hints.includes(hint)),
+      (activeHint === '' || c.detail.hints.includes(activeHint)),
   )
   const shown = filtered.slice(0, limit)
   const candidateIds = new Set(candidates.map((c) => c.trip.tripId))
@@ -161,6 +238,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       <p className="text-sm">
         消える平日便 <span className="tabular-nums">{candidates.length}</span> 便から選びます(手がかりの多い順)。
       </p>
+      <AskRestoreButton blocked={policyDraft ? '手順2の方針の下書きを承認するか、やめてから聞いてください。' : null} />
       <fieldset className="grid grid-cols-2 gap-2" aria-label="候補の絞り込み">
         <div className="flex min-w-0 flex-col gap-1">
           <Label htmlFor="restore-route" className="text-xs">
@@ -201,7 +279,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
           <select
             id="restore-hint"
             className="h-8 min-w-0 rounded-md border bg-background px-1 text-xs"
-            value={hint}
+            value={activeHint}
             onChange={(e) => setHint(e.target.value as RestoreHint | '')}
           >
             <option value="">すべて</option>
@@ -230,12 +308,14 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
                   }
                   aria-label={`${c.trip.firstDeparture ?? '時刻なし'} ${c.trip.routeName} ${c.trip.tripId} を選ぶ`}
                 />
-                <TripLine trip={c.trip} hints={c.detail.hints} />
+                <TripLine trip={c.trip} hints={c.detail.hints} lostCells={c.detail.lostCells} />
               </label>
             </li>
           )
         })}
       </ul>
+      {(reachStatus.kind === 'absent' || hintsPresent.includes('onlyServiceAtStop') || hintsPresent.includes('restoresLostCells')) &&
+        candidates.length > 0 && <p className="text-xs text-muted-foreground">{reachStatus.text}</p>}
       {filtered.length > shown.length && (
         <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setLimit((n) => n + PAGE)}>
           さらに表示(残り {filtered.length - shown.length} 便)
@@ -274,7 +354,16 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
 }
 
 /** 便の1行(始発時刻、系統、始発 → 終着、行き先、trip_id、手がかり) */
-function TripLine({ trip, hints }: { trip: TripBrief; hints?: readonly RestoreHint[] }) {
+function TripLine({
+  trip,
+  hints,
+  lostCells,
+}: {
+  trip: TripBrief
+  hints?: readonly RestoreHint[]
+  /** 外れた場所が戻る手がかりの、戻るセルの数と推計人口 */
+  lostCells?: RestoreHintDetail['lostCells']
+}) {
   return (
     <span className="flex min-w-0 flex-col gap-0.5">
       <span className="break-words">
@@ -290,7 +379,7 @@ function TripLine({ trip, hints }: { trip: TripBrief; hints?: readonly RestoreHi
         <span className="flex flex-wrap gap-1">
           {hints.map((h) => (
             <Badge key={h} variant="secondary" className="px-1 py-0 text-[10px]">
-              {RESTORE_HINT_LABELS[h]}
+              {h === 'restoresLostCells' && lostCells ? lostCellsText(lostCells) : RESTORE_HINT_LABELS[h]}
             </Badge>
           ))}
         </span>

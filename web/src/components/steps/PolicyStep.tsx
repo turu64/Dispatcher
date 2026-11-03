@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import StepSection from '@/components/StepSection'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -33,9 +33,11 @@ import type { GtfsFeed } from '@/gtfs/load'
 import { form2Texts, timingNotices, type ValidationIssue } from '@/gtfs/validate/edit'
 import { formatDateJa, fromInputDate, toInputDate, todayInJapan } from '@/lib/dates'
 import { blockingIssues, diffOf, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
+import { setChatToolProviders } from '@/store/chat'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
 import { draftActor, proposeAsUser, replaceClaudeDraftMessage } from './editActions'
 import { FromTo, InlineConfirm, IssueList, NoteList } from './editParts'
+import { STEP_IDS } from './stepIds'
 import {
   ACTOR_LABELS,
   addBackRejections,
@@ -80,7 +82,7 @@ export default function PolicyStep() {
   const showForm = base !== null && (plan === null || editing)
 
   return (
-    <StepSection title="2. 減便の方針">
+    <StepSection title="2. 減便の方針" id={STEP_IDS.policy}>
       {!base ? (
         <p className="text-sm text-muted-foreground">手順1で GTFS を読み込むと、減便の方針を選べます。</p>
       ) : (
@@ -179,6 +181,22 @@ function PolicyForm({
   const saturday = overrides.saturday?.value ?? guess?.saturday ?? null
   const sundayHoliday = overrides.sundayHoliday?.value ?? guess?.sundayHoliday ?? null
   const replacement = replacementRole === 'saturday' ? saturday : sundayHoliday
+
+  // 画面で選んでいる service を、チャットのツール(apply_policy など)と [画面の状態] の行に渡す。
+  // 利用者が選び直した役割はその値、そうでない役割は(ツールが指す期間で)推定し直した値。入力欄を閉じたら既定(承認済みの方針)に戻る
+  useEffect(() => {
+    setChatToolProviders({
+      policyServices: (v) => {
+        const g = v ? guessServiceChoice(feed, services, v) : guess
+        return {
+          weekday: overrides.weekday?.value ?? g?.weekday ?? null,
+          saturday: overrides.saturday?.value ?? g?.saturday ?? null,
+          sundayHoliday: overrides.sundayHoliday?.value ?? g?.sundayHoliday ?? null,
+        }
+      },
+    })
+    return () => setChatToolProviders({ policyServices: null })
+  }, [feed, services, guess, overrides])
 
   const settings: PolicySettings | null = useMemo(
     () =>

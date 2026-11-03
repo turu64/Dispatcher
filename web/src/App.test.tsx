@@ -37,6 +37,10 @@ describe('App', () => {
     expect(html).toContain('手順1で GTFS を読み込み、方針を承認すると、減便を反映した GTFS を出力できます')
   })
 
+  it('GTFS を読み込む前は「AI に相談」の欄を出さない', () => {
+    expect(html).not.toContain('AI に相談')
+  })
+
   it('鉄道駅の扱いの注記を出す', () => {
     expect(html).toContain('鉄道駅は時刻表データが無いため、6〜24時のすべての時間帯で使えるものとみなしています')
   })

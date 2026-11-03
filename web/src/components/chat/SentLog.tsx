@@ -16,7 +16,8 @@ function partLabel(p: SentPart): string {
 /** 「AI に送る情報」:送るたびに、そのとき送った中身を時刻つきで残したもの(折りたたみ。既定は閉じる) */
 export default function SentLog({ entries }: { entries: readonly SentLogEntry[] }) {
   return (
-    <details className="text-xs">
+    // 文字の大きさは、入力欄の下の注意(text-[11px])から受け継ぐ
+    <details>
       <summary className="cursor-pointer select-none">AI に送る情報({entries.length} 回)</summary>
       {entries.length === 0 ? (
         <p className="mt-1 text-muted-foreground">まだ何も送っていません。</p>

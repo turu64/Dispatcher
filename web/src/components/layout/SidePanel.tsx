@@ -128,8 +128,12 @@ export default function SidePanel({ wide, chatStore = useChatStore }: { wide: bo
     <aside className="flex h-full flex-col bg-muted/30" aria-label="手順と AI に相談">
       <Tabs value={tab} onValueChange={(v) => useSidePanelStore.getState().show(v as SidePanelTab)} className="flex min-h-0 flex-1 flex-col gap-0">
         <div hidden={!loaded} className="print-hide shrink-0 border-b bg-background px-3 py-2">
-          {/* 地図を隠す広い手順では、タブの列の左の端を、下の手順の中身(中央にそろえた幅)に合わせる */}
-          <div className={wide ? 'mx-auto w-full max-w-5xl px-1' : undefined}>
+          {/*
+            タブの列の位置は、どちらのタブを開いていても同じにする(押したタブがポインターの下から動かないように)。
+            地図を隠す広い手順では、中身(編集は max-w-5xl、会話は max-w-3xl)の幅が違うので、タブの列を中央にそろえる。
+            地図を出す手順では、外側の余白 12px に 4px を足して、下の中身(編集・会話とも左の余白 16px)の左の端に合わせる
+          */}
+          <div className={wide ? 'flex justify-center' : 'px-1'}>
             <TabsList aria-label="左の欄の表示" className="flex w-full max-w-sm">
               <TabsTrigger value="edit">
                 編集

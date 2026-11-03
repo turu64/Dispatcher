@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import SidePanel from '@/components/layout/SidePanel'
 import StepPanels from '@/components/layout/StepPanels'
 import PolicyStep from '@/components/steps/PolicyStep'
 import { fakeApi } from '@/claude/session.fixture'
@@ -437,6 +438,11 @@ describe('「AI に相談」のタブ', () => {
     expect(jump.getAttribute('aria-describedby')).toBeTruthy()
     expect(document.getElementById(jump.getAttribute('aria-describedby')!)?.textContent).toBe('開く手順:「3. 減便の方針」')
     expect(screen.getByText('下書き #1 を作りました。確かめて承認してください。')).toBeTruthy()
+    // 知らせは札(Card)で、名前「下書き #1」と、承認待ちの間は中身の要約を出す
+    const card = jump.closest('[data-slot="card"]') as HTMLElement
+    expect(within(card).getByText('下書き #1')).toBeTruthy()
+    expect(within(card).getByText('承認待ち')).toBeTruthy()
+    expect(card.textContent).toContain('減便の方針:平日を土曜ダイヤに')
     expect(useSidePanelStore.getState().tab).toBe('edit')
     // まだ読み込みの手順を開いていて、方針の手順は隠れている
     expect(useStepStore.getState().current).toBe('load')
@@ -455,6 +461,218 @@ describe('「AI に相談」のタブ', () => {
     render(<ChatPanel store={store} />)
     expect(screen.getByRole('log', { name: 'AI との会話' }).className).toContain('overscroll-contain')
   })
+})
+
+describe('会話の見た目(吹き出し・入力欄・例文の札)', () => {
+  it('会話が空のときは例文の札を出し、押すと入力欄に入って焦点が移る。送らない', async () => {
+    const { store, fake } = setup()
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    const group = screen.getByRole('group', { name: /例文/ })
+    const chips = within(group).getAllByRole('button')
+    expect(chips.length).toBeGreaterThanOrEqual(2)
+    expect(chips.length).toBeLessThanOrEqual(3)
+    const example = '平日を土曜ダイヤにしてください。期間は 11/9 から当面の間'
+    fireEvent.click(within(group).getByRole('button', { name: example }))
+    expect(box().value).toBe(example)
+    expect(document.activeElement).toBe(box())
+    // 押しただけでは送らない
+    await act(async () => undefined)
+    expect(fake.api.create).not.toHaveBeenCalled()
+    expect(fake.posts).toHaveLength(0)
+    expect(store.getState().items).toHaveLength(0)
+    // 札は submit ではない(フォームを送らない)
+    for (const chip of chips) expect((chip as HTMLButtonElement).type).toBe('button')
+  })
+
+  it('例文の札を押しても、書きかけの文は消さない', async () => {
+    const { store } = setup()
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    fireEvent.change(box(), { target: { value: '書きかけの質問' } })
+    const group = screen.getByRole('group', { name: /例文/ })
+    fireEvent.click(within(group).getAllByRole('button')[0])
+    expect(box().value).toBe('書きかけの質問')
+    expect(document.activeElement).toBe(box())
+  })
+
+  it('例文の札と案内は、会話の箱(role=log)の外に出す', async () => {
+    const { store } = setup()
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    const log = screen.getByRole('log', { name: 'AI との会話' })
+    expect(log.contains(screen.getByRole('group', { name: /例文/ }))).toBe(false)
+    expect(log.contains(screen.getByText('減便の方針の指示や質問を送れます'))).toBe(false)
+  })
+
+  it('減便の方針が無いうちは方針の例文、方針を承認したら(または下書きがあれば)平日に戻す候補と影響の例文を出す', async () => {
+    const { store } = setup()
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    const labels = () => within(screen.getByRole('group', { name: /例文/ })).getAllByRole('button').map((b) => b.textContent)
+    expect(labels().every((t) => t?.startsWith('平日を'))).toBe(true)
+    act(() => useEditStore.setState({ draft: { kind: 'undo', id: '1', by: 'user', result: null, diff: null } }))
+    expect(labels()).toHaveLength(2)
+    expect(labels().some((t) => t?.includes('平日に戻した'))).toBe(true)
+    expect(labels().some((t) => t?.includes('到達圏から外れる区画'))).toBe(true)
+  })
+
+  it('返答の途中でツールの行が加わっても、入力中の点は1組だけ出す', async () => {
+    const { store } = setup()
+    const { container } = render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    act(() =>
+      store.setState({
+        replying: true,
+        items: [
+          { id: 1, kind: 'assistant', messageId: 'm1', text: '調べます', streaming: true },
+          { id: 2, kind: 'tool', callId: null, name: 'search_trips', label: '便を探しています…', status: 'running' },
+        ],
+      }),
+    )
+    expect(container.querySelectorAll('[data-slot="typing-dots"]')).toHaveLength(1)
+    expect(container.querySelector('[data-kind="assistant"] [data-slot="typing-dots"]')).toBeNull()
+  })
+
+  it('発言があると例文の札は出さない', async () => {
+    const { store } = setup()
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    act(() => store.setState({ items: [{ id: 1, kind: 'notice', text: 'お知らせ' }] }))
+    expect(screen.queryByRole('group', { name: /例文/ })).toBeNull()
+  })
+
+  it('送るボタンはアイコンで、読み上げの名前は「送る」。入力欄と同じ枠に入る', async () => {
+    const { store } = setup()
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    const button = sendButton()
+    expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+    const composer = box().closest('[data-slot="composer"]')!
+    expect(composer).toBeTruthy()
+    expect(composer.contains(button)).toBe(true)
+  })
+
+  it('入力欄は文の長さに合わせて高さが伸び、上限を超えたら中でスクロールする', async () => {
+    const { store } = setup()
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    // jsdom は高さを計算しないので、伸びる仕組み(field-sizing: content)と上限・手での変更なしのクラスを確かめる
+    const cls = box().className.split(/\s+/)
+    expect(cls).toContain('field-sizing-content')
+    expect(cls).toContain('max-h-40')
+    expect(cls).toContain('overflow-y-auto')
+    expect(cls).toContain('resize-none')
+  })
+
+  it('考えている間は入力中の点を出し、返答が流れている間は吹き出しの中に出す。点は読み上げず、動きを減らす設定では動かさない', async () => {
+    const { store } = setup()
+    const { container } = render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    act(() => store.setState({ replying: true }))
+    const status = screen.getByText('考えています…')
+    expect(status.getAttribute('role')).toBe('status')
+    const dots = container.querySelectorAll('[data-slot="typing-dots"]')
+    expect(dots).toHaveLength(1)
+    expect(dots[0].getAttribute('aria-hidden')).toBe('true')
+    // 3つの点は、ずらして(animation-delay を style で。クラスだと animation の一括指定で 0s に戻る)順に弾む
+    const animated = [...dots[0].children] as HTMLElement[]
+    expect(animated).toHaveLength(3)
+    for (const dot of animated) {
+      expect(dot.className).toContain('motion-safe:animate-bounce')
+      expect(dot.className).not.toMatch(/(^|\s)animate-bounce/)
+    }
+    expect(new Set(animated.map((d) => d.style.animationDelay)).size).toBe(3)
+
+    act(() => store.setState({ items: [{ id: 1, kind: 'assistant', messageId: 'm1', text: '平日', streaming: true }] }))
+    const bubble = container.querySelector('[data-kind="assistant"]')!
+    expect(bubble.querySelectorAll('[data-slot="typing-dots"]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-slot="typing-dots"]')).toHaveLength(1)
+    expect(screen.getByText('考えています…')).toBeTruthy()
+
+    act(() => store.setState({ replying: false, items: [{ id: 1, kind: 'assistant', messageId: 'm1', text: '平日です', streaming: false }] }))
+    expect(container.querySelectorAll('[data-slot="typing-dots"]')).toHaveLength(0)
+    expect(screen.queryByText('考えています…')).toBeNull()
+  })
+
+  it('利用者の発言は右寄せの濃い色の吹き出し、AI の発言はアイコンつき。名前は「あなた」「AI」', async () => {
+    const { store } = setup()
+    const { container } = render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    act(() =>
+      store.setState({
+        items: [
+          { id: 1, kind: 'user', text: '質問です', at: '2026-11-04T09:30:00+09:00' },
+          { id: 2, kind: 'assistant', messageId: 'm1', text: '**答え**です', streaming: false },
+        ],
+      }),
+    )
+    const user = container.querySelector('[data-kind="user"]')!
+    expect(user.textContent).toBe('あなた質問です')
+    expect(within(user as HTMLElement).getByText('質問です').className).toContain('bg-primary')
+    const ai = container.querySelector('[data-kind="assistant"]')!
+    expect(ai.textContent).toContain('AI')
+    expect(ai.querySelector('svg')).toBeTruthy()
+    expect(within(ai as HTMLElement).getByText('答え', { selector: 'strong' })).toBeTruthy()
+  })
+
+  it('下書きの札は、承認待ちの間だけ「承認待ち」と中身の要約を出す', async () => {
+    const { store } = setup()
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    act(() => useEditStore.setState({ draft: { kind: 'undo', id: '2', by: 'claude', result: null, diff: null } }))
+    act(() => store.setState({ items: [{ id: 1, kind: 'draft', draftId: '2', text: '下書き #2 を作りました。確かめて承認してください。', step: 'policy' }] }))
+    const card = screen.getByRole('button', { name: '編集で確かめる' }).closest('[data-slot="card"]') as HTMLElement
+    expect(within(card).getByText('下書き #2')).toBeTruthy()
+    expect(within(card).getByText('承認待ち')).toBeTruthy()
+    expect(within(card).getByText('編集を取り消す(元に戻す)')).toBeTruthy()
+    act(() => useEditStore.setState({ draft: null }))
+    expect(within(card).queryByText('承認待ち')).toBeNull()
+    expect(within(card).queryByText('編集を取り消す(元に戻す)')).toBeNull()
+  })
+
+  it('ツールの状態は、アイコンと文字で示す。エラーは目立つ知らせ(role=alert)にする', async () => {
+    const { store } = setup()
+    const { container } = render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    act(() =>
+      store.setState({
+        items: [
+          { id: 1, kind: 'tool', callId: 'c1', name: 'search_trips', label: '便を探しています…', status: 'running' },
+          { id: 2, kind: 'tool', callId: 'c2', name: 'search_trips', label: '便を探しています…', status: 'done' },
+          { id: 3, kind: 'tool', callId: 'c3', name: 'run_validation', label: '検証しています…', status: 'error' },
+          { id: 4, kind: 'tool', callId: 'c4', name: 'run_validation', label: '検証しています…', status: 'skipped' },
+          { id: 5, kind: 'error', text: '送れませんでした' },
+        ],
+      }),
+    )
+    const tools = container.querySelectorAll('[data-kind="tool"]')
+    expect([...tools].map((t) => t.textContent)).toEqual([
+      '便を探しています…',
+      '便を探しました',
+      '検証しています(うまくいきませんでした)',
+      '検証しています(行いませんでした)',
+    ])
+    for (const t of tools) expect(t.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+    expect(within(container.querySelector('[data-kind="error"]') as HTMLElement).getByRole('alert').textContent).toBe('送れませんでした')
+  })
+})
+
+describe('左の欄のタブの列の位置', () => {
+  // jsdom は配置を計算しないので、クラスで確かめる(実際の位置はブラウザで確かめた)
+  for (const wide of [true, false]) {
+    it(`タブを切り替えても、タブの列の位置は変わらない(${wide ? '地図を隠す広い手順では中央にそろえる' : '地図を出す手順'})`, async () => {
+      const { store } = setup()
+      render(<SidePanel wide={wide} chatStore={store} />)
+      const list = () => screen.getByRole('tablist', { name: '左の欄の表示' })
+      const classes = () => [list().parentElement!.className, list().className]
+      const onEdit = classes()
+      if (wide) expect(onEdit[0]).toContain('justify-center')
+      act(() => useSidePanelStore.getState().show('chat'))
+      expect(classes()).toEqual(onEdit)
+      await waitFor(() => expect(box().disabled).toBe(false))
+    })
+  }
 })
 
 describe('AI に候補を聞く', () => {

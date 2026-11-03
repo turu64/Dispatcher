@@ -1,6 +1,6 @@
 """参照データの配信(GET /api/ref/{mesh1})を、反証の立場で確かめる。
 
-前半は、配信される参照データ(data/out/ref/*.json。DISPATCHER_REF_DIR で変えられる)の形が
+前半は、配信される参照データ(data/out/ref/{1次メッシュ}.json。DISPATCHER_REF_DIR で変えられる)の形が
 取り決め(docs/interfaces-1103.md)どおりかを確かめる。ファイルが1つも無ければスキップする。
 後半は、サーバーの端の挙動を確かめる。こちらはデータが無くても走る。
 """
@@ -19,7 +19,9 @@ from dispatcher_server.app import DEFAULT_REF_DIR, REPO_ROOT, app, ref_dir_path
 client = TestClient(app)
 
 REF_DIR = ref_dir_path()
-REAL_FILES = sorted(REF_DIR.glob("*.json")) if REF_DIR.is_dir() else []
+# 1次メッシュのファイル(数字4桁.json)だけを調べる。同じ場所にある holidays.json(祝日一覧)は
+# 形が違うので含めない(test_holidays.py で確かめる)
+REAL_FILES = sorted(REF_DIR.glob("[0-9][0-9][0-9][0-9].json")) if REF_DIR.is_dir() else []
 
 EXPECTED_KEYS = {"mesh1", "pop250", "did125", "stations", "sources"}
 STATION_KEYS = {"name", "line", "operator", "lat", "lon"}

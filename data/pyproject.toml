@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 dispatcher-data = "dispatcher_data:main"
+dispatcher-holidays = "dispatcher_data.holidays:main"
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]

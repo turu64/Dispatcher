@@ -1,37 +1,11 @@
+import { useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
+import { useHolidayStore, type HolidayState } from '@/store/holidays'
+import { dataSourceRows } from './dataSourceRows'
 
-/** CLAUDE.md の「データと出典」と同じ内容。出典は画面と README の両方に表示する */
-const DATA_SOURCES = [
-  {
-    data: 'GTFS(道北バスなど)',
-    source: '北海道オープンデータプラットフォーム',
-    license: 'CC BY 4.0',
-  },
-  {
-    data: '人口(令和2年国勢調査 地域メッシュ統計、250m)',
-    source: 'e-Stat(政府統計の総合窓口)を加工して作成',
-    license: '政府標準利用規約',
-  },
-  {
-    data: '人口集中地区(A16、2020年)',
-    source: '国土数値情報(国土交通省)を加工して作成',
-    license: '国土数値情報利用約款(商用可)',
-  },
-  {
-    data: '鉄道駅(N02、2025年度)',
-    source: '国土数値情報(国土交通省)を加工して作成',
-    license: 'CC BY 4.0',
-  },
-  {
-    data: '背景地図',
-    source: 'OpenStreetMap Japan のベクトルタイル',
-    license: '© OpenStreetMap Contributors',
-  },
-] as const
-
-/** 左パネルの一番下の「データの出典」欄 */
-export default function DataSources() {
+/** 出典の一覧の表示(状態は引数で受ける。画面の部品 DataSources が store から渡す) */
+export function DataSourcesView({ holidays }: { holidays: HolidayState }) {
   return (
     <section className="flex flex-col gap-3 text-sm" aria-labelledby="data-sources-heading">
       <Separator />
@@ -39,7 +13,7 @@ export default function DataSources() {
         データの出典
       </h2>
       <ul className="flex flex-col gap-3">
-        {DATA_SOURCES.map((s) => (
+        {dataSourceRows(holidays).map((s) => (
           <li key={s.data} className="flex flex-col gap-1">
             <span>{s.data}</span>
             <span className="text-muted-foreground">{s.source}</span>
@@ -49,4 +23,17 @@ export default function DataSources() {
       </ul>
     </section>
   )
+}
+
+/** 左パネルの一番下の「データの出典」欄 */
+export default function DataSources() {
+  const holidays = useHolidayStore((s) => s.holidays)
+  const loadHolidays = useHolidayStore((s) => s.load)
+  // 画面を開いたときに祝日一覧を 1 回だけ読む(読み込み中・読み込み済みなら load は何もしない)。
+  // 読めなかった(missing・error)ときの読み込み直しは、祝日を使う手順のボタンから load を呼ぶ
+  useEffect(() => {
+    if (holidays.status === 'idle') void loadHolidays()
+  }, [holidays.status, loadHolidays])
+
+  return <DataSourcesView holidays={holidays} />
 }

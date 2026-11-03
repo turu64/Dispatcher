@@ -84,6 +84,23 @@ def ref_data(mesh1: str) -> FileResponse:
     )
 
 
+HOLIDAYS_NOT_FOUND = "祝日一覧が見つかりません。data/ の dispatcher-holidays で data/out/ref に作ってください。"
+
+
+# 内閣府の祝日一覧(data/ の dispatcher-holidays が作る holidays.json)。参照データと同じ場所に置くので、
+# Docker でも同じボリュームで渡せる。/api/ref/{mesh1} は数字4桁だけを受け付けるので、holidays はそちらに入らない。
+@app.get("/api/holidays")
+def holidays() -> FileResponse:
+    path = ref_dir_path() / "holidays.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=HOLIDAYS_NOT_FOUND)
+    return FileResponse(
+        path,
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
 class AnyPathConvertor(Convertor[str]):
     """改行を含むすべての文字に一致する経路の型。
 

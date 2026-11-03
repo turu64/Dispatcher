@@ -13,6 +13,7 @@
 import { addBackRejections, describeRecord } from '@/components/steps/editText'
 import { activeServiceIds, isValidGtfsDate } from '@/gtfs/calendar'
 import { createTripBriefer, restoreTotals, type TripBrief, type WeekdayDiff } from '@/gtfs/edit/diff'
+import { formatMinutes, type FacilityWindow } from '@/gtfs/edit/facilityHours'
 import type { Form2Result } from '@/gtfs/edit/form2'
 import { checkPolicy, planOf, type AddBackItem, type EditOp, type PolicyKind, type PolicyReason, type PolicySettings } from '@/gtfs/edit/ops'
 import {
@@ -192,7 +193,7 @@ const NO_FACILITY_HINTS_WITHOUT_REACH =
 const NO_FACILITY_DATA =
   '前提情報の学校・病院の参照データを読めていないので、学校・病院の手がかり(nearFacility・nearby_facilities)は出していません(該当が無いという意味ではありません)'
 const FACILITY_NOTE =
-  'nearby_facilities は、便の停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)の学校と入院設備のある病院(国土数値情報。距離はコードが出したもの)のうち、時間帯の窓(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)に当たるもので、便ごとに3件まで(省いた数は nearby_facilities_omitted)。窓に当たらず徒歩圏にあるだけの施設は、数だけを nearby_without_match に書く。matches は窓に当たる停留所と時刻(「07:40着 学校前」の形。着・発は窓の向き)。並びは priority_rank(重要拠点の優先順位。1 が最も高い)、距離の順。facility_research は、返した便の近くの施設のうち調べたもの(10 件まで。出典 URL と確認日時つきで、その後に変わっていることがある)'
+  'nearby_facilities は、便の停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)の学校と入院設備のある病院(国土数値情報。距離はコードが出したもの)のうち、施設ごとの時間帯の窓に当たるもので、便ごとに3件まで(省いた数は nearby_facilities_omitted)。窓に当たらず徒歩圏にあるだけの施設は、数だけを nearby_without_match に書く。matches は窓に当たる停留所と時刻(「07:40着 学校前」の形。着・発は窓の向き)。時間帯の窓は、前提情報で調べた外来の受付時間・始業・終業の時刻をコードが読めた施設ではその時刻から決め(病院は受付開始の30分前〜午前の受付終了に着く・午前の受付終了〜最後の受付終了の2時間後に出る、学校は始業の1時間前〜始業に着く・終業〜終業の2時間後に出る)、窓と根拠の時刻を window に書く(「着 7:30〜11:30・発 11:30〜17:15(調べた外来の受付 8:00〜11:30・13:00〜15:15)」の形)。window の無い施設と、window で既定と書いた向きは既定の窓(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)。並びは priority_rank(重要拠点の優先順位。1 が最も高い)、距離の順。facility_research は、返した便の近くの施設のうち調べたもの(10 件まで。出典 URL と確認日時つきで、その後に変わっていることがある)'
 
 /** search_trips の便ごとに出す施設の数の上限(結果の大きさを抑える) */
 const MAX_FACILITIES_PER_TRIP = 3
@@ -201,9 +202,28 @@ const MAX_RESEARCHED_FACILITIES = 10
 /** facility_research の事実の値の長さの上限(文字) */
 const MAX_FACT_CHARS = 60
 
-/** 便の近くの学校・病院(search_trips の nearby_facilities の1件。結果の大きさを抑えるため、窓の名前・停留所ごとの距離・種類の英字は入れない) */
+/**
+ * 施設の窓のうち調べた結果から決めたものがあれば、窓と根拠の短い文(T27)。どちらも既定なら null(FACILITY_NOTE の既定の窓)。
+ * 着く・出る窓が同じ事実から決まっていれば根拠は1回だけ書く(「着 7:30〜11:30・発 11:30〜17:15(調べた外来の受付 8:00〜11:30)」)
+ */
+function windowSummary(f: HintFacility): string | null {
+  const { arrive, depart } = f.windows
+  if (arrive.source === 'default' && depart.source === 'default') return null
+  const span = (w: FacilityWindow, mark: string) => `${mark} ${formatMinutes(w.from)}〜${formatMinutes(w.to)}`
+  const why = (w: FacilityWindow) => (w.source === 'research' ? `調べた${w.basis ?? '結果'}` : '既定')
+  if (arrive.source === 'research' && depart.source === 'research' && arrive.basis === depart.basis) {
+    return `${span(arrive, '着')}・${span(depart, '発')}(${why(arrive)})`
+  }
+  return `${span(arrive, '着')}(${why(arrive)})・${span(depart, '発')}(${why(depart)})`
+}
+
+/**
+ * 便の近くの学校・病院(search_trips の nearby_facilities の1件。結果の大きさを抑えるため、窓の名前・停留所ごとの距離・種類の英字は入れない)。
+ * 窓を調べた結果から決めた施設だけ window を付ける(既定の窓は FACILITY_NOTE に書く)
+ */
 function nearFacilityJson(n: NearFacility): Record<string, unknown> {
   const f = n.facility
+  const window = windowSummary(f)
   return {
     target_id: f.targetId,
     name: f.name,
@@ -213,6 +233,7 @@ function nearFacilityJson(n: NearFacility): Record<string, unknown> {
     distance_m: n.distanceM,
     // 「07:40着 学校前」の形(着は arrive、発は depart の窓)
     matches: n.matches.map((m) => `${m.time}${m.timing === 'arrive' ? '着' : '発'} ${m.stopName}`),
+    ...(window !== null ? { window } : {}),
   }
 }
 

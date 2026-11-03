@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ResearchResult } from '../claude/research'
 import { makeBands } from '../gtfs/departures'
+import { defaultFacilityWindows, overlapLongBreaks } from '../gtfs/edit/facilityHours'
 import { cellAreaKm2, meshCode, parentCode } from '../reach/mesh'
 import { DEFAULT_REACH_PARAMS, type RefData } from '../reach/reach'
 import type { Facility } from '../ref/facilities'
@@ -108,6 +109,87 @@ describe('手がかりに使う施設(hintFacilities)', () => {
   })
 })
 
+describe('調べた結果から施設ごとの窓と長期休業を読む(hintFacilities。T27)', () => {
+  const base = { results: new Map<string, ResearchResult>(), order: DEFAULT_PRIORITY_ORDER, ref: ref(), params: DEFAULT_REACH_PARAMS, result: NO_FALLBACK }
+
+  /** data/demo/research_dohoku.json の旭川赤十字病院(受付時間は2件目)を写した結果 */
+  const SEKIJUJI: ResearchResult = {
+    targetId: HOSPITAL.targetId,
+    kind: 'hospital',
+    name: '東病院',
+    status: 'found',
+    facts: [
+      { label: '休診日', value: '土・日・祝日、5月1日、12月29日～1月3日(公式ページ)', source: 1 },
+      { label: '一般外来受付時間', value: '初診は8：00～11：30、再診は7：50～11：00、午後は13時30分～15時(公式ページ、年度表示なし)', source: 1 },
+    ],
+    sources: [{ url: 'https://example.jp/sekijuji', title: '外来' }],
+    note: '',
+    checkedAt: '2026-11-03T18:59:11+09:00',
+    origin: 'demo',
+  }
+
+  /** data/demo/research_dohoku.json の神楽中学校(休業は1・2件目。始業は5件目に足す) */
+  const KAGURA: ResearchResult = {
+    targetId: JUNIOR.targetId,
+    kind: 'school',
+    name: '東中学校',
+    status: 'partial',
+    facts: [
+      { label: '夏季休業(市立中学校共通)', value: '令和8年度 7月24日(金曜日)から8月24日(月曜日)まで。最終更新日2026年4月1日', source: 1 },
+      { label: '冬季休業(市立中学校共通)', value: '令和8年度 12月25日(金曜日)から1月12日(火曜日)まで', source: 1 },
+      { label: 'その他の休業日', value: '市立中学校の休業日等予定表はPDFで掲載。このページの本文からは内容未確認', source: 1 },
+      { label: '学校の所在地・電話', value: '〒070-8006 北海道旭川市神楽6条12丁目2 TEL 0166-61-7196', source: 1 },
+      { label: '始業(仮)', value: '8時20分', source: 2 },
+    ],
+    sources: [
+      { url: 'https://example.jp/kagura', title: '休業日' },
+      { url: 'https://example.jp/kagura2', title: '日課' },
+    ],
+    note: '',
+    checkedAt: '2026-11-03T18:59:15+09:00',
+    origin: 'demo',
+  }
+
+  it('病院:調べた外来の受付時間から窓を決め、使った事実と出典を持つ。調べていなければ既定', () => {
+    const [researched] = hintFacilities([HOSPITAL], { ...base, results: new Map([[HOSPITAL.targetId, SEKIJUJI]]) })
+    expect(researched.windows.arrive).toMatchObject({ from: 7 * 60 + 20, to: 11 * 60 + 30, source: 'research', basis: '外来の受付 7:50〜11:00・8:00〜11:30・13:30〜15:00' })
+    expect(researched.windows.depart).toMatchObject({ from: 11 * 60 + 30, to: 17 * 60, source: 'research' })
+    expect(researched.windows.arrive.fact).toEqual({ label: '一般外来受付時間', value: SEKIJUJI.facts[1].value, url: 'https://example.jp/sekijuji' })
+    expect(researched.longBreaks).toEqual([])
+    const [plain] = hintFacilities([HOSPITAL], base)
+    expect(plain.windows).toEqual(defaultFacilityWindows('hospital'))
+    expect(plain.longBreaks).toEqual([])
+  })
+
+  it('学校:要点(3件)に入らない事実からも始業と長期休業を読む。休業は減便の期間と重なるかを出せる', () => {
+    const [school] = hintFacilities([JUNIOR], { ...base, results: new Map([[JUNIOR.targetId, KAGURA]]) })
+    expect(school.research!.facts).toHaveLength(3)
+    expect(school.windows.arrive).toMatchObject({ from: 7 * 60 + 20, to: 8 * 60 + 20, source: 'research', basis: '始業 8:20' })
+    expect(school.windows.arrive.fact?.url).toBe('https://example.jp/kagura2')
+    expect(school.windows.depart).toEqual(defaultFacilityWindows('school').depart)
+    expect(school.longBreaks.map((b) => [b.name, b.text])).toEqual([
+      ['夏季休業', '7月24日〜8月24日'],
+      ['冬季休業', '12月25日〜1月12日'],
+    ])
+    expect(overlapLongBreaks(school.longBreaks, { start: '20261110', end: '20270331' }).map((b) => [b.name, b.from, b.to])).toEqual([
+      ['冬季休業', '20261225', '20270112'],
+    ])
+  })
+
+  it('見つからなかった(not_found)結果の事実は使わず、既定の窓にする', () => {
+    const notFound: ResearchResult = { ...KAGURA, status: 'not_found' }
+    const [school] = hintFacilities([JUNIOR], { ...base, results: new Map([[JUNIOR.targetId, notFound]]) })
+    expect(school.windows).toEqual(defaultFacilityWindows('school'))
+    expect(school.longBreaks).toEqual([])
+  })
+
+  it('始業・下校の事実の例(RESULT)からは、着く窓と出る窓の両方を調べた結果にする', () => {
+    const [high] = hintFacilities([HIGH], { ...base, results: new Map([[HIGH.targetId, RESULT]]) })
+    expect([high.windows.arrive.from, high.windows.arrive.to, high.windows.arrive.source]).toEqual([7 * 60 + 40, 8 * 60 + 40, 'research'])
+    expect([high.windows.depart.from, high.windows.depart.to, high.windows.depart.basis]).toEqual([15 * 60 + 30, 17 * 60 + 30, '終業 15:30'])
+  })
+})
+
 describe('到達圏の ctx に学校・病院を入れる(buildRestoreHintContext)', () => {
   afterEach(() => {
     useResearchStore.getState().reset()
@@ -154,6 +236,9 @@ describe('到達圏の ctx に学校・病院を入れる(buildRestoreHintContex
     expect(reordered!.facilities!.find((f) => f.targetId === JUNIOR.targetId)!.rank).toBe(7)
     const researched = buildRestoreHintContext(state, undefined, { ...source, results: new Map([[HIGH.targetId, RESULT]]) })
     expect(researched!.facilities![0].research?.facts[0].value).toBe('8時40分')
+    // 調べた結果が変わると、窓も作り直す
+    expect(ctx!.facilities![0].windows.arrive.source).toBe('default')
+    expect(researched!.facilities![0].windows.arrive.source).toBe('research')
   })
 
   it('渡さなければ、前提情報の store と優先順位の store の今の状態を使う', () => {

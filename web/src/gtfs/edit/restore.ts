@@ -6,6 +6,7 @@ import { NON_NEGATIVE_INTEGER, toStops } from '../parse'
 import { distanceM, meshCenter, type LatLon } from '../../reach/mesh'
 import type { ReachParams, ReachResult } from '../../reach/reach'
 import { createTripBriefer, notice47BandOf, type TripBrief } from './diff'
+import { formatMinutes, type FacilityHintKind, type FacilityTiming, type FacilityWindow, type FacilityWindows, type LongBreak } from './facilityHours'
 import type { Form2Plan } from './ops'
 import { compareStrings, sortByStopSequence, stopTimesByTrip } from './signature'
 
@@ -16,6 +17,7 @@ import { compareStrings, sortByStopSequence, stopTimesByTrip } from './signature
  * 到達圏を使う onlyServiceAtStop・restoresLostCells は、到達圏の前後の比較(ctx。store/restoreHintContext.ts の
  * buildRestoreHintContext で作る)を渡したときだけ出す。ctx を渡さなければ 11/4 と同じ結果になる。
  * 学校・病院の手がかり nearFacility(docs/tasks-1103.md の T19)は、ctx に前提情報の施設(ctx.facilities)があるときだけ出す。
+ * 時間帯の窓は施設ごと(HintFacility.windows。調べた受付時間・始業・終業から facilityHours.ts が決め、読めなければ既定。T27)。
  * 時間帯はすべて開始を含み終わりを含まない。
  */
 
@@ -39,8 +41,9 @@ export type RestoreHint =
   /** その便の乗れる停留所が、その時間帯に「減便で外れた」セルを、区分のバス停の距離の中に含む(11/5) */
   | 'restoresLostCells'
   /**
-   * 便の停留所の徒歩圏に学校・病院があり、学校は始業前(7〜9時着)か下校(14〜18時発)、病院は 8〜11時着か 11〜16時発に
-   * その停留所に着く・出る(T19。FACILITY_WINDOWS)
+   * 便の停留所の徒歩圏に学校・病院があり、施設ごとの時間帯の窓(学校は始業前・下校、病院は通院の行き・帰り)に
+   * その停留所に着く・出る(T19)。窓は調べた受付時間・始業・終業から決め、読めなければ既定(FACILITY_WINDOWS。
+   * 学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)(T27)
    */
   | 'nearFacility'
 
@@ -60,22 +63,30 @@ export interface RestoreHintDetail {
 
 // ---- 学校・病院の手がかり(T19)----
 
-/** 手がかりに使う施設の種類。学校(中学校・高校・大学など)と、入院設備のある病院 */
-export type FacilityHintKind = 'school' | 'hospital'
+// 施設の種類・窓の型と既定の窓は facilityHours.ts に置く(調べた事実から窓を決める関数と同じ場所)。ここからも使えるようにする
+export { FACILITY_WINDOWS } from './facilityHours'
+export type { FacilityHintKind, FacilityTiming, FacilityWindow, FacilityWindows, LongBreak } from './facilityHours'
 
-/** 学校・病院の時間帯の窓(時。開始を含み終わりを含まない)。画面での変更は作らない(T19 の決定) */
-export const FACILITY_WINDOWS: Record<FacilityHintKind, Record<FacilityTiming, readonly [number, number]>> = {
-  school: { arrive: [7, 9], depart: [14, 18] },
-  hospital: { arrive: [8, 11], depart: [11, 16] },
-}
-
-/** arrive は施設の最寄りの停留所に着く(降りる)、depart はそこから出る(乗る) */
-export type FacilityTiming = 'arrive' | 'depart'
-
-/** 時間帯の窓の名前(理由の文に入れる) */
+/** 既定の窓のときの、時間帯の窓の名前(理由の文に入れる。FACILITY_WINDOWS と同じ時刻) */
 export const FACILITY_WINDOW_LABELS: Record<FacilityHintKind, Record<FacilityTiming, string>> = {
   school: { arrive: '始業前(7〜9時着)', depart: '下校(14〜18時発)' },
   hospital: { arrive: '通院の行き(8〜11時着)', depart: '通院の帰り(11〜16時発)' },
+}
+
+/** 時間帯の窓の短い名前(調べた結果の窓の理由の文に入れる) */
+export const FACILITY_WINDOW_NAMES: Record<FacilityHintKind, Record<FacilityTiming, string>> = {
+  school: { arrive: '始業前', depart: '下校' },
+  hospital: { arrive: '通院の行き', depart: '通院の帰り' },
+}
+
+/**
+ * 理由の文に入れる窓の名前。既定の窓は FACILITY_WINDOW_LABELS(「始業前(7〜9時着)」)、調べた結果の窓は時刻と出どころ
+ * (「通院の行き(7:30〜11:30着。調べた外来の受付 8:00〜11:30・13:00〜15:15 に合わせた窓)」)
+ */
+export function facilityWindowLabel(kind: FacilityHintKind, timing: FacilityTiming, w: FacilityWindow): string {
+  if (w.source === 'default') return FACILITY_WINDOW_LABELS[kind][timing]
+  const mark = timing === 'arrive' ? '着' : '発'
+  return `${FACILITY_WINDOW_NAMES[kind][timing]}(${formatMinutes(w.from)}〜${formatMinutes(w.to)}${mark}。調べた${w.basis ?? '結果'} に合わせた窓)`
 }
 
 /** 前提情報の調査の結果の要点(調べた施設だけ) */
@@ -103,6 +114,16 @@ export interface HintFacility {
   radiusM: number
   /** 前提情報の調査の結果(あれば) */
   research?: FacilityResearchNote
+  /**
+   * 時間帯の窓(施設ごと。T27)。調べた受付時間・始業・終業を読めた窓は source が research で、読めなければ既定
+   * (FACILITY_WINDOWS。defaultFacilityWindows)
+   */
+  windows: FacilityWindows
+  /**
+   * 調べた結果から読んだ長期休業(学校だけ。年は持たない。T27)。減便の期間と重なるかは facilityHours.ts の overlapLongBreaks で
+   * 出す。休校日運休(学)の印は自動で付けない。読めなければ空
+   */
+  longBreaks: readonly LongBreak[]
 }
 
 /** 便が施設の時間帯の窓に当たった停留所と時刻 */
@@ -128,13 +149,17 @@ export interface NearFacility {
   matches: FacilityMatch[]
 }
 
-/** 施設の手がかりの理由の文(施設名・種類・窓・停留所・時刻・距離)。窓に当たらなければ徒歩圏にあることだけを書く */
+/**
+ * 施設の手がかりの理由の文(施設名・種類・窓・停留所・時刻・距離)。窓に当たらなければ徒歩圏にあることだけを書く。
+ * 窓は、調べた結果から決めたものなら時刻と出どころ(「調べた外来の受付 8:00〜11:30 に合わせた窓」)を入れる(数はコードが出す)
+ */
 export function nearFacilityText(n: NearFacility): string {
   const f = n.facility
   const head = `${f.name}(${f.categoryLabel})`
   if (n.matches.length === 0) return `${head}:${n.stopName}から約 ${n.distanceM}m`
   const parts = n.matches.map(
-    (m) => `${FACILITY_WINDOW_LABELS[f.kind][m.timing]}に${m.stopName} ${m.time}${m.timing === 'arrive' ? '着' : '発'}(施設まで約 ${m.distanceM}m)`,
+    (m) =>
+      `${facilityWindowLabel(f.kind, m.timing, f.windows[m.timing])}に${m.stopName} ${m.time}${m.timing === 'arrive' ? '着' : '発'}(施設まで約 ${m.distanceM}m)`,
   )
   return `${head}の${parts.join('、')}`
 }
@@ -416,8 +441,9 @@ function clockOf(seconds: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
-function inWindow(seconds: number, [from, to]: readonly [number, number]): boolean {
-  return seconds >= from * 3600 && seconds < to * 3600
+/** 秒の時刻が施設の窓(分。開始を含み終わりを含まない)に入るか */
+function inWindow(seconds: number, w: FacilityWindow): boolean {
+  return seconds >= w.from * 60 && seconds < w.to * 60
 }
 
 const TIMINGS: readonly FacilityTiming[] = ['arrive', 'depart']
@@ -454,8 +480,8 @@ function compareNear(a: NearFacility & { raw: number }, b: NearFacility & { raw:
  *
  * ctx に施設(ctx.facilities)があれば、学校・病院の手がかり nearFacility も判定する(T19)。
  * - 対象は feed が base の便(停留所と時刻は基準の stop_times から取る)。比較の日付に走るかは問わない
- * - 便の乗るか降りるかできる停留所から施設ごとの徒歩圏(radiusM)の中にある施設を detail.facilities に入れ、そのうち時間帯の窓
- *   (FACILITY_WINDOWS。学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)に当たる施設があれば nearFacility を付ける
+ * - 便の乗るか降りるかできる停留所から施設ごとの徒歩圏(radiusM)の中にある施設を detail.facilities に入れ、そのうち施設ごとの
+ *   時間帯の窓(facility.windows。調べた結果から読めなければ既定の FACILITY_WINDOWS)に当たる施設があれば nearFacility を付ける
  * - 停留所の徒歩圏の施設は、施設の並びごとに停留所ごとに1回だけ探して覚えておく
  */
 export function createRestoreHinter(
@@ -609,7 +635,7 @@ export function createRestoreHinter(
         }
         for (const timing of TIMINGS) {
           const seconds = row[timing]
-          if (seconds === null || !inWindow(seconds, FACILITY_WINDOWS[facility.kind][timing])) continue
+          if (seconds === null || !inWindow(seconds, facility.windows[timing])) continue
           // 同じ窓に当たる停留所が複数あれば、施設に最も近い停留所(同じ距離なら便の中で先の停留所)
           const prev = entry.rawMatch[timing]
           if (prev !== undefined && prev <= distance) continue

@@ -7,6 +7,7 @@ import { departureCountsByBand, makeBands } from '../departures'
 import type { GtfsFeed } from '../load'
 import { toStops } from '../parse'
 import { diffWeekdayTrips } from './diff'
+import { defaultFacilityWindows, facilityWindows } from './facilityHours'
 import { applyForm2 } from './form2'
 import { basePlan, shiftTrip, smallFeed, withRows } from './form2.fixture'
 import type { Form2Plan } from './ops'
@@ -415,8 +416,10 @@ function north(p: { lat: number; lon: number }, m: number) {
   return { lat: p.lat + m / 111_000, lon: p.lon }
 }
 
+/** 手がかりの施設(窓は、渡さなければ種類の既定の窓) */
 function facility(o: Partial<HintFacility> & Pick<HintFacility, 'targetId' | 'lat' | 'lon'>): HintFacility {
-  return { name: o.targetId, kind: 'school', categoryLabel: '高校・特別支援学校', rank: 3, radiusM: 400, ...o }
+  const kind = o.kind ?? 'school'
+  return { name: o.targetId, kind, categoryLabel: '高校・特別支援学校', rank: 3, radiusM: 400, windows: defaultFacilityWindows(kind), longBreaks: [], ...o }
 }
 
 const HIGH = facility({ targetId: 'P29:高校', name: '学校前高校', ...north(S9, 100) })
@@ -502,6 +505,55 @@ describe('足し戻しの手がかり:学校・病院(nearFacility)', () => {
     // 駅前病院は始発の A の近く。A では降りられない(最初の停留所)ので着く窓に当たらず、14:30 発は病院の帰りの窓(11〜16時)に当たる
     const hospital = d.facilities!.find((n) => n.facility.targetId === HOSPITAL_A.targetId)!
     expect(hospital.matches.map((m) => [m.timing, m.stopId, m.time])).toEqual([['depart', 'A', '14:30']])
+  })
+
+  describe('調べた受付時間・始業から決めた施設ごとの窓(T27)', () => {
+    /** data/demo/research_dohoku.json の名寄市立総合病院の外来受付時間(着く 7:30〜11:30、出る 11:30〜17:15) */
+    const NAYORO_FACTS = [{ label: '外来受付時間', value: '〔午前〕8：00～11：30 〔午後〕13：00～15：15（公式ページ記載。診療可能日は診療科によって異なる）', url: null }]
+    const RESEARCHED_HOSPITAL = facility({ ...HOSPITAL, windows: facilityWindows('hospital', NAYORO_FACTS) })
+
+    it('調べた窓に当たれば nearFacility を付け、理由の文に窓の時刻と出どころを入れる', () => {
+      const { hinter, byId } = facilitySetup()
+      const d = hinter(byId.get('R2_0900_WK')!, facilityCtx([RESEARCHED_HOSPITAL]))
+      expect(d.hints).toContain('nearFacility')
+      expect(nearFacilityText(d.facilities![0])).toBe(
+        `病院前病院(入院設備のある病院)の通院の行き(7:30〜11:30着。調べた外来の受付 8:00〜11:30・13:00〜15:15 に合わせた窓)に病院前 09:20着(施設まで約 ${Math.round(distanceM(C, HOSPITAL))}m)`,
+      )
+    })
+
+    it('既定の窓(8〜11時着)の外でも、調べた窓(〜11:30)に入れば付ける', () => {
+      // R2 を 2時間遅らせると、C に 11:20 に着く
+      const { hinter, byId } = facilitySetup(shiftTrip(smallFeed(), 'R2_0900_WK', 7200))
+      expect(hinter(byId.get('R2_0900_WK')!, facilityCtx([HOSPITAL])).hints).not.toContain('nearFacility')
+      const d = hinter(byId.get('R2_0900_WK')!, facilityCtx([RESEARCHED_HOSPITAL]))
+      expect(d.hints).toContain('nearFacility')
+      expect(d.facilities![0].matches.map((m) => [m.timing, m.time])).toEqual([['arrive', '11:20']])
+    })
+
+    it('調べた始業が早ければ、既定の窓(7〜9時着)に入る便にも付けない。始まりちょうどは含み、終わりちょうどは含まない', () => {
+      const { hinter, byId } = facilitySetup()
+      const early = facility({ ...HIGH, windows: facilityWindows('school', [{ label: '始業', value: '7時30分' }]) })
+      expect(early.windows.arrive).toMatchObject({ from: 6 * 60 + 30, to: 7 * 60 + 30, source: 'research' })
+      // R3 は S9 に 07:40 に着く(既定なら始業前に当たる)
+      const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([early]))
+      expect(d.hints).not.toContain('nearFacility')
+      expect(d.facilities!.map((n) => n.matches.length)).toEqual([0])
+
+      // 始業 8:40 → 着く窓は 7:40〜8:40。07:40 に着く便は始まりちょうどで当たり、08:40 に着く便は終わりちょうどで当たらない
+      const at840 = facility({ ...HIGH, windows: facilityWindows('school', [{ label: '始業', value: '8時40分' }]) })
+      const hit = hinter(byId.get('R3_0730_WK')!, facilityCtx([at840]))
+      expect(hit.facilities![0].matches.map((m) => [m.timing, m.time])).toEqual([['arrive', '07:40']])
+      expect(nearFacilityText(hit.facilities![0])).toContain('始業前(7:40〜8:40着。調べた始業 8:40 に合わせた窓)に学校前 07:40着')
+      const late = facilitySetup(shiftTrip(smallFeed(), 'R3_0730_WK', 3600))
+      expect(late.hinter(late.byId.get('R3_0730_WK')!, facilityCtx([at840])).hints).not.toContain('nearFacility')
+    })
+
+    it('始業だけ調べた学校の下校は、既定の窓(14〜18時発)の名前のまま', () => {
+      const { hinter, byId } = facilitySetup(shiftTrip(smallFeed(), 'R3_0730_WK', 7 * 3600))
+      const onlyStart = facility({ ...HIGH, windows: facilityWindows('school', [{ label: '始業', value: '8時40分' }]) })
+      const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([onlyStart]))
+      expect(nearFacilityText(d.facilities![0])).toContain('下校(14〜18時発)に学校前 14:40発')
+    })
   })
 
   it('徒歩圏(radiusM)の外の施設は入れない。ちょうどの距離は届く', () => {

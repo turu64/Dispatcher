@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AGENCY, FEED_INFO, feedOf, rowsOf, smallFeed } from '../gtfs/edit/form2.fixture'
+import { defaultFacilityWindows, facilityWindows } from '../gtfs/edit/facilityHours'
 import { reachBaseFeed, reachSetup } from '../gtfs/edit/restore.fixture'
 import type { HintFacility, RestoreHintContext } from '../gtfs/edit/restore'
 import { makeBands } from '../gtfs/departures'
@@ -522,11 +523,14 @@ describe('search_trips', () => {
   describe('学校・病院(nearby_facilities と nearFacility。T19)', () => {
     // smallFeed の S9 学校前 (43.79, 142.39) の北 約 100m の高校と、C 病院前 (43.78, 142.38) の北 約 200m の病院、
     // A 駅前 (43.76, 142.36) の北 約 100m の中学校
+    // 窓は、渡さなければ種類の既定の窓(調べた結果からの窓は store/restoreHintContext.ts の hintFacilities が作る)
     const school = (o: Partial<HintFacility> & Pick<HintFacility, 'targetId' | 'name' | 'lat' | 'lon'>): HintFacility => ({
       kind: 'school',
       categoryLabel: '高校・特別支援学校',
       rank: 3,
       radiusM: 400,
+      windows: defaultFacilityWindows(o.kind ?? 'school'),
+      longBreaks: [],
       ...o,
     })
     const HIGH = school({
@@ -613,6 +617,29 @@ describe('search_trips', () => {
       expect((body.notes as string[]).some((n) => n.startsWith('nearby_facilities は、便の停留所から徒歩圏'))).toBe(true)
     })
 
+    it('調べた結果から決めた窓の施設には window に窓と根拠を書き、既定の窓の施設には書かない(T27)', async () => {
+      // 始業 8:40 の高校:着く窓は 7:40〜8:40(R3 は学校前に 07:40 に着く。窓の始まりちょうどは含む)。下校は既定のまま
+      const researchedHigh = { ...HIGH, windows: facilityWindows('school', [{ label: '始業', value: '8時40分' }]) }
+      // 名寄市立総合病院の外来受付時間(data/demo/research_dohoku.json)の病院:着く窓は 7:30〜11:30
+      const researchedHospital = {
+        ...HOSPITAL,
+        windows: facilityWindows('hospital', [{ label: '外来受付時間', value: '〔午前〕8：00～11：30 〔午後〕13：00～15：15（公式ページ記載）' }]),
+      }
+      const { store, deps } = setup({ hintContext: () => ctxWith([researchedHigh, researchedHospital, JUNIOR]) })
+      await withPolicy(deps, store)
+      const body = parse((await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)).content)
+      const byId = new Map((body.trips as { trip_id: string; nearby_facilities: Record<string, unknown>[] }[]).map((t) => [t.trip_id, t]))
+      const high = byId.get('R3_0730_WK')!.nearby_facilities.find((f) => f.target_id === 'P29:高校')!
+      expect(high.matches).toEqual(['07:40着 学校前'])
+      expect(high.window).toBe('着 7:40〜8:40(調べた始業 8:40)・発 14:00〜18:00(既定)')
+      const hospital = byId.get('R2_0900_WK')!.nearby_facilities.find((f) => f.target_id === 'P04:病院')!
+      expect(hospital.window).toBe('着 7:30〜11:30・発 11:30〜17:15(調べた外来の受付 8:00〜11:30・13:00〜15:15)')
+      const note = (body.notes as string[]).find((n) => n.startsWith('nearby_facilities は、'))!
+      expect(note).toContain('施設ごとの時間帯の窓')
+      expect(note).toContain('既定の窓(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)')
+      expect(note).toContain('window')
+    })
+
     it('B 市役所に 08:10 に着く R1 にも、近くの病院の行き(8〜11時着)で nearFacility を付け、手がかりの多い順に並べる', async () => {
       // 手がかりの数が同じときに優先順位で並べることは、restore.test.ts の compareByHints で確かめている
       const nearB = school({ targetId: 'P04:市役所病院', name: '市役所病院', kind: 'hospital', categoryLabel: '入院設備のある病院', rank: 1, lat: 43.77, lon: 142.37 + 0.001 })
@@ -657,6 +684,35 @@ describe('search_trips', () => {
       expect(r3.nearby_facilities_omitted).toBe(4)
       // 1件は名前・種類・優先順位・最寄りの停留所・距離・窓に当たる時刻だけ(結果の 20KB の上限で便が多く省かれないように小さくする)
       for (const f of r3.nearby_facilities) expect(new TextEncoder().encode(JSON.stringify(f)).length).toBeLessThan(250)
+    })
+
+    // 調べた窓の施設は window(窓と根拠の文)が付くので、1件の上限を既定の窓の施設の 250 バイトから 400 バイトに上げる。
+    // 根拠の文の範囲は MAX_BASIS_RANGES 件までなので、名前の長い病院(参照データで最も長い施設名と target_id で 100 バイトほど)でも収まる
+    const MAX_NEARBY_BYTES_WITH_WINDOW = 400
+    /** 名前の長い、調べた受付時間(範囲が3つ)の病院。lat・lon は呼ぶ側で決める */
+    const longNamedHospital = (targetId: string, lat: number, lon: number): HintFacility =>
+      school({
+        targetId,
+        name: 'ＪＡ北海道厚生連旭川厚生病院附属外来センター',
+        kind: 'hospital',
+        categoryLabel: '入院設備のある病院',
+        rank: 1,
+        lat,
+        lon,
+        windows: facilityWindows('hospital', [{ label: '一般外来受付時間', value: '初診は7：00～11：30、再診は7：50～11：00、午後は13時30分～15時' }]),
+      })
+
+    it('調べた窓の施設(名前が長く、根拠の範囲が3つ)の1件も上限のバイト数に収まる', async () => {
+      const hospital = longNamedHospital('P04:長い名前の病院', 43.78 + 200 / 111_000, 142.38)
+      const { store, deps } = setup({ hintContext: () => ctxWith([hospital]) })
+      await withPolicy(deps, store)
+      const body = parse((await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)).content)
+      const r2 = (body.trips as { trip_id: string; nearby_facilities: Record<string, unknown>[] }[]).find((t) => t.trip_id === 'R2_0900_WK')!
+      const item = r2.nearby_facilities.find((f) => f.target_id === 'P04:長い名前の病院')!
+      expect(item.window).toBe('着 6:30〜11:30・発 11:30〜17:00(調べた外来の受付 7:00〜11:30・7:50〜11:00・13:30〜15:00)')
+      const bytes = new TextEncoder().encode(JSON.stringify(item)).length
+      expect(bytes).toBeGreaterThan(250)
+      expect(bytes).toBeLessThan(MAX_NEARBY_BYTES_WITH_WINDOW)
     })
 
     describe('20KB を超えたら、調べた施設の結果を先に省き、便の省いた数と分けて書く', () => {
@@ -717,6 +773,31 @@ describe('search_trips', () => {
         expect(kept).toBeGreaterThan(0)
         expect(kept + Number(body.truncated)).toBe(50)
         expect(String(body.truncated_note)).toContain(`${50 - kept} 件`)
+      })
+
+      it('調べた窓の施設(window つき)が便ごとに3件付く一覧も 20KB に収め、省いた便の数を書く', async () => {
+        // 学校前の近くの名前の長い病院 3 つ。受付 7:00〜 なので着く窓は 6:30〜11:30 で、07:10 着の便すべてに当たる。
+        // research は持たせない(facility_research ではなく nearby_facilities の大きさで切り詰めが働くことを確かめる)
+        const hospitals = Array.from({ length: 3 }, (_, i) => longNamedHospital(`P04:長い名前の病院${i}`, 43.79 + (i * 5) / 111_000, 142.39))
+        const { store, deps } = setup({ hintContext: () => ctxWith(hospitals) }, manyTripsFeed(50))
+        await withPolicy(deps, store)
+        const r = await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)
+        expect(new TextEncoder().encode(r.content).length).toBeLessThanOrEqual(MAX_RESULT_BYTES)
+        const body = parse(r.content)
+        expect(body.returned).toBe(50)
+        expect(body.facility_research).toEqual([])
+        expect(body).not.toHaveProperty('facility_research_omitted')
+        const trips = body.trips as { nearby_facilities: Record<string, unknown>[] }[]
+        expect(trips.length).toBeGreaterThan(0)
+        for (const t of trips) {
+          expect(t.nearby_facilities).toHaveLength(3)
+          for (const f of t.nearby_facilities) {
+            expect(typeof f.window).toBe('string')
+            expect(new TextEncoder().encode(JSON.stringify(f)).length).toBeLessThan(MAX_NEARBY_BYTES_WITH_WINDOW)
+          }
+        }
+        expect(trips.length + Number(body.truncated)).toBe(50)
+        expect(String(body.truncated_note)).toContain(`${50 - trips.length} 件`)
       })
 
       it('調べた施設の結果を省くだけで収まれば、便は省かず truncated を書かない', async () => {

@@ -1,4 +1,5 @@
 import type { ResearchResult } from '../claude/research'
+import { facilityWindows, readLongBreaks, type FactLike } from '../gtfs/edit/facilityHours'
 import type { FacilityResearchNote, HintFacility, RestoreHintContext } from '../gtfs/edit/restore'
 import type { GtfsFeed } from '../gtfs/load'
 import type { OriginStops } from '../reach/input'
@@ -151,20 +152,31 @@ function walkRadiusM(cls: RegionClass | null, params: ReachParams): number {
   return Math.max(of('urban'), of('suburban'), of('rural'))
 }
 
+/** 調査の結果の事実(全部。出典は sources の番号から URL に直す。読めなければ null) */
+function factsOf(r: ResearchResult): { label: string; value: string; url: string | null }[] {
+  return r.facts.map((f) => ({ label: f.label, value: f.value, url: r.sources[f.source - 1]?.url ?? null }))
+}
+
 /** 調査の結果の要点(事実は先頭から MAX_RESEARCH_FACTS 件、出典は sources の番号から URL に直す) */
 export function researchNoteOf(r: ResearchResult): FacilityResearchNote {
-  return {
-    status: r.status,
-    checkedAt: r.checkedAt,
-    origin: r.origin,
-    facts: r.facts.slice(0, MAX_RESEARCH_FACTS).map((f) => ({ label: f.label, value: f.value, url: r.sources[f.source - 1]?.url ?? null })),
-  }
+  return { status: r.status, checkedAt: r.checkedAt, origin: r.origin, facts: factsOf(r).slice(0, MAX_RESEARCH_FACTS) }
+}
+
+/**
+ * 時間帯の窓と長期休業を読む材料の事実(T27)。要点(researchNoteOf)のように先頭の数件に絞らず、全部を使う
+ * (受付時間・始業・休業の事実が4件目より後にあることがあるため)。見つからなかった(not_found)結果の事実は使わない
+ */
+function hourFactsOf(r: ResearchResult | undefined): FactLike[] {
+  if (!r || r.status === 'not_found') return []
+  return factsOf(r)
 }
 
 /**
  * 前提情報の施設の参照データ(国土数値情報の学校 P29・医療機関 P04)から、学校・病院の手がかりに使う施設を作る。
  * 使うのは重要拠点の優先順位にある学校(中学校・高校・大学など)と入院設備のある病院(診療所・小学校など・事業者は使わない)。
- * 徒歩圏は、施設の位置の区分のバス停の分数 × 分速(到達圏と同じ距離)。優先順位は order の順位、調査の結果があれば要点を付ける
+ * 徒歩圏は、施設の位置の区分のバス停の分数 × 分速(到達圏と同じ距離)。優先順位は order の順位、調査の結果があれば要点を付ける。
+ * 時間帯の窓は、調査の結果の受付時間・始業・終業から施設ごとに決め、読めなければ既定(gtfs/edit/facilityHours.ts。T27)。
+ * 学校は、調査の結果から長期休業の期間も読む(減便の期間と重なるかは画面が overlapLongBreaks で出す)
  */
 export function hintFacilities(
   facilities: readonly Facility[],
@@ -184,6 +196,7 @@ export function hintFacilities(
     if (!kind) continue
     if (f.kind === 'school' && f.openStatus === CLOSED_SCHOOL) continue
     const research = o.results.get(f.targetId)
+    const facts = hourFactsOf(research)
     out.push({
       targetId: f.targetId,
       name: f.name,
@@ -194,6 +207,8 @@ export function hintFacilities(
       lon: f.lon,
       radiusM: walkRadiusM(facilityRegionClass(f.lat, f.lon, o.ref, o.params, o.result), o.params),
       ...(research ? { research: researchNoteOf(research) } : {}),
+      windows: facilityWindows(kind, facts),
+      longBreaks: kind === 'school' ? readLongBreaks(facts) : [],
     })
   }
   return out

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   agent_version INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   last_activity_at TEXT NOT NULL,
+  last_stream_at TEXT,
   ended_at TEXT,
   deleted_at TEXT,
   delete_pending INTEGER NOT NULL DEFAULT 0,
@@ -43,6 +44,13 @@ CREATE TABLE IF NOT EXISTS research_results (
 
 # 消した行を残す期間(1日の数え上げが終わってから消す)
 DELETED_ROW_KEEP = timedelta(days=2)
+
+# 最後の操作からこの時間、ストリームがつながっていない行は、1日の利用額の予約に残りの予算を数えない
+# (閉じ損ねたセッション。docs/tasks-1103.md の「利用者の決定(11/3)」の 1、docs/interfaces-1105.md §4.11)
+RESERVATION_IDLE = timedelta(minutes=30)
+
+# 前の版の表に無い列(既にある SQLite に足す)
+_ADDED_COLUMNS = {"agent_sessions": [("last_stream_at", "TEXT")]}
 
 
 def iso(timestamp: float) -> str:
@@ -68,6 +76,15 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        # CREATE TABLE IF NOT EXISTS は既にある表に列を足さないので、前の版で作った SQLite に足す(鍵の中で呼ぶ)
+        for table, columns in _ADDED_COLUMNS.items():
+            existing = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            for name, kind in columns:
+                if name not in existing:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
 
     def close(self) -> None:
         with self._lock:
@@ -102,6 +119,10 @@ class Store:
             (iso(now), messages, tool_calls, row_id),
         )
 
+    def mark_stream(self, row_id: str, now: float) -> None:
+        """ブラウザのストリームがつながっている(つないだ・つながっている間・切れた)ことを記録する。"""
+        self._execute("UPDATE agent_sessions SET last_stream_at = ? WHERE row_id = ?", (iso(now), row_id))
+
     def mark_ended(self, row_id: str, now: float) -> None:
         self._execute(
             "UPDATE agent_sessions SET ended_at = ? WHERE row_id = ? AND ended_at IS NULL", (iso(now), row_id)
@@ -131,10 +152,25 @@ class Store:
         )
         return int(rows[0]["n"])
 
-    def reserved_cents(self, budget_cents: int) -> int:
-        """消していないセッションごとの(予算 − 最後に読んだ利用額)の合計。"""
-        rows = self._all("SELECT cost_cents FROM agent_sessions WHERE deleted_at IS NULL")
-        return sum(max(budget_cents - int(row["cost_cents"]), 0) for row in rows)
+    def reserved_cents(self, budget_cents: int, *, now: float, idle: timedelta = RESERVATION_IDLE) -> int:
+        """1日の利用額の予約:消していないセッションごとの(予算 − 最後に読んだ利用額)の合計。
+
+        最後の操作(last_activity_at)からも、最後にストリームがつながっていた日時(last_stream_at。一度も
+        つながっていなければ作った日時)からも idle たった行(閉じ損ねたセッション)は、使った額だけを数える。
+        使った額は record_cost(idle のたびと掃除)で台帳(cost_ledger)に入っており、関門は台帳を別に足すので、
+        ここでは 0 にする(cost_cents を足すと二重に数える)。戻ってきてつなぎ直せば、また残りの予算を数える。
+        """
+        cutoff = iso(now - idle.total_seconds())
+        rows = self._all(
+            "SELECT cost_cents, last_activity_at, COALESCE(last_stream_at, created_at) AS stream_at"
+            " FROM agent_sessions WHERE deleted_at IS NULL"
+        )
+        total = 0
+        for row in rows:
+            if row["last_activity_at"] < cutoff and row["stream_at"] < cutoff:
+                continue
+            total += max(budget_cents - int(row["cost_cents"]), 0)
+        return total
 
     def rows_to_sweep(self, now: float, ttl_hours: int) -> list[dict[str, Any]]:
         """消す行:最後の操作から ttl_hours たった行、終えた(DELETE を受けた)行、delete_pending の行。"""

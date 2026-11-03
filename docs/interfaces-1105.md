@@ -175,7 +175,7 @@ config: {type: cloud, networking: {type: unrestricted}}
 
 | メソッドとパス | 中身 |
 | --- | --- |
-| `GET /api/claude/status` | `{ available, tokenRequired }`。API キー・エージェントの ID と版・実行環境の ID・取っ手の秘密のどれかが無ければ `available: false`(開発の例外は §4.4) |
+| `GET /api/claude/status` | `{ available, tokenRequired }`。API キー・エージェントの ID と版・実行環境の ID・取っ手の秘密のどれかが無ければ `available: false`(開発の例外は §4.4。合言葉なしの公開は §4.11) |
 | `POST /api/claude/session` | セッションを作る(§4.3)。本文は `{}`。返すのは `{ handle, budget_cents }` |
 | `GET /api/claude/session/stream` | ブラウザ向けの長いストリーム(SSE。§4.5・§4.6)。`Last-Event-ID` を付けられる |
 | `POST /api/claude/session/events` | 発言・ツールの結果・止める(§4.7) |
@@ -208,7 +208,7 @@ config: {type: cloud, networking: {type: unrestricted}}
 
 - 形:`v1.<行の ID>.<署名>`。行の ID は 16 バイトの乱数(base64url)。署名は `HMAC-SHA256(DISPATCHER_SESSION_SECRET, "dispatcher-session:v1:" + 行の ID)` の先頭 16 バイト(base64url)。照合は `hmac.compare_digest`
 - 署名が合い、SQLite に行があり、終えていない(`ended_at` が空)ときだけ受け付ける。Anthropic のセッションの ID は行から引く
-- `DISPATCHER_SESSION_SECRET` が無いとき:`DISPATCHER_DEV=1` なら起動ごとに乱数で作る(再起動で取っ手が無効になる)。そうでなければ AI は使えない(`available: false`)
+- `DISPATCHER_SESSION_SECRET` が無いとき:`DISPATCHER_DEV=1` なら起動ごとに乱数で作る(再起動で取っ手が無効になる)。そうでなければ AI は使えない(`available: false`)。合言葉なしの公開(`DISPATCHER_PUBLIC=1`。§4.11)でも省けない(11/3 の利用者の決定:`DISPATCHER_DEV` のほかの緩みは本番に持ち込まない)
 - 取っ手はブラウザのメモリにだけ置く(`sessionStorage` に置かない。ページを読み込み直したら新しいセッション。§6.5)
 - 合言葉は今までどおり、すべての要求で確かめる
 
@@ -310,6 +310,7 @@ CREATE TABLE agent_sessions (
   agent_version INTEGER NOT NULL,
   created_at TEXT NOT NULL,         -- ISO 8601(UTC)
   last_activity_at TEXT NOT NULL,   -- 最後の操作(作成・発言・ツールの結果・止める・調査の対象)
+  last_stream_at TEXT,              -- 最後にブラウザのストリームがつながっていた日時(つないだとき、つながっている間は 60 秒ごと、切れたとき)。1日の利用額の予約(§4.11)
   ended_at TEXT,                    -- 終えた(取っ手が使えなくなった)
   deleted_at TEXT,                  -- Anthropic の側で消えた
   delete_pending INTEGER NOT NULL DEFAULT 0,
@@ -339,7 +340,9 @@ CREATE TABLE research_results (                                                 
 
 ### 4.11 合言葉・回数制限・料金の目安
 
-- 合言葉:前の版と同じ(`DISPATCHER_TOKEN`、ヘッダー `X-Dispatcher-Token`、`hmac.compare_digest`。`ANTHROPIC_API_KEY` があって `DISPATCHER_TOKEN` が無いときは、`DISPATCHER_DEV=1` が無ければ AI は使えない)
+- 合言葉:前の版と同じ(`DISPATCHER_TOKEN`、ヘッダー `X-Dispatcher-Token`、`hmac.compare_digest`)。`ANTHROPIC_API_KEY` があって `DISPATCHER_TOKEN` が無いときは、`DISPATCHER_PUBLIC=1` か `DISPATCHER_DEV=1` が無ければ AI は使えない(設定し忘れて誰でも呼べる状態になるのを防ぐ)
+  - **合言葉なしの公開**(11/3 の利用者の決定。docs/tasks-1103.md の「利用者の決定(11/3)」の 2):AI も含めて合言葉なしで公開する。本番は `DISPATCHER_PUBLIC=1` で明示する。`DISPATCHER_PUBLIC` が許すのは合言葉を省くことだけで、取っ手の秘密(§4.4)などほかの設定は省けない。`DISPATCHER_TOKEN` も設定してあれば合言葉を求める(`tokenRequired: true`)。費用は、IP ごとの回数・1セッション $3・1日 $6(下の表)と Console のワークスペースの月の上限 200 ドルで守る
+  - サンプル GTFS(`/api/sample-gtfs`)と参照データ(`/api/ref`)は、合言葉の対象に入れない(同じ決定)
 - IP アドレス:前の版と同じ(`DISPATCHER_TRUST_PROXY=1` のときだけ `X-Real-IP`。`X-Forwarded-For` は読まない)
 - 料金の目安(定価。2026-11-03 の `shared/models.md` と `managed-agents-core.md`):
   - 調整役(Sonnet 5.5。入力 $2・出力 $10・キャッシュの読み込み $0.20/100万トークン):1回のモデルの要求で、入力 2〜3 万トークン(多くはキャッシュ)と出力 1 千トークンとして約 $0.02〜0.03。利用者の発言 10 回(ツールの往復を入れて要求 40 回)で約 $1
@@ -362,7 +365,9 @@ CREATE TABLE research_results (                                                 
   - 台帳(`cost_ledger`)の合計だけで抑えても足りない。台帳に額が入るのは `retrieve` の後で、workflow run の間は最長で数分遅れる(§4.10)。その間に作られたセッションは、どれも関門を通り、それぞれ 3 ドルまで使える。最悪は、上の 60 ドル/日と変わらない
   - だから新しいセッションの関門は**予約の形**にする。「今日の台帳の合計」+「消していない(`deleted_at` が空の)セッションごとの(予算 − 最後に読んだ `cost_cents`)」+「新しいセッションの予算」が `DISPATCHER_DAILY_COST_CENTS` を超えるなら、作成を 429 にする。セッションは予算を超えて使えないので、1日の額はこの上限を大きくは超えない
   - `message` は、今日の台帳の合計が上限に達したら 429 にする(ツールの結果と止めるは通す)。文は「今日の AI の利用額の上限に達しました。日本時間の翌日になってから使ってください」
-  - 600 セント/日なら月 180 ドルに収まる。ただし予約の形では、3 ドルのセッションを同時に2つまでしか開けない(使わずに開いたままの画面も、24 時間の掃除か `DELETE` まで1つ分を取る)。値は §11 の 2 で決めてもらう
+  - **閉じ損ねたセッション**(11/3 の利用者の決定の 1):最後の操作(`last_activity_at`)からも、最後にストリームがつながっていた日時(`last_stream_at`。一度もつながっていなければ `created_at`)からも 30 分たった行は、残りの予算ではなく使った額だけを予約に数える。使った額は台帳に入っている(idle のたびと掃除の `retrieve`。§4.10)ので、予約の和には 0 を足す(`cost_cents` を足すと台帳と二重に数える)。戻ってきてつなぎ直すか発言すれば、また残りの予算を数える(取っ手はそのまま使え、会話を続けられる)。行は消さない(24 時間の掃除まで残す)
+  - 600 セント/日なら月 180 ドルに収まる。ただし予約の形では、3 ドルのセッションを同時に2つまでしか開けない(使わずに開いたままの画面も、ストリームがつながっている間は1つ分を取る。閉じ損ねた画面は 30 分で外れる)。値は §11 の 2 で決めてもらう
+  - 30 分で外した行の人が戻ってくると、1日の額が上限を最大で1セッションの予算ぶん超えうる。台帳が上限に達したら発言は止まり(下)、月の額は Console の上限で守る
   - 最後の歯止めとして、Console でワークスペースの月の利用額の上限を 200 ドルに付ける。11/6 のデプロイの前に必ず付ける(§9)
 - 超えたら 429(日本語。どの上限かが分かる文)
 
@@ -451,6 +456,7 @@ CREATE TABLE research_results (                                                 
 - **上限に達したとき**:予算(§4.9 の文と「新しく始める」ボタン)、1日の上限・回数制限(サーバーの文をそのまま)
 - **利用額**:入力欄の下に小さく「この会話の AI の利用額 約 ${cost} / 上限 ${budget}」(`usage`。定価で数えた額。上限は `budget_cents` から作り、金額を直接書かない)
 - **AI に送る情報**:送るたびに、送った中身(利用者の文、[画面の…] の行、ツールの結果の JSON)を時刻つきで残す。送る前に入力欄の下に「送るのは、あなたの文と、画面の状態・操作の行、ツールの結果(便の一覧や件数)です。GTFS のファイルは送りません」と出す。調査を始めるときは「調べる施設・事業者の名前と位置(国土数値情報)を送り、AI が Web で検索します」を足す
+- **AI を準備しています…**(T15):送ってから、新しいセッションの最初のストリームがつながるまで(セッションを作っている間と最初の接続を待つ間。最初の接続は 15 秒ほどかかる。§9)、会話の下に「AI を準備しています…(最初は 15 秒ほどかかります)」と出す。この間は「送っています…」を重ねない。つながった後の発言とつなぎ直しでは出さない
 - **つなぎ直し**:ストリームが切れたら、1・2・4・8 秒(以後 8 秒ごと)でつなぎ直す。`Last-Event-ID` に最後に受け取った `id` を付ける。つなぎ直している間は「つなぎ直しています…」
 - 文言は画面の日本語の規則(CLAUDE.md)に従う
 
@@ -458,7 +464,7 @@ CREATE TABLE research_results (                                                 
 
 - **始める**:最初に送るとき(発言、「AI に候補を聞く」、11/6 の「前提情報を調べる」)に `POST /api/claude/session` で作り、ストリームをつないでから送る(ストリームを先に開く)。GTFS を読み込んだだけでは作らない
 - **GTFS を読み込み直したとき**:ツールの実行を止め、`DELETE /api/claude/session` を送り(`fetch` の `keepalive: true`)、取っ手を捨て、表示を消して「GTFS を読み込み直したので、AI との会話を新しく始めます」と出す。次に送るときに新しいセッションを作る
-- **ページを閉じる・読み込み直すとき**:`pagehide` で `DELETE` を `keepalive: true` で送る(届かなくても 24 時間の掃除で消える)。取っ手はメモリにしか無いので、読み込み直した後は新しいセッションになる
+- **ページを閉じる・読み込み直すとき**:`pagehide` で `DELETE` を `keepalive: true` で送る(届かなくても 24 時間の掃除で消え、1日の利用額の予約からは 30 分で外れる。§4.11)。取っ手はメモリにしか無いので、読み込み直した後は新しいセッションになる
 - **新しく始める**(予算に達したときなど):`DELETE` の後に作り直す
 
 ## 7. 足し戻しの手がかり(11/5 の2つ)
@@ -488,7 +494,8 @@ CREATE TABLE research_results (                                                 
 ### server(`server/tests/test_agent_relay.py` ほか)
 
 - 設定ファイル(`test_agent_files.py`):§3.3 の5つ
-- status:API キー・エージェントの ID と版・実行環境の ID・取っ手の秘密・合言葉の有無で `available`・`tokenRequired` が変わる。`DISPATCHER_DEV=1` のときだけ秘密が無くても動く
+- status:API キー・エージェントの ID と版・実行環境の ID・取っ手の秘密・合言葉の有無で `available`・`tokenRequired` が変わる。`DISPATCHER_DEV=1` のときだけ秘密が無くても動く。`DISPATCHER_PUBLIC=1` は合言葉が無くても動くが、秘密は省けない
+- 予約:最後の操作とストリームから 30 分たった行は残りの予算を数えない。ストリームは、つないだとき・つながっている間・切れたときに `last_stream_at` を記録する。前の版の SQLite には列を足す
 - 作成:偽物が受け取った `agent` が `{type: agent, id, version}`、`environment_id`、`budget` が `{"type": "limit", "max_list_cost": {"amount": "300", "currency": "USD"}}`、`initial_events` が無い。SQLite に行ができる。IP ごと・全体の回数で 429。全体の回数は再起動(アプリを作り直す)の後も数えられている
 - 1日の利用額:消していないセッションの予約(予算 − 最後に読んだ額)と台帳の合計で、上限を超える作成が 429。台帳が上限に達した後の `message` は 429 で、`tool_results` と `interrupt` は通る
 - 合言葉:どのエンドポイントも、合言葉が無いか違えば 401
@@ -533,9 +540,9 @@ CREATE TABLE research_results (                                                 
 
 - nginx:`/api/claude/session/stream` は `proxy_buffering off;`、`proxy_read_timeout 3600s;`(長いストリーム)。`proxy_set_header X-Real-IP $remote_addr;`
 - uvicorn のワーカーは1つ(セッションの状態と回数の数え上げをメモリに持つため)。`--timeout-graceful-shutdown 3` を付ける(開いたストリームが閉じるのを待ち続けて、止まらなくなるため。11/3 に開発の自動の読み込み直しで起きた。開発の `main()` には付けた)。アクセスログは `--no-access-log`(IP の生の値を残さない)
-- 閉じ損ねたセッション(ブラウザが落ちた、`pagehide` の DELETE が届かなかった)は、24 時間の掃除まで1日の利用額の予約(§4.11)を持ち続ける。$6/日では2つで新しいセッションが作れなくなる。最後の操作から一定時間(例 30 分)ストリームがつながっていない行は、予約を残りの予算ではなく使った額だけにするか、先に消すかを、デプロイの前に決める(11/3 のブラウザでの確かめで、サーバーが読み込み直しの途中で DELETE が届かず、2つ残った)
-- 最初のストリームを開くのに 15 秒ほどかかった(11/3 のブラウザでの確かめ。新しいセッションの最初の接続は Anthropic の側の準備を待つ)。最初の発言の前に「AI を準備しています…」を出すか、GTFS を読み込んだ時点でセッションを作ってつないでおくかを、デモの前に決める
-- compose:`DISPATCHER_TRUST_PROXY=1`、`DISPATCHER_TOKEN`、`ANTHROPIC_API_KEY`、`DISPATCHER_AGENT_ID`・`DISPATCHER_AGENT_VERSION`・`DISPATCHER_ENVIRONMENT_ID`、`DISPATCHER_SESSION_SECRET` を環境変数で渡す。`DISPATCHER_DEV` は付けない。SQLite(`DISPATCHER_DB`)はボリュームに置く
+- 閉じ損ねたセッション(ブラウザが落ちた、`pagehide` の DELETE が届かなかった)は、24 時間の掃除まで1日の利用額の予約(§4.11)を持ち続ける。$6/日では2つで新しいセッションが作れなくなる(11/3 のブラウザでの確かめで、サーバーが読み込み直しの途中で DELETE が届かず、2つ残った)。**決まった(11/3 の利用者の決定の 1。T15 で作った)**:最後の操作から 30 分ストリームがつながっていない行は、使った額だけを予約に数える(§4.10 の `last_stream_at`、§4.11)
+- 最初のストリームを開くのに 15 秒ほどかかった(11/3 のブラウザでの確かめ。新しいセッションの最初の接続は Anthropic の側の準備を待つ)。**決まった(T15 で作った)**:送ってから最初のストリームがつながるまで、AI の欄に「AI を準備しています…(最初は 15 秒ほどかかります)」を出す。GTFS を読み込んだ時点でセッションを作る案は採らない(開いたままの画面が1日の利用額の予約を取るため)
+- compose:`DISPATCHER_TRUST_PROXY=1`、`ANTHROPIC_API_KEY`、`DISPATCHER_AGENT_ID`・`DISPATCHER_AGENT_VERSION`・`DISPATCHER_ENVIRONMENT_ID`、`DISPATCHER_SESSION_SECRET` を環境変数で渡す。合言葉なしで公開する(11/3 の利用者の決定の 2)ので `DISPATCHER_PUBLIC=1` を渡し、`DISPATCHER_TOKEN` は空にする(合言葉を使うときだけ渡す)。`DISPATCHER_DEV` は付けない。SQLite(`DISPATCHER_DB`)はボリュームに置く
 - 本番の API キーは、エージェントを作ったのと同じワークスペースのキーにする。Console で、そのワークスペースの月の利用額の上限を 200 ドルに付ける(デプロイの前に必ず。§4.11)
 - `ant apply` は利用者の手元で行う(CI では行わない。`--yes` は利用者の承認なので)
 

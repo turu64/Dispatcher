@@ -4,8 +4,9 @@
 #          HTTPS は VPS の既存の nginx で終端してここに中継する
 #   server FastAPI(uvicorn。ワーカー1)。ポートは公開しない
 #
-# 秘密(ANTHROPIC_API_KEY・DISPATCHER_TOKEN など)はイメージに入れない。リポジトリ直下の .env(コミットしない)か、
+# 秘密(ANTHROPIC_API_KEY・DISPATCHER_SESSION_SECRET など)はイメージに入れない。リポジトリ直下の .env(コミットしない)か、
 # 環境変数で渡す。.env.example に項目と意味がある。
+# 合言葉なしで公開するときは DISPATCHER_PUBLIC=1 を渡す(DISPATCHER_TOKEN も DISPATCHER_PUBLIC も無いと AI は使えない)。
 # 起動:docker compose up -d --build   (ローカルで確かめるときは DISPATCHER_PORT=8080 のように別のポートで)
 
 services:
@@ -15,9 +16,10 @@ services:
       dockerfile: server/Dockerfile
     restart: unless-stopped
     environment:
-      # 外側の nginx(web)が付ける X-Real-IP を接続元として読む。DISPATCHER_DEV は付けない
+      # 外側の nginx(web)が付ける X-Real-IP を接続元として読む。DISPATCHER_DEV は付けない(合言葉なしは DISPATCHER_PUBLIC)
       DISPATCHER_TRUST_PROXY: "1"
       DISPATCHER_TOKEN: ${DISPATCHER_TOKEN:-}
+      DISPATCHER_PUBLIC: ${DISPATCHER_PUBLIC:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_WORKSPACE_ID: ${ANTHROPIC_WORKSPACE_ID:-}
       DISPATCHER_AGENT_ID: ${DISPATCHER_AGENT_ID:-}

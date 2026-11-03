@@ -28,6 +28,7 @@ from dispatcher_server import agent_relay, agent_session, settings
 from dispatcher_server.app import app
 from dispatcher_server.ratelimit import RateLimiter, jst_day
 from dispatcher_server.store import get_store
+from dispatcher_server.store import iso as store_iso
 
 API_KEY = "sk-ant-test-0123456789-secret"
 TOKEN = "test-token-0123456789"
@@ -164,6 +165,44 @@ def test_dev_flag_allows_missing_token_and_secret_only_in_dev(monkeypatch: pytes
     assert agent_relay.parse_handle(handle) == handle.split(".")[1]
 
 
+def test_public_flag_allows_no_token_but_keeps_the_other_requirements(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic) -> None:
+    # 本番で合言葉なしの公開を明示する(DISPATCHER_PUBLIC=1)。API キーがあって合言葉も PUBLIC も DEV も無ければ今どおり止める
+    enable(monkeypatch, token=None)
+    assert client.get("/api/claude/status").json() == {"available": False, "tokenRequired": False}
+    response = client.post("/api/claude/session", json={})
+    assert response.status_code == 503 and response.json()["detail"] == agent_relay.MSG_NO_TOKEN
+    monkeypatch.setenv("DISPATCHER_PUBLIC", "1")
+    assert client.get("/api/claude/status").json() == {"available": True, "tokenRequired": False}
+    response = client.post("/api/claude/session", json={})
+    assert response.status_code == 200
+    handle = response.json()["handle"]
+    # 取っ手は設定した秘密で署名する(起動ごとの乱数ではない)
+    with monkeypatch.context() as patch:
+        patch.setenv("DISPATCHER_SESSION_SECRET", SECRET + "-other")
+        assert agent_relay.parse_handle(handle) is None
+    assert agent_relay.parse_handle(handle) == handle.split(".")[1]
+    assert client.post("/api/claude/session/events", json=message(), headers={"X-Dispatcher-Session": handle}).status_code == 200
+    # DISPATCHER_DEV のほかの緩みは許さない:取っ手の秘密が無ければ使えない
+    with monkeypatch.context() as patch:
+        patch.delenv("DISPATCHER_SESSION_SECRET")
+        assert client.get("/api/claude/status").json() == {"available": False, "tokenRequired": False}
+        response = client.post("/api/claude/session", json={})
+        assert response.status_code == 503 and response.json()["detail"] == agent_relay.MSG_NO_SECRET
+    # 合言葉も設定してあれば、合言葉を求める
+    monkeypatch.setenv("DISPATCHER_TOKEN", TOKEN)
+    assert client.get("/api/claude/status").json() == {"available": True, "tokenRequired": True}
+    assert client.post("/api/claude/session", json={}, headers={"X-Dispatcher-Token": "wrong"}).status_code == 401
+    assert client.post("/api/claude/session", json={}).status_code == 401
+    assert client.post("/api/claude/session", json={}, headers=headers()).status_code == 200
+
+
+@pytest.mark.parametrize("value", ["0", "", "no"])
+def test_public_flag_must_be_explicit(monkeypatch: pytest.MonkeyPatch, client: TestClient, value: str) -> None:
+    enable(monkeypatch, token=None)
+    monkeypatch.setenv("DISPATCHER_PUBLIC", value)
+    assert client.get("/api/claude/status").json()["available"] is False
+
+
 def test_status_does_not_expose_secrets(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
     enable(monkeypatch)
     text = client.get("/api/claude/status").text
@@ -296,6 +335,84 @@ def test_daily_cost_reserves_the_budget_of_open_sessions(monkeypatch: pytest.Mon
     create(client)
 
 
+def test_sessions_left_without_a_stream_for_30_minutes_reserve_only_what_they_used(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic) -> None:
+    # 閉じ損ねたセッション(ブラウザが落ちた、DELETE が届かなかった)が、1日の利用額の予約を持ち続けない
+    enable(monkeypatch)
+    monkeypatch.setenv("DISPATCHER_SESSIONS_PER_IP_HOUR", "100")
+    first = create(client)
+    second = create(client)
+    assert client.post("/api/claude/session", json={}, headers=headers()).status_code == 429
+    store = get_store()
+    now = time.time()
+    first_row = row_of(first)["row_id"]
+    store.record_cost(first_row, 120, now)
+    # 最後の操作とストリームが 29 分前なら、まだ予約に数える
+    store.touch(first_row, now - 29 * 60)
+    store.mark_stream(first_row, now - 29 * 60)
+    assert client.post("/api/claude/session", json={}, headers=headers()).status_code == 429
+    # 31 分前なら、使った額(台帳の 120)だけを数える:台帳 120 + 2つ目の 300 + 新しい 300 = 720 > 600
+    store.touch(first_row, now - 31 * 60)
+    store.mark_stream(first_row, now - 31 * 60)
+    assert client.post("/api/claude/session", json={}, headers=headers()).status_code == 429
+    monkeypatch.setenv("DISPATCHER_DAILY_COST_CENTS", "720")
+    third = create(client)
+    # 戻ってきた人は会話を続けられ(取っ手はそのまま使える)、つなげば予約にまた数える
+    assert post_events(client, first, message()).status_code == 200
+    assert client.post("/api/claude/session", json={}, headers=headers()).status_code == 429
+    assert row_of(second)["ended_at"] is None and row_of(third)["ended_at"] is None
+
+
+def test_stream_records_when_it_was_last_connected(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic) -> None:
+    enable(monkeypatch)
+    handle = create(client)
+    assert row_of(handle)["last_stream_at"] is None
+    before = store_iso(time.time())
+    fake.streams = [FakeStream([])]
+    stream(client, handle)
+    stamp = row_of(handle)["last_stream_at"]
+    assert stamp is not None and stamp >= before
+    # 開けなかったストリームは記録しない
+    other = create(client)
+    fake.stream_error = RuntimeError("接続できません")
+    response = client.get("/api/claude/session/stream", headers=headers(other))
+    assert response.status_code >= 500
+    assert row_of(other)["last_stream_at"] is None
+
+
+def test_marked_frames_record_again_while_the_stream_stays_connected(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    marks: list[str] = []
+    closed: list[bool] = []
+    monkeypatch.setattr(agent_relay, "_mark_stream", lambda row_id: marks.append(row_id))
+
+    async def frames() -> Any:
+        try:
+            for index in range(5):
+                yield f"frame{index}"
+        finally:
+            closed.append(True)
+
+    async def take(count: int) -> list[str]:
+        result = []
+        gen = agent_relay._marked_frames("row", frames())
+        async for frame in gen:
+            result.append(frame)
+            if len(result) == count:
+                break
+        await gen.aclose()
+        return result
+
+    monkeypatch.setattr(agent_relay, "STREAM_MARK_SECONDS", 3600.0)
+    assert asyncio.run(take(5)) == [f"frame{index}" for index in range(5)]
+    assert marks == []
+    monkeypatch.setattr(agent_relay, "STREAM_MARK_SECONDS", 0.0)
+    assert asyncio.run(take(3)) == ["frame0", "frame1", "frame2"]
+    assert marks == ["row", "row", "row"]
+    # 外側を閉じたら中も閉じる
+    assert closed == [True, True]
+
+
 def test_concurrent_creates_cannot_slip_past_the_limits(monkeypatch: pytest.MonkeyPatch, fake: FakeAnthropic) -> None:
     # sessions.create を待つ間に別の作成が来ても、記録の前の数で関門を通さない(回数と1日の利用額の予約)
     import asyncio
@@ -323,7 +440,7 @@ def test_concurrent_creates_cannot_slip_past_the_limits(monkeypatch: pytest.Monk
     # 600 セント/日、3 ドルのセッションは同時に2つまで
     assert sorted(codes) == [200, 200] + [429] * 6
     assert len(fake.calls_named("sessions.create")) == 2
-    assert get_store().reserved_cents(300) == 600
+    assert get_store().reserved_cents(300, now=time.time()) == 600
 
     # IP ごとの回数も同じ(1時間 3 回)
     monkeypatch.setenv("DISPATCHER_SESSIONS_PER_IP_HOUR", "3")
@@ -1246,6 +1363,7 @@ def test_env_example_lists_the_variables_without_values_for_secrets() -> None:
         "DISPATCHER_SESSION_SECRET",
         "DISPATCHER_TOKEN",
         "DISPATCHER_DEV",
+        "DISPATCHER_PUBLIC",
         "DISPATCHER_TRUST_PROXY",
         "DISPATCHER_DB",
         "DISPATCHER_SESSION_BUDGET_CENTS",

@@ -7,10 +7,13 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   canStop,
   CLAUDE_UNAVAILABLE,
+  isPreparing,
+  PREPARING,
   RECONNECTING,
   researchText,
   RESEARCH_KEEP_OPEN,
   SEND_INFO_NOTE,
+  SENDING,
   sendBlockedReason,
   THINKING,
   useChatStore,
@@ -78,6 +81,7 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
   const blocked = unavailable || statusFailed || checking || needToken ? 'unavailable' : sendBlockedReason(s)
   const research = researchText(s.research)
   const stoppable = canStop(s)
+  const preparing = isPreparing(s)
 
   function submit() {
     const t = text.trim()
@@ -121,6 +125,11 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
             </p>
           )}
           <ChatMessages items={s.items} />
+          {preparing && (
+            <p role="status" className="mt-2 text-xs text-muted-foreground">
+              {PREPARING}
+            </p>
+          )}
           {s.replying && (
             <p role="status" className="mt-2 text-xs text-muted-foreground">
               {THINKING}
@@ -221,7 +230,8 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
                     止める
                   </Button>
                 )}
-                {blocked && blocked !== 'unavailable' && (
+                {/* 準備中は上の「AI を準備しています…」を出すので、「送っています…」を重ねない */}
+                {blocked && blocked !== 'unavailable' && !(preparing && blocked === SENDING) && (
                   <span role="status" className="text-xs text-muted-foreground">
                     {blocked}
                   </span>

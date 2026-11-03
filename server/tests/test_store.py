@@ -13,8 +13,8 @@ def test_tables_have_no_columns_for_conversation_or_ip() -> None:
     store = get_store()
     columns = {row["name"] for row in store._all("PRAGMA table_info(agent_sessions)")}
     assert columns == {
-        "row_id", "session_id", "agent_version", "created_at", "last_activity_at", "ended_at", "deleted_at",
-        "delete_pending", "delete_attempts", "cost_cents", "messages", "tool_calls",
+        "row_id", "session_id", "agent_version", "created_at", "last_activity_at", "last_stream_at", "ended_at",
+        "deleted_at", "delete_pending", "delete_attempts", "cost_cents", "messages", "tool_calls",
     }
 
 
@@ -49,7 +49,61 @@ def test_reserved_cents_counts_rows_that_are_not_deleted() -> None:
     store.record_cost("a", 100, now)
     store.record_cost("b", 400, now)  # 予算を超えた分は 0 として数える
     store.mark_deleted("c", now)
-    assert store.reserved_cents(300) == 200
+    assert store.reserved_cents(300, now=now) == 200
+
+
+def test_reserved_cents_counts_only_the_used_amount_for_rows_left_without_a_stream() -> None:
+    # 最後の操作から 30 分ストリームがつながっていない行(閉じ損ねたセッション)は、残りの予算を予約に数えない。
+    # 使った額は台帳に入っているので、予約には足さない(足すと二重に数える)
+    store = get_store()
+    now = time.time()
+    minute = 60.0
+    store.insert_session("never", "sesn_never", 1, now - 31 * minute)  # 作ってから一度もつながっていない
+    store.insert_session("closed", "sesn_closed", 1, now - 60 * minute)
+    store.mark_stream("closed", now - 31 * minute)  # 31 分前に切れた
+    store.record_cost("closed", 120, now - 40 * minute)
+    store.insert_session("streaming", "sesn_streaming", 1, now - 120 * minute)
+    store.mark_stream("streaming", now - 1 * minute)  # 長くつながっている(つながっている間は記録し直す)
+    store.insert_session("recent", "sesn_recent", 1, now - 120 * minute)
+    store.mark_stream("recent", now - 60 * minute)
+    store.touch("recent", now - 10 * minute)  # ストリームは無いが、10 分前に発言した
+    store.insert_session("new", "sesn_new", 1, now - 5 * minute)  # 作ったばかりで、まだつながっていない
+    assert store.reserved_cents(300, now=now) == 300 * 3
+    assert store.ledger_cents(jst_day(now - 40 * minute)) == 120  # 使った額は台帳に残る
+    # 戻ってきてつなぎ直せば、また残りの予算を数える
+    store.mark_stream("closed", now)
+    assert store.reserved_cents(300, now=now) == 300 * 3 + 180
+    # 30 分ちょうどまでは数える
+    store.insert_session("edge", "sesn_edge", 1, now - 30 * minute)
+    assert store.reserved_cents(300, now=now) == 300 * 4 + 180
+
+
+def test_an_old_database_gets_the_new_column(tmp_path) -> None:
+    import sqlite3
+
+    from dispatcher_server.store import Store
+
+    path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE agent_sessions (row_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,"
+        " agent_version INTEGER NOT NULL, created_at TEXT NOT NULL, last_activity_at TEXT NOT NULL, ended_at TEXT,"
+        " deleted_at TEXT, delete_pending INTEGER NOT NULL DEFAULT 0, delete_attempts INTEGER NOT NULL DEFAULT 0,"
+        " cost_cents INTEGER NOT NULL DEFAULT 0, messages INTEGER NOT NULL DEFAULT 0,"
+        " tool_calls INTEGER NOT NULL DEFAULT 0);"
+        " INSERT INTO agent_sessions (row_id, session_id, agent_version, created_at, last_activity_at)"
+        " VALUES ('old', 'sesn_old', 1, '2026-11-03T00:00:00.000000+00:00', '2026-11-03T00:00:00.000000+00:00');"
+    )
+    conn.close()
+    store = Store(path)
+    try:
+        row = store.get_session("old")
+        assert row is not None and row["last_stream_at"] is None
+        store.mark_stream("old", time.time())
+        assert store.get_session("old")["last_stream_at"] is not None
+    finally:
+        store.close()
+    Store(path).close()  # 2 回目は足さない(エラーにならない)
 
 
 def test_research_results_are_not_overwritten_while_valid_or_from_demo() -> None:

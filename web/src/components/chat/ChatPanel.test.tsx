@@ -14,6 +14,8 @@ import {
   chatToolDeps,
   CLAUDE_UNAVAILABLE,
   createChatStore,
+  PREPARING,
+  SENDING,
   setChatToolProviders,
   SEND_INFO_NOTE,
   TOKEN_WRONG,
@@ -210,6 +212,47 @@ describe('AI に相談の欄', () => {
     expect(within(conversation).getAllByRole('listitem').some((li) => li.textContent === '期間')).toBe(true)
     expect(screen.getByText(/この会話の AI の利用額 約 \$0\.42 \/ 上限 \$3/)).toBeTruthy()
     expect(screen.getByText(SEND_INFO_NOTE)).toBeTruthy()
+  })
+
+  it('最初のストリームがつながるまで「AI を準備しています…」を出し、つながったら消す。2回目の発言では出さない', async () => {
+    const { store, fake } = setup()
+    // 新しいセッションの最初の接続は、Anthropic の側の準備を待つので遅い。つながるのを手で進める
+    let open: () => void = () => undefined
+    const opened = new Promise<void>((r) => (open = r))
+    const realOpen = fake.api.openStream
+    fake.api.openStream = vi.fn(async (o) => {
+      await opened
+      return realOpen(o)
+    })
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    expect(screen.queryByText(PREPARING)).toBeNull()
+    await typeAndSend('平日を土曜ダイヤにしてください')
+    expect(await screen.findByText(PREPARING)).toBeTruthy()
+    // 「送っています…」は重ねて出さない。まだ発言は送っていない
+    expect(screen.queryByText(SENDING)).toBeNull()
+    expect(fake.posts.some((p) => p.body.kind === 'message')).toBe(false)
+
+    await act(async () => open())
+    await waitFor(() => expect(screen.queryByText(PREPARING)).toBeNull())
+    expect(fake.posts.some((p) => p.body.kind === 'message')).toBe(true)
+    expect(screen.getByText('考えています…')).toBeTruthy()
+
+    // つながったセッションへの次の発言では出さない
+    act(() => fake.last().push(status('e1', 'idle', 'end_turn')))
+    await waitFor(() => expect(screen.queryByText('考えています…')).toBeNull())
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((r) => (release = r))
+    const realPost = fake.api.post
+    fake.api.post = vi.fn(async (...args: Parameters<typeof realPost>) => {
+      await gate
+      return realPost(...args)
+    })
+    await typeAndSend('続けて')
+    expect(screen.getByText(SENDING)).toBeTruthy()
+    expect(screen.queryByText(PREPARING)).toBeNull()
+    await act(async () => release())
+    expect(fake.api.create).toHaveBeenCalledTimes(1)
   })
 
   it('Ctrl+Enter(Mac は ⌘+Enter)で送り、Enter だけでは送らない', async () => {

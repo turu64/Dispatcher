@@ -120,6 +120,15 @@ def dev_mode() -> bool:
     return _flag("DISPATCHER_DEV")
 
 
+def public_mode() -> bool:
+    """DISPATCHER_PUBLIC=1。本番で合言葉なしの公開を明示する(docs/tasks-1103.md の「利用者の決定(11/3)」の 2)。
+
+    合言葉が無くても Claude の中継を使えるようにするだけ。DISPATCHER_DEV のほかの緩み(取っ手の秘密を
+    起動ごとの乱数にするなど)は許さない。合言葉も設定されていれば、合言葉を求める。
+    """
+    return _flag("DISPATCHER_PUBLIC")
+
+
 def session_secret() -> bytes | None:
     """取っ手の署名の秘密。無ければ、開発(DISPATCHER_DEV=1)では起動ごとの乱数、そうでなければ None。"""
     value = _env("DISPATCHER_SESSION_SECRET")

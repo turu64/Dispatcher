@@ -35,6 +35,8 @@ export const TOOLS_WAITING = 'AI がツールの結果を待っています'
 export const SENDING = '送っています…'
 export const THINKING = '考えています…'
 export const RECONNECTING = 'つなぎ直しています…'
+/** 新しいセッションの最初のストリームがつながるまで(Anthropic の側の準備を待つ。docs/interfaces-1105.md §9) */
+export const PREPARING = 'AI を準備しています…(最初は 15 秒ほどかかります)'
 export const TEXT_TOO_LONG = '文が長すぎます。短くして送ってください'
 /** 送る前に入力欄の下に出す文(§6.4) */
 export const SEND_INFO_NOTE =
@@ -213,6 +215,14 @@ export function sendBlockedReason(s: Pick<ChatState, 'status' | 'budgetReached' 
   if (s.toolRunning) return TOOLS_WAITING
   if (s.sending) return SENDING
   return null
+}
+
+/**
+ * AI を準備している(送ってから、最初のストリームがつながるまで)。セッションを作っている間(connection が none)と、
+ * 最初の接続を待つ間(connecting)。つながった後の発言(open)とつなぎ直し(reconnecting)では出さない
+ */
+export function isPreparing(s: Pick<ChatState, 'sending' | 'connection'>): boolean {
+  return s.sending && (s.connection === 'none' || s.connection === 'connecting')
 }
 
 /** 「止める」を押せる(返答の途中か、ツールを実行している) */

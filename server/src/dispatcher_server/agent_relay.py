@@ -111,8 +111,9 @@ def _unavailable_message() -> str | None:
         return MSG_NO_AGENT
     if settings.session_secret() is None:
         return MSG_NO_SECRET
-    # 本番で合言葉を設定し忘れて、誰でも呼べる状態になるのを防ぐ。開発では DISPATCHER_DEV=1 で明示する
-    if settings.dispatcher_token() is None and not settings.dev_mode():
+    # 本番で合言葉を設定し忘れて、誰でも呼べる状態になるのを防ぐ。合言葉なしで使うときは明示する
+    # (本番の公開は DISPATCHER_PUBLIC=1、開発は DISPATCHER_DEV=1)。DISPATCHER_PUBLIC では取っ手の秘密は省けない(上で確かめた)
+    if settings.dispatcher_token() is None and not (settings.public_mode() or settings.dev_mode()):
         return MSG_NO_TOKEN
     return None
 
@@ -140,7 +141,7 @@ def _check_available_and_token(request: Request) -> None:
         _reject(503, unavailable, "unavailable")
     expected = settings.dispatcher_token()
     if expected is None:
-        return  # DISPATCHER_DEV=1 の開発(_unavailable_message で確かめ済み)
+        return  # 合言葉なしの公開(DISPATCHER_PUBLIC=1)か開発(DISPATCHER_DEV=1)。_unavailable_message で確かめ済み
     # ヘッダーの値は Starlette が latin-1 で読む。元のバイト列に戻して、定数時間で照合する
     given = request.headers.get(TOKEN_HEADER, "").encode("latin-1", errors="replace")
     if not hmac.compare_digest(given, expected.encode("utf-8")):
@@ -260,9 +261,10 @@ def _check_create_limits(address: str) -> None:
     today = jst_day(now)
     if store.sessions_created_on(today) >= settings.sessions_per_day():
         _reject(429, MSG_LIMIT_SESSIONS_TOTAL, "rate_sessions_day")
-    # 予約の形:今日の台帳 + 消していないセッションの残りの予算 + 新しいセッションの予算(§4.11)
+    # 予約の形:今日の台帳 + 消していないセッションの残りの予算 + 新しいセッションの予算(§4.11)。
+    # 最後の操作から 30 分ストリームがつながっていない行は、残りの予算を数えない(使った額は台帳に入っている)
     budget = settings.session_budget_cents()
-    reserved = store.ledger_cents(today) + store.reserved_cents(budget) + budget
+    reserved = store.ledger_cents(today) + store.reserved_cents(budget, now=now) + budget
     if reserved > settings.daily_cost_cents():
         _reject(429, MSG_LIMIT_COST, "rate_cost_day")
 
@@ -307,6 +309,39 @@ async def create_session(request: Request) -> dict[str, Any]:
 
 # ---- ストリーム(§4.5) ----
 
+# ストリームがつながっている間、最後につながっていた日時(last_stream_at)を記録し直す間隔。
+# 15 秒ごとの ping が流れるので、つながっている間はこの間隔で必ず記録する(1日の利用額の予約。store.RESERVATION_IDLE)
+STREAM_MARK_SECONDS = 60.0
+
+
+def _mark_stream(row_id: str) -> None:
+    get_store().mark_stream(row_id, time.time())
+
+
+async def _marked_frames(row_id: str, frames: AsyncIterator[str]) -> AsyncIterator[str]:
+    """frames をそのまま流し、つながっている間は STREAM_MARK_SECONDS ごとに last_stream_at を記録する。"""
+    marked = time.monotonic()
+    try:
+        async for frame in frames:
+            now = time.monotonic()
+            if now - marked >= STREAM_MARK_SECONDS:
+                _mark_stream(row_id)
+                marked = now
+            yield frame
+    finally:
+        # 外側が閉じられたら、中の流れ(非同期ジェネレーター)も閉じる(片づけを GC に任せない)
+        aclose = getattr(frames, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+
+async def _close_stream(row_id: str, close: Callable[[], Awaitable[None]]) -> None:
+    # 切れた時刻を、最後につながっていた日時にする(ジェネレーターの finally は走らないことがあるので、ここで記録する)
+    try:
+        await close()
+    finally:
+        _mark_stream(row_id)
+
 
 class _SessionStreamResponse(StreamingResponse):
     """返し終えたら(ブラウザがいなくなって本文を一度も読まなかったときも)、開いた Anthropic のストリームを片づける。"""
@@ -335,9 +370,12 @@ async def session_stream(request: Request) -> StreamingResponse:
         prepared = await agent_session.prepare_stream(state, client, last_event_id)
     except RelayError as error:
         _raise_relay(error)
+    _mark_stream(row["row_id"])
     return _SessionStreamResponse(
-        agent_session.stream_frames(state, client, prepared),
-        on_close=functools.partial(agent_session.close_prepared, state, prepared),
+        _marked_frames(row["row_id"], agent_session.stream_frames(state, client, prepared)),
+        on_close=functools.partial(
+            _close_stream, row["row_id"], functools.partial(agent_session.close_prepared, state, prepared)
+        ),
         headers=SSE_HEADERS,
     )
 

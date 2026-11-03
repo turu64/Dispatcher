@@ -532,7 +532,9 @@ CREATE TABLE research_results (                                                 
 ## 9. 後で(11/6 のデプロイの作業に渡す)
 
 - nginx:`/api/claude/session/stream` は `proxy_buffering off;`、`proxy_read_timeout 3600s;`(長いストリーム)。`proxy_set_header X-Real-IP $remote_addr;`
-- uvicorn のワーカーは1つ(セッションの状態と回数の数え上げをメモリに持つため)
+- uvicorn のワーカーは1つ(セッションの状態と回数の数え上げをメモリに持つため)。`--timeout-graceful-shutdown 3` を付ける(開いたストリームが閉じるのを待ち続けて、止まらなくなるため。11/3 に開発の自動の読み込み直しで起きた。開発の `main()` には付けた)。アクセスログは `--no-access-log`(IP の生の値を残さない)
+- 閉じ損ねたセッション(ブラウザが落ちた、`pagehide` の DELETE が届かなかった)は、24 時間の掃除まで1日の利用額の予約(§4.11)を持ち続ける。$6/日では2つで新しいセッションが作れなくなる。最後の操作から一定時間(例 30 分)ストリームがつながっていない行は、予約を残りの予算ではなく使った額だけにするか、先に消すかを、デプロイの前に決める(11/3 のブラウザでの確かめで、サーバーが読み込み直しの途中で DELETE が届かず、2つ残った)
+- 最初のストリームを開くのに 15 秒ほどかかった(11/3 のブラウザでの確かめ。新しいセッションの最初の接続は Anthropic の側の準備を待つ)。最初の発言の前に「AI を準備しています…」を出すか、GTFS を読み込んだ時点でセッションを作ってつないでおくかを、デモの前に決める
 - compose:`DISPATCHER_TRUST_PROXY=1`、`DISPATCHER_TOKEN`、`ANTHROPIC_API_KEY`、`DISPATCHER_AGENT_ID`・`DISPATCHER_AGENT_VERSION`・`DISPATCHER_ENVIRONMENT_ID`、`DISPATCHER_SESSION_SECRET` を環境変数で渡す。`DISPATCHER_DEV` は付けない。SQLite(`DISPATCHER_DB`)はボリュームに置く
 - 本番の API キーは、エージェントを作ったのと同じワークスペースのキーにする。Console で、そのワークスペースの月の利用額の上限を 200 ドルに付ける(デプロイの前に必ず。§4.11)
 - `ant apply` は利用者の手元で行う(CI では行わない。`--yes` は利用者の承認なので)

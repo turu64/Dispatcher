@@ -593,6 +593,13 @@ export class ClaudeSession {
     })().finally(() => {
       if (gen !== this.gen) return
       this.pumping = null
+      // 繰り返しを抜けてからここまでの間に届いた呼び出しは、pump() が「実行中」として列に入れただけなので、ここで始め直す。
+      // 始め直さないと、flush は列が残っているので送らず、結果待ちのまま止まる(11/3 のブラウザでの確かめで起きた)
+      if (this.queue.length > 0 && !this.interrupting) {
+        this.emitPending()
+        this.pump()
+        return
+      }
       if (!this.interrupting) this.scheduleFlush()
       this.emitPending()
     })

@@ -195,6 +195,34 @@ describe('tool_call を順に実行し、まとめて tool_results で送る', (
     expect(t.of('sent')[0].results.map((r) => r.name)).toEqual(['summarize_impact', 'search_trips', 'run_validation'])
   })
 
+  it('実行の繰り返しを抜けた直後に届いた呼び出しも実行し、結果を送る(結果待ちのまま止まらない)', async () => {
+    // 11/3 のブラウザでの確かめ:search_trips と summarize_impact が並んで届き、2つ目が繰り返しを抜けた後に届いて止まった
+    // delay が -1 なら、1つ目の終わりの知らせの中で同期に届ける。0 以上なら、その数の microtask の後に届ける
+    for (let delay = -1; delay <= 40; delay++) {
+      const events: SessionEvent[] = []
+      let pushLater: () => void = () => undefined
+      const t = setup({
+        onEvent: (e) => {
+          events.push(e)
+          if (e.type === 'tool_done' && e.id === 'c1') {
+            if (delay < 0) {
+              pushLater()
+              return
+            }
+            let n = delay
+            const step = () => (n-- > 0 ? queueMicrotask(step) : pushLater())
+            queueMicrotask(step)
+          }
+        },
+      })
+      await t.session.start()
+      pushLater = () => t.last().push(call('c2', 'summarize_impact'))
+      t.last().push(call('c1', 'search_trips'))
+      await vi.waitFor(() => expect(t.posts.flatMap((p) => resultsOf(p.body)).map(([id]) => id), `delay ${delay}`).toEqual(['c1', 'c2']))
+      expect(t.session.pendingTools, `delay ${delay}`).toBe(0)
+    }
+  })
+
   it('1回の返答の2つ目の編集のツールは実行せず、下書きが承認待ちと答える', async () => {
     const runTool = vi.fn(async (name: string): Promise<ToolOutcome> => {
       if (name === 'apply_policy') return { content: '{"status":"draft","draft_id":"d1"}', isError: false, draft: { id: 'd1', kind: 'op' } }

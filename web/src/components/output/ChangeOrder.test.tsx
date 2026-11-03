@@ -354,6 +354,20 @@ describe('ChangeOrder', () => {
       expect(text).not.toContain('調べていません')
     })
 
+    it('印刷では、節は1枚目の残りから始め、事業者ごとの引用の区切りで2枚目に送る。ほかの節は途中で分けない', () => {
+      commit(policy({ category: 'temporaryShortage', note: '' }))
+      const list = ['A', 'B', 'C'].map((n) => result({ targetId: `P11:事業者${n}`, name: `事業者${n}` }))
+      act(() => useResearchStore.getState().mergeResults(list))
+      render(<ChangeOrder />)
+      const sheet = screen.getByTestId('change-order')
+      expect(sheet.className).toContain('print:text-[8px]')
+      const movement = section(TITLE)
+      expect(movement.className).not.toContain('break-inside-avoid')
+      expect(screen.getByTestId('movement-quotes').className).toContain('print:columns-2')
+      for (const fig of movement.querySelectorAll('figure')) expect(fig.className).toContain('break-inside-avoid')
+      for (const name of ['2. 減便の方針と承認', '4. 平日に戻した便']) expect(section(name).className).toContain('break-inside-avoid')
+    })
+
     it('載せる事業者は 4 つまで。残りは数で示す', () => {
       commit(policy({ category: 'temporaryShortage', note: '' }))
       const list = ['A', 'B', 'C', 'D', 'E', 'F'].map((n) => result({ targetId: `P11:事業者${n}`, name: `事業者${n}` }))

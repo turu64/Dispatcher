@@ -33,6 +33,12 @@ describe('MapLegend', () => {
     expect(html).not.toContain('前後の差')
   })
 
+  it('幅は 18rem までで、地図が狭いときは地図の幅に収める', () => {
+    const html = renderToString(<MapLegend caption="x" computing={false} showStations={false} nonCoverableCells={0} />)
+    expect(html).toContain('max-w-[min(18rem,calc(100%-1.5rem))]')
+    expect(html).not.toMatch(/\bmax-w-72\b/)
+  })
+
   it('駅が無ければ駅の行を出さない。計算中はそう出す。塗らないセルが 0 でも件数を出す', () => {
     const html = renderToString(<MapLegend caption="x" computing showStations={false} nonCoverableCells={0} />)
     expect(html).not.toContain('鉄道駅')

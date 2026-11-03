@@ -121,6 +121,21 @@ describe('NoticeDraft', () => {
     expect(window.print).toHaveBeenCalledTimes(2)
   })
 
+  it('印刷では掲示の枠と余白を外し、系統ごとの時刻・運休する時刻・近くの停留所の行の途中で紙を分けない', () => {
+    approve(policy())
+    render(<NoticeDraft />)
+    pick(/駅前/)
+    const sheet = screen.getByRole('article', { name: '駅前の掲示' })
+    for (const c of ['print:border-0', 'print:p-0', 'print:rounded-none']) expect(sheet.className).toContain(c)
+    const items = sheet.querySelectorAll('li')
+    expect(items.length).toBeGreaterThan(0)
+    for (const li of items) expect(li.className).toContain('break-inside-avoid')
+    for (const h of sheet.querySelectorAll('h4')) expect(h.className).toContain('break-after-avoid')
+    expect(within(sheet).getByTestId('alternatives').className).toContain('print:text-xs')
+    // 2枚以上に続くことの断りは、紙には載せない
+    expect(screen.getByTestId('sheet-pages-note').closest('.print-hide')).not.toBeNull()
+  })
+
   it('告知文は第17条の5項目と、法定の様式ではない旨の注記を出す', () => {
     approve(policy())
     render(<NoticeDraft />)

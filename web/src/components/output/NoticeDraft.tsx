@@ -63,7 +63,7 @@ function SegmentText({ segment }: { segment: NoticeSegment }) {
 
 function LineRow({ line }: { line: LineNotice }) {
   return (
-    <li className="flex flex-col gap-0.5 border-b border-neutral-300 py-1.5 last:border-b-0">
+    <li className="flex break-inside-avoid flex-col gap-0.5 border-b border-neutral-300 py-1.5 last:border-b-0">
       <p className="text-sm font-semibold">
         系統 {line.routeName}
         {line.headsign !== '' && <span className="ml-1 font-normal">{line.headsign} 行き</span>}
@@ -123,7 +123,7 @@ function OtherOperatorsBlock({
       <p className="font-medium">{radiusLabel}以内の、ほかの事業者の停留所:</p>
       <ul className="flex flex-col gap-0.5">
         {others.map((o) => (
-          <li key={o.targetId} data-testid={`other-operator-${o.targetId}`}>
+          <li key={o.targetId} data-testid={`other-operator-${o.targetId}`} className="break-inside-avoid">
             <span className="font-medium">{o.name}</span>:{o.stops.map((s) => `${s.name}(約${s.distanceM}m)`).join('、')}
             <span className="block">系統:{o.routes.length > 0 ? o.routes.join('、') : '系統名の記載なし'}</span>
           </li>
@@ -158,7 +158,7 @@ function AlternativesBlock({
   quotes: ReadonlyMap<string, MovementQuote>
 }) {
   return (
-    <div data-testid="alternatives" className="flex flex-col gap-1 text-sm">
+    <div data-testid="alternatives" className="flex flex-col gap-1 text-sm print:text-xs">
       {alt.sameStop.length > 0 && (
         <p>
           <span className="font-medium">この停留所に残る便:</span>
@@ -174,7 +174,7 @@ function AlternativesBlock({
           <p className="font-medium">{radiusLabel}以内の、期間中も発車がある停留所:</p>
           <ul className="flex flex-col gap-0.5">
             {alt.nearby.map((n) => (
-              <li key={n.stopId}>
+              <li key={n.stopId} className="break-inside-avoid">
                 {n.stopName}(約{n.distanceM}m):{n.lines.map(remainingText).join('、')}
               </li>
             ))}
@@ -205,13 +205,20 @@ interface SheetInput {
   excludedRoutes: readonly string[]
 }
 
-/** 停留所ごとの掲示(印刷する1枚) */
+/**
+ * 停留所ごとの掲示(印刷する1枚)。
+ * 印刷では画面の枠と余白を外し(紙の余白は index.css の @page)、代わりの便の案内を 12px にする(時刻の表は小さくしない)。
+ * 系統の多い停留所は1枚に収まらないので、系統ごとの時刻・運休する時刻・近くの停留所・他の事業者の行の途中では紙を分けず、見出しは中身と離さない
+ */
 function StopSheet({ sheet }: { sheet: SheetInput }) {
   const { stop } = sheet
   const excluded = excludedAtStop(stop, sheet.excludedRoutes)
   return (
-    <article className="print-area flex flex-col gap-3 rounded-lg border border-neutral-400 bg-white p-4 text-black" aria-label={`${stop.stopName}の掲示`}>
-      <header className="flex flex-col gap-1 border-b-2 border-black pb-2">
+    <article
+      className="print-area flex flex-col gap-3 rounded-lg border border-neutral-400 bg-white p-4 text-black print:gap-2 print:rounded-none print:border-0 print:p-0"
+      aria-label={`${stop.stopName}の掲示`}
+    >
+      <header className="flex break-inside-avoid flex-col gap-1 border-b-2 border-black pb-2">
         <p className="text-xs">{sheet.agencyName}</p>
         {excluded.all ? (
           // この停留所の系統はすべて方針で除外した系統(平日ダイヤのまま走る)。時刻が変わると書かない
@@ -235,7 +242,7 @@ function StopSheet({ sheet }: { sheet: SheetInput }) {
       </header>
 
       <section aria-label="期間中の時刻" className="flex flex-col gap-1">
-        <h4 className="text-sm font-bold">期間中の発車時刻(平日ダイヤが走る日)</h4>
+        <h4 className="text-sm font-bold break-after-avoid">期間中の発車時刻(平日ダイヤが走る日)</h4>
         {stop.lines.length === 0 ? (
           <p className="text-base font-semibold" data-testid="no-departure">
             期間中は、この停留所からの発車はありません。
@@ -253,10 +260,10 @@ function StopSheet({ sheet }: { sheet: SheetInput }) {
 
       {stop.removedLines.length > 0 && (
         <section aria-label="運休する時刻" className="flex flex-col gap-0.5">
-          <h4 className="text-sm font-bold">運休する時刻(期間中)</h4>
+          <h4 className="text-sm font-bold break-after-avoid">運休する時刻(期間中)</h4>
           <ul className="text-sm">
             {stop.removedLines.map((l) => (
-              <li key={`${l.routeId}-${l.headsign}`}>
+              <li key={`${l.routeId}-${l.headsign}`} className="break-inside-avoid">
                 系統 {l.routeName}
                 {l.headsign !== '' && ` ${l.headsign} 行き`}:<span className="font-mono tabular-nums">{l.times.join('、')}</span>
               </li>
@@ -266,12 +273,12 @@ function StopSheet({ sheet }: { sheet: SheetInput }) {
       )}
 
       <section aria-label="代わりにご利用いただける便" className="flex flex-col gap-1">
-        <h4 className="text-sm font-bold">代わりにご利用いただける便</h4>
+        <h4 className="text-sm font-bold break-after-avoid">代わりにご利用いただける便</h4>
         <AlternativesBlock alt={sheet.alt} radiusLabel="半径300m" quotes={sheet.quotes} />
         {sheet.freeNote.trim() !== '' && <p className="whitespace-pre-wrap text-sm">{sheet.freeNote}</p>}
       </section>
 
-      <footer className="flex flex-col gap-1 border-t border-neutral-400 pt-2 text-sm">
+      <footer className="flex break-inside-avoid flex-col gap-1 border-t border-neutral-400 pt-2 text-sm">
         <p>
           公示日:<span data-testid="sheet-announce">{dateText(sheet.announceDate)}</span>
           <span className="mx-3" />
@@ -645,6 +652,9 @@ function NoticeBody({
                   <Button className="print-hide self-start" onClick={() => window.print()}>
                     この掲示を印刷する
                   </Button>
+                  <p className="print-hide text-xs text-muted-foreground" data-testid="sheet-pages-note">
+                    系統や近くの停留所が多い停留所は、A4 縦で2枚以上に続きます(系統ごとの時刻の途中では紙を分けません)。
+                  </p>
                 </>
               ) : (
                 <p className="print-hide text-sm text-muted-foreground">停留所を選ぶと、その停留所の掲示を1枚ずつ表示して印刷できます。</p>

@@ -13,6 +13,7 @@ import { diffOf, draftName, lastVersion, useEditStore, type BaseGtfs } from '@/s
 import { useResearchStore } from '@/store/research'
 import { checkedAtText } from '@/claude/research'
 import MovementQuoteView from './MovementQuote'
+import { PRINT_COLS, splitParts } from './printColumns'
 import {
   periodText,
   POLICY_KIND_LABELS,
@@ -72,15 +73,17 @@ function weekdayComparisonDate(base: BaseGtfs, version: Form2Result): string | n
 
 /** 一覧を前半と後半の2つに分ける(limit 件以下なら分けない)。印刷で左右に並べて1枚に収めるため */
 function splitHalf<T>(items: readonly T[], limit: number): T[][] {
-  if (items.length <= limit) return [[...items]]
-  const half = Math.ceil(items.length / 2)
-  return [items.slice(0, half), items.slice(half)]
+  return splitParts(items, limit, 2)
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/**
+ * 節。ふつうは節の途中で紙を分けない(break-inside-avoid)。
+ * avoidBreak を false にした節(周辺の事業者の動き)は、1枚目の残りから始め、中の項目の区切りで2枚目に送る
+ */
+function Section({ title, children, avoidBreak = true }: { title: string; children: ReactNode; avoidBreak?: boolean }) {
   return (
-    <section className="break-inside-avoid">
-      <h3 className="mb-1 border-b border-foreground/40 pb-0.5 text-sm font-semibold print:text-[10px]">{title}</h3>
+    <section className={avoidBreak ? 'break-inside-avoid' : undefined}>
+      <h3 className="mb-1 border-b border-foreground/40 pb-0.5 text-sm font-semibold break-after-avoid print:text-[9px]">{title}</h3>
       <div className="flex flex-col gap-1">{children}</div>
     </section>
   )
@@ -137,7 +140,7 @@ export default function ChangeOrder() {
               印刷する
             </Button>
             <p className="text-xs text-muted-foreground">
-              印刷の画面で送信先を「PDF に保存」にすると、PDF にできます。A4 縦1枚に収まるように作っていますが、平日に戻した便や変わる系統が多いときは2枚目に続きます(便は省かずにすべて載せます)。
+              印刷の画面で送信先を「PDF に保存」にすると、PDF にできます。A4 縦1枚に収まるように作っていますが、平日に戻した便や変わる系統が多いときや、周辺の事業者の動きが長いときは2枚目に続きます(便は省かずにすべて載せます。事業者の動きは事業者の区切りで2枚目に送ります)。
               {draft && `承認待ちの${draftName(draft.id)} は反映していません。`}
             </p>
           </div>
@@ -199,6 +202,7 @@ function Sheet({
     return diff.byRoute.filter((r) => diff.byNotice47Band.some((c) => c.routeId === r.routeId && c.before !== c.after))
   }, [diff])
   const unchangedRoutes = diff.byRoute.length - changedRoutes.length
+  const routeParts = splitParts(changedRoutes, 12, 3)
   const bandTotals = NOTICE47_BANDS.map((band) => {
     let before = 0
     let after = 0
@@ -238,12 +242,12 @@ function Sheet({
 
   return (
     <div
-      className="print-area flex flex-col gap-2.5 rounded-md border bg-background p-3 text-xs leading-snug print:gap-1 print:border-0 print:p-0 print:text-[9px] print:leading-tight print:text-black"
+      className="print-area flex flex-col gap-2.5 rounded-md border bg-background p-3 text-xs leading-snug print:gap-1 print:border-0 print:p-0 print:text-[8px] print:leading-tight print:text-black"
       aria-label="変更指示書"
       data-testid="change-order"
     >
       <header className="flex flex-wrap items-baseline justify-between gap-x-3 border-b-2 border-foreground pb-1">
-        <h2 className="text-base font-bold print:text-[13px]">変更指示書(減便)</h2>
+        <h2 className="text-base font-bold print:text-[12px]">変更指示書(減便)</h2>
         <p>
           作成日:{formatDateJa(today)}
           <span className="ml-2 text-muted-foreground print:text-black">読み込んだ GTFS:{base.label}</span>
@@ -304,9 +308,9 @@ function Sheet({
         {changedRoutes.length === 0 ? (
           <p>時間帯ごとの便数が変わる系統はありません。</p>
         ) : (
-          // 系統が多いと1枚に収まらないので、印刷では半分ずつ左右に並べる(画面では縦に並べる)
-          <div className="grid grid-cols-1 gap-x-3 gap-y-1 print:grid-cols-2">
-            {splitHalf(changedRoutes, 12).map((part, i) => (
+          // 系統が多いと1枚に収まらないので、印刷では 12 系統ずつ(25 系統からは3等分して)横に並べる(画面では縦に並べる)
+          <div className={`grid grid-cols-1 gap-x-3 gap-y-1 ${PRINT_COLS[routeParts.length]}`}>
+            {routeParts.map((part, i) => (
               <table
                 key={i}
                 className="w-full table-fixed border-collapse text-center"
@@ -341,7 +345,8 @@ function Sheet({
                               <span className="sr-only">(全曜日で便なし)</span>
                             </span>
                           )}
-                          <span className="truncate">{r.routeName}</span>
+                          {/* 画面では1行に切り詰める(名前は title)。印刷では切らずに折り返す */}
+                          <span className="truncate print:whitespace-normal">{r.routeName}</span>
                         </span>
                       </th>
                       {NOTICE47_BANDS.map((band) => {
@@ -531,7 +536,7 @@ function Sheet({
         </ul>
       </Section>
       </div>
-      <Section title="8. 周辺の事業者の動き(前提情報で調べた結果)">
+      <Section title="8. 周辺の事業者の動き(前提情報で調べた結果)" avoidBreak={false}>
         <div data-testid="movement-section" className="flex flex-col gap-1">
           {movement.researched === 0 ? (
             <p>調べていません。</p>
@@ -544,8 +549,9 @@ function Sheet({
             </p>
           ) : (
             <>
-              {/* 印刷では 2 列に並べて、A4 縦1枚に収める */}
-              <div className="grid grid-cols-1 gap-x-3 gap-y-1 print:grid-cols-2">
+              {/* 印刷では 2 段に流し込む(段の高さがそろい、行ごとに高さを合わせる格子より短くなる)。
+                  事業者ごとの引用は途中で紙を分けない(MovementQuote の break-inside-avoid) */}
+              <div className="grid grid-cols-1 gap-x-3 gap-y-1 print:block print:columns-2 print:space-y-1" data-testid="movement-quotes">
                 {movement.quotes.slice(0, MOVEMENT_MAX_OPERATORS).map((q) => (
                   <MovementQuoteView key={q.targetId} quote={q} maxFacts={MOVEMENT_MAX_FACTS} />
                 ))}

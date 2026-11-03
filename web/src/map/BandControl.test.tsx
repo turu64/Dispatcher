@@ -108,6 +108,13 @@ describe('BandControl(地図の操作盤)の地図に出す時間帯', () => {
     expect(region.className).toContain('max-w-[calc(100%-1.5rem)]')
     expect(screen.getByRole('radiogroup', { name: '地図に出す時間帯' }).className).toContain('flex-wrap')
   })
+
+  it('項目名は折り返さない(狭い地図で1文字ずつ縦に並ばないように)', () => {
+    render(<BandControl {...props()} />)
+    for (const id of ['map-date-label', 'map-step-label', 'map-band-label']) {
+      expect(document.getElementById(id)?.className).toContain('whitespace-nowrap')
+    }
+  })
 })
 
 describe('BandControl の比較する日付と時間帯の幅', () => {
@@ -140,6 +147,13 @@ describe('BandControl の比較する日付と時間帯の幅', () => {
     const holiday = dayCell(dialog, 3)
     expect(holiday.dataset.kind).toBe('holiday')
     expect(holiday.getAttribute('aria-label')).toContain('祝日 文化の日')
+  })
+
+  it('カレンダーは入る高さまでに縮め、中をスクロールできる(低い窓で月の見出しが画面の外に出ないように)', () => {
+    render(<BandControl {...props()} />)
+    const dialog = openCalendar()
+    expect(dialog.className).toContain('max-h-(--radix-popover-content-available-height)')
+    expect(dialog.className).toContain('overflow-y-auto')
   })
 
   it('減便後の GTFS と比べているときは、選べる範囲が減便後の GTFS の運行期間だと書く', () => {

@@ -42,7 +42,7 @@ export interface BandControlProps {
  * 日付はボタンで Popover のカレンダーを開いて選び、同じ Popover に運行日の説明(走る service_id など)を出す。
  * 日を選んでも Popover は閉じない(選んだ日の運行の説明を見られるように)。
  * 盤は store を使わない(値を直接渡して確かめられる)。store とのつなぎは ReachLayers.tsx。
- * 中身は折り返すので、狭い地図でも左上の凡例・右上の施設の凡例と重ならない(盤は下から上へ伸びる)。
+ * 項目名(「比較する日付」など)は折り返さない(狭い地図で1文字ずつ縦に並ばないように)。中身は項目ごとに折り返すので、狭い地図でも左上の凡例・右上の施設の凡例と重ならない(盤は下から上へ伸びる)。
  */
 export default function BandControl({
   period,
@@ -66,7 +66,7 @@ export default function BandControl({
       {hasDays ? (
         <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5">
           <div className="flex items-center gap-1.5">
-            <span id="map-date-label" className="font-medium">
+            <span id="map-date-label" className="font-medium whitespace-nowrap">
               比較する日付
             </span>
             <DatePopover
@@ -79,7 +79,7 @@ export default function BandControl({
             />
           </div>
           <div className="flex items-center gap-1.5">
-            <span id="map-step-label" className="font-medium">
+            <span id="map-step-label" className="font-medium whitespace-nowrap">
               時間帯の幅
             </span>
             <StepPicker value={stepHours} onChange={onStepHours} labelId="map-step-label" />
@@ -123,7 +123,13 @@ function DatePopover({
           <ChevronDown aria-hidden="true" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent side="top" collisionPadding={8} className="w-auto max-w-[calc(100vw-1rem)] gap-2 p-2" aria-label="比較する日付を選ぶ">
+      <PopoverContent
+        side="top"
+        collisionPadding={8}
+        // 窓が低く、上にも下にも収まらないときは、入る高さに縮めて中をスクロールする(月の見出しと月の移動が画面の外に出ないように)
+        className="max-h-(--radix-popover-content-available-height) w-auto max-w-[calc(100vw-1rem)] gap-2 overflow-y-auto p-2"
+        aria-label="比較する日付を選ぶ"
+      >
         <HolidayCalendar
           value={date}
           min={period.start}
@@ -155,7 +161,7 @@ function BandPicker({ bands, selectedHour, onSelect }: { bands: TimeBand[]; sele
   const value = index >= 0 ? String(bands[index].startHour) : ''
   return (
     <div className="flex flex-col items-center gap-1">
-      <span id="map-band-label" className="font-medium">
+      <span id="map-band-label" className="font-medium whitespace-nowrap">
         地図に出す時間帯
       </span>
       <ToggleGroup

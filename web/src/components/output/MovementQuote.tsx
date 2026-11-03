@@ -10,7 +10,8 @@ const ORIGIN_TEXT = { web: 'Web で調べた結果', demo: 'デモ用の保存�
 /**
  * 周辺の事業者について調べた減便の動きの引用(周知文の代替手段と変更指示書で共通)。
  * 事実は調べた結果をそのまま写し、要約や推測は足さない。出典(タイトルと URL)と確認日時はいつも出す。
- * maxFacts を渡すと、事実を先頭からその件数に絞り、残りは件数で示す(A4 に収めたい変更指示書で使う)
+ * maxFacts を渡すと、事実を先頭からその件数に絞り、残りは件数で示す(A4 に収めたい変更指示書で使う)。
+ * 印刷では1つの引用の途中で紙を分けない(break-inside-avoid)
  */
 export default function MovementQuoteView({ quote, maxFacts }: { quote: MovementQuote; maxFacts?: number }) {
   const facts = maxFacts !== undefined ? quote.facts.slice(0, maxFacts) : quote.facts
@@ -19,7 +20,7 @@ export default function MovementQuoteView({ quote, maxFacts }: { quote: Movement
   const sources = quote.sources.filter((s) => shownNos.has(s.no))
   return (
     <figure
-      className={`flex flex-col gap-0.5 border-l-2 border-neutral-400 pl-2 text-xs ${maxFacts !== undefined ? 'print:text-[9px] print:leading-tight' : ''}`}
+      className={`flex break-inside-avoid flex-col gap-0.5 border-l-2 border-neutral-400 pl-2 text-xs ${maxFacts !== undefined ? 'print:text-[8px] print:leading-tight' : ''}`}
       aria-label={`${quote.operatorName}について調べた減便の動き`}
       data-testid={`movement-quote-${quote.targetId}`}
     >

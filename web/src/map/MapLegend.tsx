@@ -30,6 +30,7 @@ export interface LegendCompare {
  * caption には、地図に出している日付と時間帯を入れる。
  * nonCoverableCells は、ダイヤと関係なく外れるので塗っていないセルの数(docs/interfaces-1103.md の追記2)。
  * 参照データが無い(fallback)ときは null を渡し、その行を出さない(調べるセルがすべて見込みのあるセルになるため)。
+ * 幅は 18rem までで、地図が狭いときは地図の幅に収める(地図の外にはみ出さない)。
  * compare があれば、塗り分け(減便前・減便後・前後の差)の切り替えと、前後の差の4つの件数を出す(docs/interfaces-1104.md §7)。
  */
 export default function MapLegend({
@@ -50,7 +51,7 @@ export default function MapLegend({
   return (
     <section
       aria-label="凡例"
-      className="pointer-events-none absolute top-3 left-3 flex max-w-72 flex-col gap-1.5 rounded-lg bg-background/95 px-3 py-2 text-xs shadow-md ring-1 ring-foreground/10"
+      className="pointer-events-none absolute top-3 left-3 flex max-w-[min(18rem,calc(100%-1.5rem))] flex-col gap-1.5 rounded-lg bg-background/95 px-3 py-2 text-xs shadow-md ring-1 ring-foreground/10"
     >
       <p className="font-medium">
         {caption}

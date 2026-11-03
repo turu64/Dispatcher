@@ -146,7 +146,8 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 12mm;
+    /* 変更指示書を A4 縦1枚に収めるため、余白は 10mm(家庭用・事務用のプリンターの印字できない端より広い) */
+    margin: 10mm;
   }
 
   html,

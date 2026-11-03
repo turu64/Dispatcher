@@ -6,9 +6,10 @@ function windowWidth(): number {
 }
 
 /**
- * 左(手順)と右(地図)の2つに分けた画面。間の区切りをドラッグして左の幅を変えられる(最小 320px、最大は窓の 60%)。
+ * 左(手順)と右(地図)の2つに分けた画面。間の区切りをドラッグして左の幅を変えられる(最小 320px、最大は窓の 60% で、地図に 320px を残す)。
  * 区切りに焦点を置けば、矢印キー・Home・End でも変えられる。幅はブラウザに覚え、次に開いたときも使う。
  * showRight が false のときは右を隠し(消さない)、左を全体に広げる。
+ * 右は overflow-hidden にする。窓が狭く地図が細いときも、地図に重ねた凡例・操作盤が左の欄に重なったり、ページに横スクロールを出したりしない。
  * ドラッグは pointer events で作る(新しい依存パッケージを足さない)
  */
 export default function SplitPane({ left, right, showRight }: { left: ReactNode; right: ReactNode; showRight: boolean }) {
@@ -86,7 +87,7 @@ export default function SplitPane({ left, right, showRight }: { left: ReactNode;
         onPointerCancel={onPointerEnd}
         onKeyDown={onKeyDown}
       />
-      <div hidden={!showRight} data-pane="right" className="print-hide relative h-full min-w-0 flex-1">
+      <div hidden={!showRight} data-pane="right" className="print-hide relative h-full min-w-0 flex-1 overflow-hidden">
         {right}
       </div>
     </div>

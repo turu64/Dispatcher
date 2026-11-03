@@ -5,29 +5,15 @@ import { dayNumber, forEachDay, indexFeedServiceDays, runsOn } from '../edit/ser
 import { compareStrings, stopTimesByTrip, tripSignature } from '../edit/signature'
 import type { HolidayList } from '../holidays'
 import type { GtfsFeed, GtfsRow } from '../load'
+import { examplesOf, FEED_ERROR_RULES, feedIssues, MAX_EXAMPLES, type StructuralRule, type ValidationIssue } from './feed'
 
 /**
  * 書き換えのたびの検証(取り決め 1104 §4.5)、祝日・平日・年末年始の確かめ(§5.8)、実施日までの日数による注意と
  * 画面に出す文言(§5.10)。どれも純粋な関数で、今日は引数で受け取る。
  */
 
-export interface ValidationIssue {
-  severity: 'error' | 'warning' | 'info'
-  code: string
-  /** 'trips.txt' など。全体の問題は '' */
-  file: string
-  /** 日本語 */
-  message: string
-  count: number
-  /** trip_id などを最大 5 件 */
-  examples: string[]
-  /** error のうち、出力だけを止めるもの(承認と比較はできる)。無ければ false */
-  exportOnly?: boolean
-  /** 基準(入力)にも同じ問題がある。無ければ false */
-  inherited?: boolean
-}
+export type { ValidationIssue } from './feed'
 
-const MAX_EXAMPLES = 5
 const INHERITED_PREFIX = '入力からある問題:'
 const WEEKDAY_NAMES = ['月', '火', '水', '木', '金', '土', '日']
 
@@ -44,14 +30,6 @@ function dateWithWeekday(date: string): string {
 }
 
 // ---- 構造の検査(基準にも当てて、入力からある問題を分ける) ----
-
-interface StructuralRule {
-  code: string
-  file: string
-  message: (count: number) => string
-  /** 問題の対象(trip_id・stop_id・service_id など)。空白を取った値 */
-  targets: (feed: GtfsFeed) => Set<string>
-}
 
 /** feed_info の問題の対象。'feed_version_same'(入力と同じ)は基準には当てない */
 function feedInfoTargets(feed: GtfsFeed): Set<string> {
@@ -171,21 +149,20 @@ const STRUCTURAL_RULES: StructuralRule[] = [
   },
 ]
 
-function examplesOf(targets: Iterable<string>): string[] {
-  return [...targets].sort(compareStrings).slice(0, MAX_EXAMPLES)
-}
-
 function structuralIssues(base: GtfsFeed, result: Form2Result): ValidationIssue[] {
   const issues: ValidationIssue[] = []
-  for (const rule of STRUCTURAL_RULES) {
+  const sourceOf = new Map(result.report.tripIds.derived.map((d) => [d.to, d.from]))
+  for (const rule of [...STRUCTURAL_RULES, ...FEED_ERROR_RULES]) {
     const edited = rule.targets(result.feed)
     if (rule.code === 'badFeedInfo' && result.report.feedVersion.after === result.report.feedVersion.before) {
       edited.add('feed_version が入力と同じ')
     }
     if (edited.size === 0) continue
     const inBase = rule.targets(base)
-    const fresh = [...edited].filter((t) => !inBase.has(t))
-    const inherited = [...edited].filter((t) => inBase.has(t))
+    // 写した便は新しい trip_id になるので、便の規則は写す元の trip_id で入力の問題を探す
+    const inInput = (t: string) => inBase.has(rule.tripTargets ? (sourceOf.get(t) ?? t) : t)
+    const fresh = [...edited].filter((t) => !inInput(t))
+    const inherited = [...edited].filter(inInput)
     if (fresh.length > 0) {
       issues.push({ severity: 'error', code: rule.code, file: rule.file, message: rule.message(fresh.length), count: fresh.length, examples: examplesOf(fresh) })
     }
@@ -435,7 +412,8 @@ function calendarIssues(base: GtfsFeed, result: Form2Result, holidays: HolidayLi
 /**
  * 書き換えのたびの検証(propose のたびに呼ぶ)。
  * error の規則(shortValidity と「feed_version が入力と同じ」を除く)は基準にも当て、基準にも同じ対象の問題があれば
- * その分を「入力からある問題」(warning、inherited)に分ける。編集で新しく生じた問題だけを error にする
+ * その分を「入力からある問題」(warning、inherited)に分ける。編集で新しく生じた問題だけを error にする。
+ * 基準と編集後を比べる error(stopIdChanged・routeIdChanged)と、フィード全体の warning・info は feed.ts の feedIssues
  */
 export function validateEdit(base: GtfsFeed, result: Form2Result, holidays: HolidayList | null): ValidationIssue[] {
   const issues: ValidationIssue[] = [...structuralIssues(base, result), ...validityIssues(result)]
@@ -445,6 +423,7 @@ export function validateEdit(base: GtfsFeed, result: Form2Result, holidays: Holi
     if (w.code === 'shortValidity') continue
     issues.push({ severity: 'warning', code: `form2.${w.code}`, file: FORM2_FILES[w.code] ?? '', message: w.message, count: 1, examples: [] })
   }
+  issues.push(...feedIssues(base, result))
   issues.push(...calendarIssues(base, result, holidays))
   return issues
 }

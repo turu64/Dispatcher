@@ -4,12 +4,30 @@ import Papa from 'papaparse'
 /** 1行分の値。列が足りない行では、その列のキーが無いことがある */
 export type GtfsRow = Record<string, string | undefined>
 
+/**
+ * 読み込んだファイルの書き方。書き出し(write.ts の serializeTable)で、書き換えた表を入力と同じ書き方にするために残す。
+ * 手で作る表(テスト)には無くてよい
+ */
+export interface TableFormat {
+  /** ZIP の中のエントリ名(フォルダを含む) */
+  path: string
+  bom: boolean
+  /** ファイルの中で最初に出てくる改行。改行が無ければ '\r\n' */
+  newline: '\r\n' | '\n'
+  /** 1行目の元の文字列(BOM と改行を除く) */
+  header: string
+  /** 最後の行が改行で終わっている */
+  finalNewline: boolean
+}
+
 export interface GtfsTable {
   /** ZIP の中の元のファイル名(フォルダを除く) */
   fileName: string
   /** 列名(入力の順番のまま。出力で同じ列・順番にするために残す) */
   fields: string[]
   rows: GtfsRow[]
+  /** 読み込んだファイルの書き方(loadGtfsZip が入れる) */
+  format?: TableFormat
 }
 
 export interface GtfsWarning {
@@ -27,6 +45,7 @@ export interface GtfsFeed {
 }
 
 const BOM = /^\uFEFF/
+const BOM_CHAR = '\uFEFF'
 const REPLACEMENT_CHAR = '\uFFFD'
 
 const WARNING_MESSAGES: Record<string, string> = {
@@ -63,7 +82,9 @@ export async function loadGtfsZip(data: Blob | ArrayBuffer): Promise<GtfsFeed> {
       throw new Error(`同じ名前のファイル(${fileName})が ZIP の中に複数あります。1つの GTFS だけを入れた ZIP を選んでください。`)
     }
 
-    const text = (await entry.async('string')).replace(BOM, '').replace(/\r\n?/g, '\n')
+    const raw = await entry.async('string')
+    const format = formatOf(entry.name, raw)
+    const text = raw.replace(BOM, '').replace(/\r\n?/g, '\n')
     if (text.includes(REPLACEMENT_CHAR)) {
       warnings.push({ file: fileName, message: 'UTF-8 として読めない文字があります(GTFS-JP は UTF-8 が必須です)' })
     }
@@ -99,9 +120,23 @@ export async function loadGtfsZip(data: Blob | ArrayBuffer): Promise<GtfsFeed> {
       const { __parsed_extra: _extra, ...rest } = row
       return rest
     })
-    tables.set(name, { fileName, fields: parsed.meta.fields ?? [], rows })
+    tables.set(name, { fileName, fields: parsed.meta.fields ?? [], rows, format })
   }
 
   if (tables.size === 0) throw new Error('GTFS のファイル(.txt)が見つかりません。')
   return { tables, warnings }
+}
+
+/**
+ * ファイルの書き方(BOM、改行、見出しの元の文字列、最後の改行)を、改行をそろえる前の文字列から読む。
+ * 改行は最初に出てくるもの(LF の前が CR なら CRLF)。LF が1つも無ければ CRLF とする
+ */
+function formatOf(path: string, raw: string): TableFormat {
+  const bom = raw.startsWith(BOM_CHAR)
+  const body = bom ? raw.slice(BOM_CHAR.length) : raw
+  const lf = body.indexOf('\n')
+  const newline = lf > 0 && body[lf - 1] === '\r' ? '\r\n' : lf >= 0 ? '\n' : '\r\n'
+  const header = body.split(/\r\n|\n|\r/, 1)[0] ?? ''
+  const finalNewline = body.endsWith('\n') || body.endsWith('\r')
+  return { path, bom, newline, header, finalNewline }
 }

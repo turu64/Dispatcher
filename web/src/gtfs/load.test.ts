@@ -24,6 +24,7 @@ describe('loadGtfsZip', () => {
       fileName: 'agency.txt',
       fields: ['agency_id', 'agency_name'],
       rows: [{ agency_id: '1', agency_name: 'テストバス' }],
+      format: { path: 'agency.txt', bom: false, newline: '\n', header: 'agency_id,agency_name', finalNewline: true },
     })
     expect(feed.tables.get('stops')?.rows).toHaveLength(2)
     expect(feed.warnings).toEqual([])
@@ -67,8 +68,8 @@ describe('loadGtfsZip', () => {
     const feed = await loadGtfsZip(
       await makeZip({ 'agency.txt': 'agency_id\n1\n', 'shapes.txt': '', 'transfers.txt': 'from_stop_id,to_stop_id\n' }),
     )
-    expect(feed.tables.get('shapes')).toEqual({ fileName: 'shapes.txt', fields: [], rows: [] })
-    expect(feed.tables.get('transfers')).toEqual({
+    expect(feed.tables.get('shapes')).toMatchObject({ fileName: 'shapes.txt', fields: [], rows: [] })
+    expect(feed.tables.get('transfers')).toMatchObject({
       fileName: 'transfers.txt',
       fields: ['from_stop_id', 'to_stop_id'],
       rows: [],
@@ -87,6 +88,28 @@ describe('loadGtfsZip', () => {
     )
     expect([...feed.tables.keys()].sort()).toEqual(['agency', 'calendar'])
     expect(feed.tables.get('calendar')?.fileName).toBe('Calendar.TXT')
+  })
+
+  it('書き出しのために、エントリ名・BOM・最初の改行・元の見出し・最後の改行を残す', async () => {
+    const feed = await loadGtfsZip(
+      await makeZip({
+        'feed/stops.txt': `${BOM} stop_id ,stop_name\r\nA,駅前\nB,市役所`,
+        'feed/routes.txt': 'route_id\n10\r\n',
+        'feed/agency.txt': 'agency_id',
+      }),
+    )
+    expect(feed.tables.get('stops')?.format).toEqual({
+      path: 'feed/stops.txt',
+      bom: true,
+      newline: '\r\n',
+      header: ' stop_id ,stop_name',
+      finalNewline: false,
+    })
+    // 見出しは空白を取った列名で持ち、元の文字列は format に残す
+    expect(feed.tables.get('stops')?.fields).toEqual(['stop_id', 'stop_name'])
+    expect(feed.tables.get('routes')?.format).toMatchObject({ bom: false, newline: '\n', header: 'route_id', finalNewline: true })
+    // 改行が1つも無ければ CRLF とみなす
+    expect(feed.tables.get('agency')?.format).toMatchObject({ newline: '\r\n', header: 'agency_id', finalNewline: false })
   })
 
   it('Blob からも読める(ファイル選択とサンプルの両方で使う)', async () => {

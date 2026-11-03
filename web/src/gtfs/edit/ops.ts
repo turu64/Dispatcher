@@ -221,17 +221,26 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
       )
     } else {
       const index = indexFeedServiceDays(base)
-      // 平日の service の calendar の行が、新しい有効期間と1日も重ならない
-      for (const row of rowsOf(base, 'calendar')) {
-        if (trimmed(row.service_id) !== wk) continue
-        const s = trimmed(row.start_date)
-        const e = trimmed(row.end_date)
-        if (isValidGtfsDate(s) && isValidGtfsDate(e) && (e < validity.start || s > validity.end)) {
-          error(
-            'weekdayCalendarOutside',
-            `平日の service(${wk})の calendar の期間(${formatDate(s)}〜${formatDate(e)})が、新しい有効期間(${formatDate(validity.start)}〜${formatDate(validity.end)})と重なりません。`,
-          )
-        }
+      const validityText = `${formatDate(validity.start)}〜${formatDate(validity.end)}`
+      // 平日の service の calendar の行のどれも、新しい有効期間と1日も重ならない(行が2つ以上あれば、1つでも重なればよい)。
+      // 日付が不正な行は期間を持たないので数えない(運行日も生まないので、走らなければ weekdayNotActive で止まる)
+      const weekdayRanges = rowsOf(base, 'calendar')
+        .filter((row) => trimmed(row.service_id) === wk)
+        .map((row) => ({ start: trimmed(row.start_date), end: trimmed(row.end_date) }))
+        .filter((r) => isValidGtfsDate(r.start) && isValidGtfsDate(r.end))
+      if (weekdayRanges.length > 0 && weekdayRanges.every((r) => r.end < validity.start || r.start > validity.end)) {
+        error(
+          'weekdayCalendarOutside',
+          `平日の service(${wk})の calendar の期間(${weekdayRanges.map((r) => `${formatDate(r.start)}〜${formatDate(r.end)}`).join('、')})が、新しい有効期間(${validityText})と重なりません。`,
+        )
+      }
+      // 平日の service が新しい有効期間の中で1日も走らない(calendar と calendar_dates の両方で判定。calendar_dates だけの service も)。
+      // 止めないと、§5.6 の規則で平日の service が便ごと出力から除かれ、方針が何も変えない出力になる
+      if (tripCount(wk) > 0 && !runsAnyDay(index.get(wk), validity.start, validity.end)) {
+        error(
+          'weekdayNotActive',
+          `平日の service(${wk})は、新しい有効期間(${validityText})の中で1日も走りません(calendar と calendar_dates で確かめました)。このままでは平日の便が出力から除かれ、方針が何も変えないため、平日の service か期間を選び直してください。`,
+        )
       }
       const rpDays = index.get(rp)
       if (tripCount(rp) > 0 && !runsAnyDay(rpDays, validity.start, validity.end)) {

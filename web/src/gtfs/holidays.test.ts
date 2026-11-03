@@ -30,7 +30,8 @@ function sampleList(): HolidayList {
   return parseHolidayJson(sampleJson())
 }
 
-describe('parseHolidayJson', () => {
+// parseHolidayJson
+describe('祝日の JSON を読み、形が違えば日本語のエラーにする', () => {
   it('JSON を祝日一覧にする', () => {
     const list = parseHolidayJson(sampleJson())
     expect(list.first).toBe('20261103')
@@ -158,7 +159,8 @@ describe('fetchHolidays', () => {
   })
 })
 
-describe('holidaysBetween', () => {
+// holidaysBetween
+describe('期間の中の祝日を並べる', () => {
   const list = sampleList()
 
   it('両端を含み、日付の昇順で返す', () => {
@@ -202,7 +204,8 @@ describe('holidaysBetween', () => {
   })
 })
 
-describe('uncoveredRanges', () => {
+// uncoveredRanges
+describe('収録の範囲の外を返す', () => {
   // 収録は 20261103〜20271231
   const list = sampleList()
 

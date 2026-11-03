@@ -64,6 +64,8 @@ export interface Form2Report {
 }
 
 const GENERATED_AT = /^\d{12}$/
+/** 警告の文に並べる例の数 */
+const MAX_EXAMPLES = 5
 
 function trimmed(v: string | undefined): string {
   return v === undefined ? '' : v.trim()
@@ -382,6 +384,26 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   }
 
   // ---- §5.5 stop_times ----
+  // 孤立した行(基準の trips に無い trip_id の行)は、どちらの並びでも出力から除く。残すと、その trip_id が
+  // 写した便の新しい trip_id と同じとき、写した便の停車に混ざる。孤立した行があると並びは 'input' になる
+  // ('trips' の並びは trips の便の行だけを出すので、もともと孤立した行を出さない)
+  const orphanIds = new Set<string>()
+  let orphanRows = 0
+  for (const r of stopTimeRows) {
+    const id = trimmed(r.trip_id)
+    if (tripById.has(id)) continue
+    orphanIds.add(id)
+    orphanRows++
+  }
+  if (orphanRows > 0) {
+    const ids = sortedIds(orphanIds).map((id) => (id === '' ? '(空)' : id))
+    const shown = ids.slice(0, MAX_EXAMPLES).join('、')
+    const rest = ids.length > MAX_EXAMPLES ? ` ほか ${ids.length - MAX_EXAMPLES} 件` : ''
+    warn(
+      'orphanStopTimesDropped',
+      `stop_times の行のうち、trips.txt に無い trip_id の ${orphanRows} 行を除きました(trip_id:${shown}${rest})。入力からある問題で、残すと同じ trip_id の便の停車に混ざるため除いています。`,
+    )
+  }
   const stopTimesOrder = stopTimesOrderOf(stopTimeRows, tripRows)
   const copyRows = (derivedRow: GtfsRow, src: GtfsRow, out: GtfsRow[]) => {
     const to = derivedRow.trip_id
@@ -395,7 +417,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
       else for (const r of groups.get(trimmed(row.trip_id)) ?? []) outStopTimes.push(r)
     }
   } else {
-    const gone = new Set(removedIds)
+    const gone = new Set([...removedIds, ...orphanIds])
     for (const row of keptBase) if (droppedServiceIds.has(trimmed(row.service_id))) gone.add(trimmed(row.trip_id))
     for (const r of stopTimeRows) if (!gone.has(trimmed(r.trip_id))) outStopTimes.push(r)
     if (!droppedServiceIds.has(wk)) for (const row of derivedRows) copyRows(row, sourceOf.get(row) as GtfsRow, outStopTimes)

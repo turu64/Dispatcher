@@ -318,6 +318,71 @@ S11,20261103,2`),
     expect(outcome.message).toContain('1日も走りません')
   })
 
+  it('平日の service が新しい有効期間に1日も走らなければ、calendar_dates だけの service でも方針を適用しない', () => {
+    // 平日 WK は 10 月の calendar_dates だけで走り、11 月は別の service(WK_NOV)が走る。期間は 20261101〜
+    let feed = without(smallFeed(), 'calendar')
+    feed = withRows(
+      feed,
+      'calendar_dates',
+      rowsOf(`
+service_id,date,exception_type
+WK,20261001,1
+WK,20261030,1
+WK_NOV,20261102,1
+WK_NOV,20261130,1
+SA,20261107,1
+SA,20261128,1
+SU,20261108,1`),
+    )
+    feed = withRows(feed, 'trips', [...rows(feed, 'trips'), { route_id: 'R1', service_id: 'WK_NOV', trip_id: 'R1_0700_WK_NOV', trip_headsign: '市役所', block_id: '' }])
+    const problems = checkPolicy(feed, basePlan())
+    // calendar の行が無いので weekdayCalendarOutside には当たらない
+    expect(problems.filter((p) => p.severity === 'error').map((p) => p.code)).toEqual(['weekdayNotActive'])
+    expect(problems.find((p) => p.code === 'weekdayNotActive')?.message).toBe(
+      '平日の service(WK)は、新しい有効期間(2026年11月1日〜2026年11月30日)の中で1日も走りません(calendar と calendar_dates で確かめました)。このままでは平日の便が出力から除かれ、方針が何も変えないため、平日の service か期間を選び直してください。',
+    )
+    const outcome = applyForm2(feed, basePlan(), OPTS)
+    expect(outcome.ok).toBe(false)
+    // 10 月を含む期間なら走るので適用できる
+    expect(applyForm2(feed, basePlan({ period: { start: '20261001', end: null } }), OPTS).ok).toBe(true)
+  })
+
+  it('平日の service の calendar のどの行も新しい有効期間と重ならなければ、方針を適用しない', () => {
+    const october = (feed: GtfsFeed) =>
+      withRows(
+        feed,
+        'calendar',
+        rows(feed, 'calendar').map((r) => (r.service_id === 'WK' ? { ...r, end_date: '20261031' } : r)),
+      )
+    const feed = october(smallFeed())
+    const problems = checkPolicy(feed, basePlan())
+    // calendar の外で、calendar_dates の追加も無いので、走る日も無い
+    expect(problems.filter((p) => p.severity === 'error').map((p) => p.code)).toEqual(['weekdayCalendarOutside', 'weekdayNotActive'])
+    expect(problems.find((p) => p.code === 'weekdayCalendarOutside')?.message).toContain('calendar の期間(2026年10月1日〜2026年10月31日)が')
+    expect(applyForm2(feed, basePlan(), OPTS).ok).toBe(false)
+    // calendar_dates で期間の中に追加される日があっても、calendar の行が重ならなければ止める
+    const added = withRows(feed, 'calendar_dates', [...rows(feed, 'calendar_dates'), { service_id: 'WK', date: '20261102', exception_type: '1' }])
+    expect(checkPolicy(added, basePlan()).filter((p) => p.severity === 'error').map((p) => p.code)).toEqual(['weekdayCalendarOutside'])
+  })
+
+  it('平日の service の calendar の行が2つ以上あれば、1つでも新しい有効期間と重なれば止めない', () => {
+    const base = smallFeed()
+    const feed = withRows(base, 'calendar', [
+      ...rows(base, 'calendar').filter((r) => r.service_id !== 'WK'),
+      ...rowsOf(`
+service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
+WK,1,1,1,1,1,0,0,20261001,20261031
+WK,1,1,1,1,1,0,0,20261101,20261130`),
+    ])
+    const plan = basePlan({ period: { start: '20261103', end: null } })
+    expect(checkPolicy(feed, plan).filter((p) => p.severity === 'error')).toEqual([])
+    const { feed: out, report } = apply(feed, plan)
+    // 10 月の行は切り詰めると空になるので除き、11 月の行は開始日にそろえる
+    expect(rows(out, 'calendar').filter((r) => r.service_id === 'WK').map((r) => `${r.start_date}〜${r.end_date}`)).toEqual(['20261103〜20261130'])
+    expect(codes({ report } as Form2Result)).toEqual(['calendarRowDropped'])
+    expect(tripIds(out, 'WK')).toEqual(['R1_0700_WK', 'R1_0800_WK', 'R1_0805_WK', 'R2_1000_WK'])
+  })
+
   it('写す元の service が新しい有効期間の一部しか覆わなければ警告する', () => {
     const feed = withSaturdayCalendar('20261001', '20261115')
     const problems = checkPolicy(feed, basePlan())
@@ -465,5 +530,35 @@ SU,20261108,1`),
     const stOrder: string[] = []
     for (const r of rows(second.feed, 'stop_times')) if (stOrder[stOrder.length - 1] !== r.trip_id) stOrder.push(r.trip_id ?? '')
     expect(stOrder).toEqual(['R1_0700_SA', 'R1_0800_SA', 'R1_0805_SA', 'R2_1000_SA', 'R1_0805_SU', 'R1_0700_WK', 'R1_0800_WK', 'R1_0805_WK', 'R2_1000_WK'])
+  })
+
+  it('基準の trips に無い trip_id の stop_times の行は、写した便の新しい trip_id と同じでも混ぜずに除いて警告する', () => {
+    // 孤立した行 R1_0805_WK は、R1_0805_SA の写しの trip_id と同じ。もう1つは関係の無い GHOST
+    const base = smallFeed()
+    const orphan = { trip_id: 'R1_0805_WK', arrival_time: '10:00:00', departure_time: '10:00:00', stop_id: 'A', stop_sequence: '3', pickup_type: '0', drop_off_type: '0' }
+    const ghost = { trip_id: 'GHOST', arrival_time: '11:00:00', departure_time: '11:00:00', stop_id: 'B', stop_sequence: '1', pickup_type: '0', drop_off_type: '0' }
+    const stopTimes = rows(base, 'stop_times')
+    const feed = withRows(base, 'stop_times', [...stopTimes.slice(0, 4), orphan, ...stopTimes.slice(4), ghost])
+    const { feed: out, report } = apply(feed, basePlan())
+    // 孤立した行があると、stop_times は trips の順にまとまっていないので入力の順
+    expect(report.rowOrder.stop_times).toBe('input')
+    expect(report.tripIds.derived).toContainEqual({ from: 'R1_0805_SA', to: 'R1_0805_WK' })
+    // 写した便の停車は、写す元の 2 行だけ
+    expect(rows(out, 'stop_times').filter((r) => r.trip_id === 'R1_0805_WK').map((r) => `${r.stop_id},${r.departure_time},${r.stop_sequence}`)).toEqual([
+      'A,08:05:00,1',
+      'B,08:15:00,2',
+    ])
+    expect(rows(out, 'stop_times').some((r) => r.trip_id === 'GHOST')).toBe(false)
+    const outTripIds = new Set(tripIds(out))
+    expect(rows(out, 'stop_times').every((r) => outTripIds.has(r.trip_id ?? ''))).toBe(true)
+    expect(report.warnings.find((w) => w.code === 'orphanStopTimesDropped')?.message).toBe(
+      'stop_times の行のうち、trips.txt に無い trip_id の 2 行を除きました(trip_id:GHOST、R1_0805_WK)。入力からある問題で、残すと同じ trip_id の便の停車に混ざるため除いています。',
+    )
+    expect(codes({ report } as Form2Result)).toEqual(['orphanStopTimesDropped'])
+
+    // 例は最大 5 件で、残りは件数にする
+    const many = withRows(base, 'stop_times', [...stopTimes, ...['O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O6'].map((id) => ({ ...ghost, trip_id: id }))])
+    const message = apply(many, basePlan()).report.warnings.find((w) => w.code === 'orphanStopTimesDropped')?.message
+    expect(message).toContain('の 7 行を除きました(trip_id:O1、O2、O3、O4、O5 ほか 1 件)。')
   })
 })

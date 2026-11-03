@@ -5,6 +5,8 @@ import type { GtfsRow } from '../load'
  *
  * `route_id + "\t" + 行ごとの "stop_id,arrival_time,departure_time" を ";" でつないだもの`。
  * 行は stop_sequence の数値の昇順(読めない値の行は入力の順で後ろ)。値は前後の空白を取る。
+ * 読める stop_sequence は、空白を取って /^\d+$/ に合う値(0 以上の10進の整数)。'-1'・'+3'・'2.0'・空は読めない値
+ * (参照実装は int() で読むので '-1' を読む)。
  * 時刻は文字列のまま比べる('7:05:00' と '07:05:00' は別の便になる)。
  * 乗降の区分・stop_headsign・trip_headsign は含めない。
  */

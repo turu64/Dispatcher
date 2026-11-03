@@ -293,6 +293,7 @@ const FORM2_FILES: Record<string, string> = {
   feedVersionNotIncreasing: 'feed_info.txt',
   unknownExcludedRoute: 'routes.txt',
   blockIdCopied: 'trips.txt',
+  orphanStopTimesDropped: 'stop_times.txt',
 }
 
 // ---- 祝日・平日・年末年始(§5.8) ----
@@ -456,16 +457,13 @@ const PUBLISH_NOTES = [
   'Dispatcher は届出・公示の要否を判定しません。計画どおり運行できないときの公示(運輸規則第17条)も含め、運輸支局に確認してください。',
 ]
 
-/** 実施まで d 日の言い方(過ぎていれば、過ぎた日数) */
-function leadText(d: number, start: string): string {
-  return d >= 0 ? `実施まで ${d} 日です。` : `実施日(${formatDate(start)})を ${-d} 日過ぎています。`
-}
-
 /**
  * 今日(today、'YYYYMMDD'、日本時間)に関わる注意。
  * - futureStart(info):開始日が入力の開始日より後で、今日より先
  * - validityEndSoon(warning):新しい有効期間の末日が今日から 30 日以内
- * - leadTimeUnder3・leadTimeUnder7・leadTimeUnder30(warning):当てはまるもののうち、いちばん短い日数のものを1つ
+ * - 実施日までの日数 d(新しい有効期間の開始日 − 今日)による注意を1つ(warning):
+ *   - leadTimePassed:d < 0(実施日を過ぎている)。反映が間に合うかの文は出さず、過ぎた日数と補い方を出す
+ *   - leadTimeUnder3・leadTimeUnder7・leadTimeUnder30:0 ≦ d で当てはまるもののうち、いちばん短い日数のもの
  * - publishNotes(info):いつも出す3つ(1つずつ別の issue)
  */
 export function timingNotices(result: Form2Result, today: string): ValidationIssue[] {
@@ -481,11 +479,14 @@ export function timingNotices(result: Form2Result, today: string): ValidationIss
   })
 
   if (validity.start > inputValidity.start && validity.start > today) {
+    // 開始日の前日が今日なら「今日〜(今日の日付)」と同じ日が並ぶので、「今日(日付)」の1つにする
+    const lastDay = addDays(validity.start, -1)
+    const days = lastDay === today ? `今日(${formatDate(today)})` : `今日〜${formatDate(lastDay)}`
     issues.push(
       issue(
         'info',
         'futureStart',
-        `今日〜${formatDate(addDays(validity.start, -1))} は、この ZIP を公開すると経路検索に便が出ません。公開は開始日の直前にするか、それまでは今の版を公開したままにしてください(Google は現行の版と将来の版を1つずつ持てます)。`,
+        `${days} は、この ZIP を公開すると経路検索に便が出ません。公開は開始日の直前にするか、それまでは今の版を公開したままにしてください(Google は現行の版と将来の版を1つずつ持てます)。`,
       ),
     )
   }
@@ -496,8 +497,16 @@ export function timingNotices(result: Form2Result, today: string): ValidationIss
   }
 
   const d = dayNumber(validity.start) - dayNumber(today)
-  const lead = leadText(d, validity.start)
-  if (d < 3) {
+  const lead = `実施まで ${d} 日です。`
+  if (d < 0) {
+    issues.push(
+      issue(
+        'warning',
+        'leadTimePassed',
+        `実施日(${formatDate(validity.start)})を ${-d} 日過ぎています。過ぎた日は経路検索に正しく出ていません。周知文などで補ってください。`,
+      ),
+    )
+  } else if (d < 3) {
     issues.push(
       issue(
         'warning',

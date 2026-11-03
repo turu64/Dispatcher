@@ -43,6 +43,7 @@ interface GoldenSummary {
   addBack: Record<string, unknown>
   rowOrder: { trips: string; stop_times: string }
   files: Record<string, { rows: number; sha256: string }>
+  /** 参照実装の警告の文(code ではない)。参照実装は行・系統ごとに1件ずつ出す */
   warnings: string[]
 }
 interface Golden {
@@ -57,6 +58,26 @@ function sha256(bytes: Uint8Array): string {
 
 function trimmed(v: string | undefined): string {
   return v === undefined ? '' : v.trim()
+}
+
+/** 参照実装の警告の文の書き出し → Form2Report の警告の code(§5.8) */
+const GOLDEN_WARNING_CODES: [RegExp, string][] = [
+  [/^period\.start /, 'periodStartClamped'],
+  [/^period\.end /, 'periodEndClamped'],
+  [/^有効期間が \d+ 日で、7 日以下になる/, 'shortValidity'],
+  [/^calendar の service_id /, 'calendarRowDropped'],
+  [/^新しい feed_version /, 'feedVersionNotIncreasing'],
+  [/^excludedRoutes /, 'unknownExcludedRoute'],
+  [/^feed_info\.txt がない/, 'feedInfoCreated'],
+]
+
+/**
+ * 正解データの警告を code の集合にする。参照実装は行・系統ごとに1件ずつ出し、TS は code ごとに1件にまとめるので、
+ * 件数ではなく code の集合で比べる(§5.8・§11)。対応の無い文はそのまま残し、照合で食い違いとして出す
+ */
+function goldenWarningCodes(warnings: readonly string[]): string[] {
+  const codes = warnings.map((w) => GOLDEN_WARNING_CODES.find(([re]) => re.test(w))?.[1] ?? w)
+  return [...new Set(codes)].sort(compareStrings)
 }
 
 /** 正解データの README の定義で、出力の平日便を数え直す(実装の集計関数は使わない) */
@@ -141,7 +162,7 @@ describe.skipIf(!existsSync(ZIP))('形2の正解データとの照合(道北バ�
         }
       })
 
-      it('trip_id・足し戻し・calendar_dates・有効期間・行の並び・警告の件数が正解データと同じ', () => {
+      it('trip_id・足し戻し・calendar_dates・有効期間・行の並び・警告の code の集合が正解データと同じ', () => {
         if (!matches) return
         const summary = golden.scenarios[name].summary
         const report = results.get(name)!.report
@@ -158,7 +179,8 @@ describe.skipIf(!existsSync(ZIP))('形2の正解データとの照合(道北バ�
           days: summary.output.validityDays,
         })
         expect(report.rowOrder).toEqual(summary.rowOrder)
-        expect(report.warnings).toHaveLength(summary.warnings.length)
+        // 正解データの5場面はどれも警告が 0 件
+        expect([...new Set(report.warnings.map((w) => w.code))].sort(compareStrings)).toEqual(goldenWarningCodes(summary.warnings))
         expect(report.feedVersion.after).toBe(summary.output.feedVersion)
         expect(report.droppedServices).toEqual([])
       })
@@ -276,5 +298,20 @@ describe.skipIf(!existsSync(ZIP))('形2の正解データとの照合(道北バ�
     expect(report.tripIds.collisions).toEqual([
       { from: '0004_01_01_03_0710', candidate: '0004_01_01_01_0710', assigned: '0004_01_01_01_0710_2', collidedWithService: '01' },
     ])
+  })
+})
+
+describe('正解データの警告の照合', () => {
+  it('参照実装の警告の文を code の集合にまとめ、対応の無い文はそのまま残す', () => {
+    expect(
+      goldenWarningCodes([
+        'calendar の service_id 11 は新しい有効期間に入らないので外した',
+        'calendar の service_id 13 は新しい有効期間に入らないので外した',
+        'period.start 20260901 が入力の開始日 20261001 より前なので 20261001 にした',
+        'excludedRoutes 9999 は routes.txt にない',
+        'weekdayService 99 の便がない',
+      ]),
+    ).toEqual(['calendarRowDropped', 'periodStartClamped', 'unknownExcludedRoute', 'weekdayService 99 の便がない'])
+    expect(goldenWarningCodes([])).toEqual([])
   })
 })

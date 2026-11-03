@@ -165,6 +165,17 @@ describe('validateEdit', () => {
     )
     const issues = validateEdit(base, apply(base), HOLIDAYS)
     expect(find(issues, 'form2.blockIdCopied')[0]).toMatchObject({ severity: 'warning', file: 'trips.txt' })
+
+    // 孤立した stop_times の行は出力から除くので、編集後には stopTimesUnknownTrip が無く、form2. の警告だけが出る
+    const orphan = withRows(smallFeed(), 'stop_times', [
+      ...smallFeed().tables.get('stop_times')!.rows,
+      { trip_id: 'R1_0805_WK', arrival_time: '10:00:00', departure_time: '10:00:00', stop_id: 'A', stop_sequence: '3', pickup_type: '0', drop_off_type: '0' },
+    ])
+    const orphanIssues = validateEdit(orphan, apply(orphan), HOLIDAYS)
+    expect(find(orphanIssues, 'form2.orphanStopTimesDropped')[0]).toMatchObject({ severity: 'warning', file: 'stop_times.txt' })
+    expect(find(orphanIssues, 'form2.orphanStopTimesDropped')[0].message).toContain('trip_id:R1_0805_WK')
+    expect(find(orphanIssues, 'stopTimesUnknownTrip')).toEqual([])
+    expect(errors(orphanIssues)).toEqual([])
   })
 })
 
@@ -184,8 +195,20 @@ describe('timingNotices', () => {
     expect(lead('20261002').map((i) => i.code)).toEqual([])
     // 既定の開始日は今日なので d = 0 で leadTimeUnder3
     expect(lead('20261101')[0].message).toContain('実施まで 0 日です。')
-    // 過ぎていれば、過ぎた日数を出す
-    expect(lead('20261104')[0].message).toContain('を 3 日過ぎています。')
+  })
+
+  it('実施日を過ぎていれば、反映が間に合うかではなく、過ぎた日数と補い方を出す', () => {
+    const lead = (today: string) => timingNotices(result, today).filter((i) => i.code.startsWith('leadTime'))
+    // 開始日は 2026-11-01
+    const passed = lead('20261104')
+    expect(passed.map((i) => [i.code, i.severity])).toEqual([['leadTimePassed', 'warning']])
+    expect(passed[0].message).toBe('実施日(2026年11月1日)を 3 日過ぎています。過ぎた日は経路検索に正しく出ていません。周知文などで補ってください。')
+    expect(passed[0].message).not.toContain('静的 GTFS')
+    expect(passed[0].message).not.toContain('実施まで')
+    expect(lead('20261102').map((i) => i.code)).toEqual(['leadTimePassed'])
+    expect(lead('20261102')[0].message).toContain('を 1 日過ぎています。')
+    // 当日(d = 0)はまだ過ぎていない
+    expect(lead('20261101').map((i) => i.code)).toEqual(['leadTimeUnder3'])
   })
 
   it('開始日が今日より先なら公開の時期を、末日が 30 日以内なら次の版を促し、公開の注意はいつも出す', () => {
@@ -194,6 +217,10 @@ describe('timingNotices', () => {
     expect(find(issues, 'futureStart')[0].message).toContain('今日〜2026年10月31日 は、この ZIP を公開すると経路検索に便が出ません。')
     expect(find(issues, 'validityEndSoon')).toEqual([])
     expect(find(issues, 'publishNotes')).toHaveLength(3)
+    // 開始日の前日が今日なら、同じ日を「今日〜…」と並べず「今日(…)」の1つにする
+    expect(find(timingNotices(result, '20261031'), 'futureStart')[0].message).toContain(
+      '今日(2026年10月31日) は、この ZIP を公開すると経路検索に便が出ません。',
+    )
     const late = timingNotices(result, '20261101')
     expect(find(late, 'futureStart')).toEqual([])
     expect(find(late, 'validityEndSoon')[0]).toMatchObject({

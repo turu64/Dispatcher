@@ -20,10 +20,12 @@ import type { ReachParams, RegionClass } from '@/reach/reach'
 import { formatCount, formatPercent, formatPointChange } from '@/reach/summary'
 import { useGtfsStore } from '@/store/gtfs'
 import { useReachStore, type ReachSnapshot, type RefState } from '@/store/reach'
+import DateBandControls from './DateBandStep'
 
 /**
- * 手順4:到達圏(減便の前後)。条件の入力と、時間帯ごとの結果の表。減便後の GTFS があれば前後の比較と、運行がゼロになる場所を出す。
- * 地図の色分けは map/ReachLayers.tsx
+ * 影響(到達圏。減便の前後)。上部に比べる日と時間帯の幅(DateBandStep.tsx)、続けて参照データの状態、時間帯ごとの結果の表。
+ * 減便後の GTFS があれば前後の比較と、運行がゼロになる場所を出す。
+ * 地図の色分けは map/ReachLayers.tsx、地図に出す時間帯の切り替えは map/BandControl.tsx(表の強調行と連動する)
  */
 export default function ReachStep() {
   const feed = useGtfsStore((s) => s.feed)
@@ -38,11 +40,12 @@ export default function ReachStep() {
   const store = useReachStore.getState
 
   return (
-    <StepSection title="4. 到達圏(減便の前後)">
+    <StepSection title="4. 影響(到達圏)">
       {!feed ? (
-        <p className="text-sm text-muted-foreground">手順1で GTFS を読み込むと、選んだ日付・時間帯の到達圏を計算します。</p>
+        <p className="text-sm text-muted-foreground">GTFS を読み込むと、選んだ日付・時間帯の到達圏を計算します。</p>
       ) : (
         <>
+          <DateBandControls />
           <RefStatus
             refState={ref}
             fallbackClass={fallbackClass}

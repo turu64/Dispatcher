@@ -1,19 +1,19 @@
 import { useMemo, useState } from 'react'
-import StepSection from '@/components/StepSection'
+import HolidayCalendar from '@/components/HolidayCalendar'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { SELECTED_TOGGLE_CLASS } from '@/components/selectedToggle'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { makeBands, type TimeBand } from '@/gtfs/departures'
-import { formatDateJa, fromInputDate, toInputDate } from '@/lib/dates'
+import type { HolidayList } from '@/gtfs/holidays'
+import { formatDateJa } from '@/lib/dates'
 import { describeServiceDay, type ServiceDay } from '@/lib/serviceDay'
-import { bandIndexForHour } from '@/reach/input'
 import { useGtfsStore } from '@/store/gtfs'
+import { useHolidayStore } from '@/store/holidays'
 import { selectablePeriod, useReachStore, type StepHours } from '@/store/reach'
 
 /**
- * 手順3:日付と時間帯。選んだ条件は useReachStore に入り、到達圏の計算と地図の表示に使われる。
+ * 影響(到達圏)の手順の上部に置く、日付と時間帯の幅の入力(以前は手順「日付と時間帯」だった。docs/tasks-1103.md の指摘7)。
+ * 選んだ条件は useReachStore に入り、変えると到達圏を計算し直す。計算の結果は表・足し戻しの手がかり・AI の影響の要約にも使われる。
+ * 地図に出す時間帯の切り替えは計算を変えないので、ここではなく地図の上(map/BandControl.tsx)に置く。
  * 選べる日付の範囲は到達圏の store から読む(減便後の GTFS があれば、その有効期間の中だけ。docs/interfaces-1104.md §7)
  */
 export default function DateBandStep() {
@@ -22,90 +22,96 @@ export default function DateBandStep() {
   const comparing = useReachStore((s) => s.edited !== null)
   const date = useReachStore((s) => s.date)
   const stepHours = useReachStore((s) => s.stepHours)
-  const selectedHour = useReachStore((s) => s.selectedHour)
+  const holidayState = useHolidayStore((s) => s.holidays)
+  const holidays = holidayState.status === 'ready' ? holidayState.list : null
   const day = useMemo(() => (feed && date ? describeServiceDay(feed, date) : null), [feed, date])
-  const bands = useMemo(() => makeBands(stepHours), [stepHours])
+  if (!feed) return null
 
   return (
-    <StepSection title="3. 日付と時間帯">
-      {!feed ? (
-        <p className="text-sm text-muted-foreground">手順1で GTFS を読み込むと選べます。</p>
-      ) : !period || !date ? (
-        <Alert variant="destructive">
-          <AlertDescription>
-            {comparing
-              ? '減便後の GTFS に運行日がありません(方針の期間を確かめてください)。'
-              : 'この GTFS には運行日がありません(calendar.txt・calendar_dates.txt を確かめてください)。'}
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <>
-          <DateField date={date} period={period} comparing={comparing} onCommit={(d) => useReachStore.getState().setDate(d)} />
-          {day && <ServiceDayInfo day={day} />}
-          <StepPicker value={stepHours} onChange={(v) => useReachStore.getState().setStepHours(v)} />
-          <BandPicker bands={bands} selectedHour={selectedHour} onSelect={(h) => useReachStore.getState().selectHour(h)} />
-        </>
-      )}
-    </StepSection>
+    <DateBandPanel
+      period={period}
+      comparing={comparing}
+      date={date}
+      day={day}
+      holidays={holidays}
+      stepHours={stepHours}
+      onDate={(d) => useReachStore.getState().setDate(d)}
+      onStepHours={(v) => useReachStore.getState().setStepHours(v)}
+    />
   )
 }
 
-/**
- * 日付の入力。打っている途中の値(年の桁を打ち直している間など)で選択が戻らないよう、入力欄の文字は手元に持ち、
- * 正しい日付になったときだけ store に渡す。store の日付が外から変わったら(GTFS を読み直したときなど)、入力欄も合わせる。
- */
-export function DateField({
-  date,
+/** DateBandStep の表示の部分(store を使わない。値を直接渡して確かめられる) */
+export function DateBandPanel({
   period,
   comparing,
-  onCommit,
+  date,
+  day,
+  holidays,
+  stepHours,
+  onDate,
+  onStepHours,
 }: {
-  date: string
-  period: { start: string; end: string }
+  /** 選べる日付の範囲。運行日が無いときは null */
+  period: { start: string; end: string } | null
   /** 減便後の GTFS と比べている(範囲は出力の有効期間) */
   comparing: boolean
-  onCommit: (date: string) => string | null
+  date: string | null
+  day: ServiceDay | null
+  holidays: HolidayList | null
+  stepHours: StepHours
+  /** 日付を選んだとき。選べない日なら理由を返す(カレンダーは範囲の外を選べないので、ふつうは null) */
+  onDate: (date: string) => string | null
+  onStepHours: (v: StepHours) => void
 }) {
-  const [text, setText] = useState(toInputDate(date))
-  const [shown, setShown] = useState(date)
   const [error, setError] = useState<string | null>(null)
-  if (date !== shown) {
-    setShown(date)
-    setText(toInputDate(date))
-    setError(null)
-  }
-
   return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor="reach-date">日付</Label>
-      <Input
-        id="reach-date"
-        type="date"
-        min={toInputDate(period.start)}
-        max={toInputDate(period.end)}
-        value={text}
-        aria-invalid={error !== null}
-        aria-describedby="reach-date-help"
-        onChange={(e) => {
-          const value = e.target.value
-          setText(value)
-          const d = fromInputDate(value)
-          if (!d) {
-            setError('日付を選んでください。')
-            return
-          }
-          const message = onCommit(d)
-          setError(message)
-          if (!message) setShown(d)
-        }}
-      />
-      <p id="reach-date-help" className="text-xs text-muted-foreground">
-        {comparing
-          ? `比べられるのは出力の有効期間(${formatDateJa(period.start)}〜${formatDateJa(period.end)})です`
-          : `運行期間:${formatDateJa(period.start)}〜${formatDateJa(period.end)}`}
-      </p>
-      {error && <p className="text-sm text-destructive">{error}</p>}
-    </div>
+    <details open className="rounded-lg border px-3 py-2">
+      <summary className="cursor-pointer text-sm font-medium">
+        比べる日と時間帯の幅
+        {date && (
+          <span className="ml-1 text-xs font-normal text-muted-foreground">
+            ({formatDateJa(date)}、{stepHours}時間ごと)
+          </span>
+        )}
+      </summary>
+      <div className="mt-2 flex flex-col gap-3">
+        {!period || !date ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {comparing
+                ? '減便後の GTFS に運行日がありません(方針の期間を確かめてください)。'
+                : 'この GTFS には運行日がありません(calendar.txt・calendar_dates.txt を確かめてください)。'}
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">比べる日</span>
+              <HolidayCalendar
+                value={date}
+                min={period.start}
+                max={period.end}
+                holidays={holidays}
+                onChange={(d) => setError(onDate(d))}
+              />
+              <p className="text-xs text-muted-foreground">
+                {comparing
+                  ? `比べられるのは出力の有効期間(${formatDateJa(period.start)}〜${formatDateJa(period.end)})です`
+                  : `運行期間:${formatDateJa(period.start)}〜${formatDateJa(period.end)}`}
+              </p>
+              {error && <p className="text-sm text-destructive">{error}</p>}
+            </div>
+            {day && <ServiceDayInfo day={day} />}
+            <StepPicker value={stepHours} onChange={onStepHours} />
+          </>
+        )}
+        <p className="text-xs text-muted-foreground">
+          日付と時間帯の幅を変えると、表・足し戻しの手がかり・AI の影響の要約も計算し直します。
+          地図に出す時間帯は、地図の上のボタンで切り替えます(こちらは計算し直しません)。
+        </p>
+      </div>
+    </details>
   )
 }
 
@@ -161,44 +167,6 @@ function StepPicker({ value, onChange }: { value: StepHours; onChange: (v: StepH
         <ToggleGroupItem value="1" className={SELECTED_TOGGLE_CLASS}>
           1時間ごと
         </ToggleGroupItem>
-      </ToggleGroup>
-    </div>
-  )
-}
-
-/** 表示する時間帯。地図の色を切り替えるだけで、計算し直さない */
-export function BandPicker({
-  bands,
-  selectedHour,
-  onSelect,
-}: {
-  bands: TimeBand[]
-  selectedHour: number
-  onSelect: (hour: number) => void
-}) {
-  const index = bandIndexForHour(bands, selectedHour)
-  const value = index >= 0 ? String(bands[index].startHour) : ''
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-sm font-medium" id="reach-band-label">
-        地図に出す時間帯
-      </span>
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        size="sm"
-        aria-labelledby="reach-band-label"
-        className="flex-wrap"
-        value={value}
-        onValueChange={(v) => {
-          if (v !== '') onSelect(Number(v))
-        }}
-      >
-        {bands.map((b) => (
-          <ToggleGroupItem key={b.startHour} value={String(b.startHour)} className={`tabular-nums ${SELECTED_TOGGLE_CLASS}`}>
-            {b.label}
-          </ToggleGroupItem>
-        ))}
       </ToggleGroup>
     </div>
   )

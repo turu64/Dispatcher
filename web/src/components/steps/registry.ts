@@ -2,7 +2,6 @@ import type { ComponentType } from 'react'
 import OutputStep from '@/components/output/OutputStep'
 import ReachLayers from '@/map/ReachLayers'
 import { useStepStore, type StepKey } from '@/store/steps'
-import DateBandStep from './DateBandStep'
 import LoadStep from './LoadStep'
 import PolicyStep from './PolicyStep'
 import ReachStep from './ReachStep'
@@ -27,14 +26,13 @@ export interface StepDef {
 
 /**
  * 左の欄の手順の一覧。App.tsx はこの一覧を描くだけなので、手順を足す・外す・並べ替えるときはここだけを直す。
- * 並びは docs/tasks-1103.md の指摘3(読み込み → 前提情報 → 減便の方針 → 日付と時間帯 → 到達圏 → 足し戻し → 出力)
+ * 並びは docs/tasks-1103.md の指摘3・7(読み込み → 前提情報 → 減便の方針 → 影響(到達圏。日付と時間帯を含む)→ 足し戻し → 出力)
  */
 export const STEPS: readonly StepDef[] = [
   { key: 'load', title: '読み込み', component: LoadStep, showMap: true, mapOverlay: ReachLayers },
   { key: 'research', title: '前提情報', component: ResearchStep, showMap: true, mapOverlay: ReachLayers },
   { key: 'policy', title: '減便の方針', component: PolicyStep, showMap: false },
-  { key: 'dateBand', title: '日付と時間帯', component: DateBandStep, showMap: true, mapOverlay: ReachLayers },
-  { key: 'reach', title: '到達圏', component: ReachStep, showMap: true, mapOverlay: ReachLayers },
+  { key: 'reach', title: '影響(到達圏)', component: ReachStep, showMap: true, mapOverlay: ReachLayers },
   { key: 'restore', title: '足し戻し', component: RestoreStep, showMap: true, mapOverlay: ReachLayers },
   { key: 'output', title: '出力', component: OutputStep, showMap: false },
 ]

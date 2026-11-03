@@ -53,10 +53,10 @@ describe('手順の切り替え', () => {
 
   it('並びから外した手順へは移れず、並びを替えると開いている手順が無ければ先頭に戻る', () => {
     loadBase()
-    useStepStore.getState().go('dateBand')
-    useStepStore.getState().setOrder(['load', 'research', 'policy', 'reach', 'restore', 'output'])
+    useStepStore.getState().go('restore')
+    useStepStore.getState().setOrder(['load', 'research', 'policy', 'reach', 'output'])
     expect(useStepStore.getState().current).toBe('load')
-    expect(useStepStore.getState().go('dateBand')).toBe(false)
+    expect(useStepStore.getState().go('restore')).toBe(false)
     // 次へは、新しい並びの順に動く
     useStepStore.getState().go('policy')
     useStepStore.getState().next()
@@ -69,6 +69,6 @@ describe('canOpenStep', () => {
     expect(canOpenStep('load', STEP_KEYS, false)).toBe(true)
     expect(canOpenStep('research', STEP_KEYS, false)).toBe(false)
     expect(canOpenStep('research', STEP_KEYS, true)).toBe(true)
-    expect(canOpenStep('dateBand', ['load', 'reach'], true)).toBe(false)
+    expect(canOpenStep('restore', ['load', 'reach'], true)).toBe(false)
   })
 })

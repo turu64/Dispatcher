@@ -5,7 +5,7 @@ import { useEditStore } from './edit'
  * 手順の鍵。画面に出す並びと見出しは components/steps/registry.ts の手順の一覧が決め、
  * ここには「ありうる手順」だけを置く(一覧から外した鍵は、並びに入らないので開かれない)
  */
-export const STEP_KEYS = ['load', 'research', 'policy', 'dateBand', 'reach', 'restore', 'output'] as const
+export const STEP_KEYS = ['load', 'research', 'policy', 'reach', 'restore', 'output'] as const
 
 export type StepKey = (typeof STEP_KEYS)[number]
 

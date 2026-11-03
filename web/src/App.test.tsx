@@ -90,13 +90,13 @@ describe('画面の骨組み', () => {
     expect(screen.queryByText('北海道オープンデータプラットフォーム')).toBeNull()
   })
 
-  it('手順は 読み込み → 前提情報 → 減便の方針 → 日付と時間帯 → 到達圏 → 足し戻し → 出力 の順に並ぶ', () => {
+  it('手順は 読み込み → 前提情報 → 減便の方針 → 影響(到達圏。日付と時間帯を含む)→ 足し戻し → 出力 の順に並ぶ', () => {
     render(<App />)
     const nav = screen.getByRole('navigation', { name: '手順の切り替え' })
     const names = within(nav)
       .getAllByRole('button')
       .map((b) => b.textContent)
-    expect(names).toEqual(['11. 読み込み', '22. 前提情報', '33. 減便の方針', '44. 日付と時間帯', '55. 到達圏', '66. 足し戻し', '77. 出力'])
+    expect(names).toEqual(['11. 読み込み', '22. 前提情報', '33. 減便の方針', '44. 影響(到達圏)', '55. 足し戻し', '66. 出力'])
     expect(useStepStore.getState().order).toEqual(STEP_KEYS)
   })
 
@@ -117,17 +117,17 @@ describe('画面の骨組み', () => {
   it('読み込んだあとは見出しからどの手順へも移れ、見出しの番号は一覧の並びになる。次へ・戻るでも移る', () => {
     load()
     render(<App />)
-    fireEvent.click(stepButton('6. 足し戻し'))
+    fireEvent.click(stepButton('5. 足し戻し'))
     expect(useStepStore.getState().current).toBe('restore')
-    expect(screen.getByRole('heading', { name: '6. 足し戻し' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '5. 足し戻し' })).toBeTruthy()
     expect(screen.queryByRole('heading', { name: '1. GTFS を読み込む' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^次へ/ }))
-    expect(screen.getByRole('heading', { name: '7. 出力' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '6. 出力' })).toBeTruthy()
     // 出力の中のタブの見出しには番号を付けない
     expect(screen.getByRole('heading', { name: 'GTFS を出力' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /^戻る/ }))
     fireEvent.click(screen.getByRole('button', { name: /^戻る/ }))
-    expect(screen.getByRole('heading', { name: '5. 到達圏(減便の前後)' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '4. 影響(到達圏)' })).toBeTruthy()
     // どの手順でも「AI に相談」の欄が左の欄の下に出る
     expect(screen.getByRole('region', { name: 'AI に相談' })).toBeTruthy()
     // 鉄道駅の扱いの注記
@@ -148,18 +148,18 @@ describe('画面の骨組み', () => {
     expect(document.querySelector('main[aria-label="地図"]')).not.toBeNull()
     expect(map.resize).not.toHaveBeenCalled()
 
-    fireEvent.click(stepButton('4. 日付と時間帯'))
+    fireEvent.click(stepButton('4. 影響(到達圏)'))
     expect(mapPane().hidden).toBe(false)
     expect(map.resize).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(stepButton('7. 出力'))
+    fireEvent.click(stepButton('6. 出力'))
     expect(mapPane().hidden).toBe(true)
   })
 
   it('タブで出力の種類を切り替える(中身は消さずに隠す)', () => {
     load()
     render(<App />)
-    fireEvent.click(stepButton('7. 出力'))
+    fireEvent.click(stepButton('6. 出力'))
     const tabs = screen.getByRole('tablist', { name: '出力の種類' })
     expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['GTFS', '変更指示書', '周知文', '停留所の一覧'])
     fireEvent.mouseDown(within(tabs).getByRole('tab', { name: '変更指示書' }))
@@ -171,7 +171,7 @@ describe('画面の骨組み', () => {
   it('#/about で運営情報のページを開き、「画面に戻る」で元の手順と地図に戻る', () => {
     load()
     render(<App />)
-    fireEvent.click(stepButton('5. 到達圏'))
+    fireEvent.click(stepButton('4. 影響(到達圏)'))
     const map = fakeMap()
     map.resize.mockClear()
 
@@ -200,7 +200,7 @@ describe('画面の骨組み', () => {
     })
     expect(screen.queryByRole('heading', { name: 'このサイトについて' })).toBeNull()
     expect(useStepStore.getState().current).toBe('reach')
-    expect(screen.getByRole('heading', { name: '5. 到達圏(減便の前後)' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '4. 影響(到達圏)' })).toBeTruthy()
     expect(mapPane().closest('[hidden]')).toBeNull()
     expect(map.resize).toHaveBeenCalledTimes(1)
   })

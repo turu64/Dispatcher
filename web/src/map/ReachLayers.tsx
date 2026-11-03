@@ -18,6 +18,7 @@ import {
   ZERO_STOPS_SOURCE,
   type CellPaintMode,
 } from './layers'
+import BandControl from './BandControl'
 import MapLegend from './MapLegend'
 
 /** 停留所の範囲に地図を合わせるときの余白(px)と、近づきすぎない上限のズーム */
@@ -31,6 +32,7 @@ const NO_STOPS: Stop[] = []
  * 停留所の点は、到達圏の起点と同じ停留所(stop_times に乗れる行がある、location_type が 0 か空のもの)だけを出す。
  * 鉄道駅は、起点から「バス停の距離の最大 + 駅の距離の最大」以内のものだけを出す(参照データの1次メッシュには遠い駅も入るため)。
  * 到達できる見込みの無いセルは塗らず、凡例に数を出す。
+ * 地図の下の端に、表示する時間帯の切り替え(BandControl)を置く。押すと塗り分けと、影響(到達圏)の表の強調行が変わる(計算はし直さない)。
  * 減便後の GTFS があれば、塗り分け(減便前・減便後・前後の差の4色)を凡例で切り替え、前後の差では運行がゼロになる停留所に × を付ける。
  * データは計算の結果が変わったときだけ入れ直し、時間帯と塗り分けの切り替えは paint の式を差し替えるだけにする。
  * レイヤーは地図の準備ができてから足し、外れたら片付ける。
@@ -112,25 +114,28 @@ export default function ReachLayers() {
   const usedFallback = snapshot.result.usedFallback
   const nonCoverable = usedFallback ? null : (baseline ?? snapshot).summary.nonCoverableCells
   return (
-    <MapLegend
-      caption={`${formatDateJa(snapshot.date)} ${bandLabel}の徒歩圏${baseline ? `(${MODE_LABELS[mode]})` : ''}`}
-      computing={computing}
-      showStations={stations !== null && stations.length > 0}
-      nonCoverableCells={nonCoverable}
-      compare={
-        baseline
-          ? {
-              mode,
-              onModeChange: (m) => useReachStore.getState().setCompareMode(m),
-              counts: band >= 0 ? diffCountsOf(baseline.result, snapshot.result, band) : null,
-              draft: snapshot.draft === true,
-              zeroStops: {
-                feed: zeroStops?.filter((z) => z.scope === 'feed').length ?? 0,
-                day: zeroStops?.filter((z) => z.scope === 'day').length ?? 0,
-              },
-            }
-          : undefined
-      }
-    />
+    <>
+      <MapLegend
+        caption={`${formatDateJa(snapshot.date)} ${bandLabel}の徒歩圏${baseline ? `(${MODE_LABELS[mode]})` : ''}`}
+        computing={computing}
+        showStations={stations !== null && stations.length > 0}
+        nonCoverableCells={nonCoverable}
+        compare={
+          baseline
+            ? {
+                mode,
+                onModeChange: (m) => useReachStore.getState().setCompareMode(m),
+                counts: band >= 0 ? diffCountsOf(baseline.result, snapshot.result, band) : null,
+                draft: snapshot.draft === true,
+                zeroStops: {
+                  feed: zeroStops?.filter((z) => z.scope === 'feed').length ?? 0,
+                  day: zeroStops?.filter((z) => z.scope === 'day').length ?? 0,
+                },
+              }
+            : undefined
+        }
+      />
+      <BandControl bands={snapshot.bands} selectedHour={selectedHour} onSelect={(h) => useReachStore.getState().selectHour(h)} />
+    </>
   )
 }

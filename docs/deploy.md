@@ -20,7 +20,7 @@ Anthropic API(Managed Agents)
 
 - `compose.yaml` は web を `127.0.0.1` にだけ公開します。外から直接つながるのは外側の nginx だけです
 - GTFS はサーバーに送られません。サーバーが持つのは、SQLite(調査結果、セッション、1日の利用額)だけです
-- 合言葉なしで公開します(2026-11-03 の利用者の決定)。費用は、IP ごとの回数、1セッション $3、1日 $6、Console のワークスペースの月の上限 200 ドルで守ります
+- 認証コードなしで公開します(2026-11-03 の利用者の決定)。費用は、IP ごとの回数、1セッション $3、1日 $6、Console のワークスペースの月の上限 200 ドルで守ります
 
 ## 手順の一覧
 
@@ -68,7 +68,7 @@ dig +short dispatcher.turutaru.com     # VPS の IP アドレスが返ること
 
 ## 2. Console でワークスペースの月の上限を付ける(デプロイの前に必ず)
 
-合言葉なしで公開するので、費用の最後の歯止めは Anthropic Console のワークスペースの上限です。
+認証コードなしで公開するので、費用の最後の歯止めは Anthropic Console のワークスペースの上限です。
 
 1. Anthropic Console を開く
 2. エージェントを `ant apply` で作ったワークスペースを開く。ID は `claude-lock.json` の `origin.workspace_id`
@@ -203,8 +203,8 @@ ${EDITOR:-nano} .env
 | 変数 | 本番の値 |
 | --- | --- |
 | `ANTHROPIC_API_KEY` | 手順 2 のワークスペースで作った API キー |
-| `DISPATCHER_PUBLIC` | `1`(合言葉なしで公開する) |
-| `DISPATCHER_TOKEN` | 空のまま(合言葉を使うときだけ設定) |
+| `DISPATCHER_PUBLIC` | `1`(認証コードなしで公開する) |
+| `DISPATCHER_TOKEN` | 空のまま(認証コードを使うときだけ設定) |
 | `DISPATCHER_AGENT_ID` | `claude-lock.json` の `.resources["./agents/coordinator.md"].id` |
 | `DISPATCHER_AGENT_VERSION` | `2`(`claude-lock.json` の同じ項目の `version`。`ant apply` で上がったら直す) |
 | `DISPATCHER_ENVIRONMENT_ID` | `claude-lock.json` の `.resources["./environments/dispatcher.yaml"].id` |
@@ -401,20 +401,20 @@ docker compose exec server env | grep -E '^DISPATCHER_(PUBLIC|TRUST_PROXY|AGENT_
 
 1. 「サンプルを読み込む」で道北バスが読み込まれ、出典が出る
 2. 前提情報の手順で、保存済みの結果(デモ)が選べて、30 件が出る
-3. 方針(平日を土曜ダイヤに)を適用し、地図に到達圏が出る
+3. 減便の方針(平日を土曜ダイヤに)を適用し、地図に到達圏が出る
 4. 出力の手順で ZIP を出力でき、検証に error が出ない
 5. **AI が使える状態になる**(AI の欄に「AI は使えません」が出ない)。最初の発言の後に「AI を準備しています…(最初は 15 秒ほどかかります)」が出て、そのあと会話できる
-6. **会話を1回だけ試す。** 「方針の候補を2行で教えて」のような短い質問を1回送り、返事が流れて表示されること(約数セント)
+6. **会話を1回だけ試す。** 「減便の方針の候補を2行で教えて」のような短い質問を1回送り、返事が流れて表示されること(約数セント)
 7. 返事の後、AI の欄を開いたまま 2 分待つ。ストリームが切れず、次の発言も送れる(ブラウザの開発者ツールの Network で `/api/claude/session/stream` が開いたまま)
 
 確かめる点:
 
-- `/api/claude/status` の `available` が `true`。`false` のときは、次のどれかが `.env` に無いか、空です:API キー、エージェントの ID・版、実行環境の ID、取っ手の秘密、`DISPATCHER_PUBLIC`(合言葉を使わないとき)。画面は、原因によらず「AI は使えません(API キーが設定されていません)」と出すので、画面の文では原因が分かりません。`available` が `false` のときだけ、次のコマンドで本当の理由が返ります(設定が足りないと 503 で断られ、セッションは作られません。`available` が `true` のときは**本物のセッションが作られる**ので実行しないでください)
+- `/api/claude/status` の `available` が `true`。`false` のときは、次のどれかが `.env` に無いか、空です:API キー、エージェントの ID・版、実行環境の ID、取っ手の秘密、`DISPATCHER_PUBLIC`(認証コードを使わないとき)。画面は、原因によらず「AI は使えません(API キーが設定されていません)」と出すので、画面の文では原因が分かりません。`available` が `false` のときだけ、次のコマンドで本当の理由が返ります(設定が足りないと 503 で断られ、セッションは作られません。`available` が `true` のときは**本物のセッションが作られる**ので実行しないでください)
 
 ```bash
 curl -s -X POST -H 'content-type: application/json' -d '{}' $H/api/claude/session
 ```
-- 合言葉(`DISPATCHER_TOKEN`)を設定しないので、AI の中継は 401 にならない。「合言葉が無いと 401」を確かめたいときだけ、`DISPATCHER_TOKEN` を一時的に設定する(`tokenRequired` が `true` になる)
+- 認証コード(`DISPATCHER_TOKEN`)を設定しないので、AI の中継は 401 にならない。「認証コードが無いと 401」を確かめたいときだけ、`DISPATCHER_TOKEN` を一時的に設定する(`tokenRequired` が `true` になる)
 - 1回の会話の後、Console で利用額が増えている。サーバーの1日の額も増えている:
 
 ```bash
@@ -517,7 +517,7 @@ Docker のログは、既定では大きさの上限がありません。長く�
 - [ ] DNS が VPS を向き、HTTPS で開ける(HTTP は HTTPS に転送される)
 - [ ] `.env` に `DISPATCHER_PUBLIC=1` と、API キー・エージェントの ID と版・実行環境の ID・取っ手の秘密がある。`DISPATCHER_DEV` は無い
 - [ ] `/api/claude/status` が `available: true`
-- [ ] サンプルの読み込み、方針の適用、出力 ZIP、デモの調査結果が動く
+- [ ] サンプルの読み込み、減便の方針の適用、出力 ZIP、デモの調査結果が動く
 - [ ] AI の会話を1回行い、ストリームが2分以上つながっている
 - [ ] アクセスログ(外側の nginx)に IP アドレスが残らない
 - [ ] 出したコミットを控えた

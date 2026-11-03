@@ -8,6 +8,7 @@ import type { EditOp } from '@/gtfs/edit/ops'
 import { chatToolDeps } from '@/store/chat'
 import { useEditStore } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
+import { PolicyForm } from './policy/PolicyForm'
 import PolicyStep, { Notice47Table } from './PolicyStep'
 
 // 到達圏の store への受け渡し(setEdited)は、この画面では計算しない
@@ -30,6 +31,23 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
+
+/** 期間の欄のカレンダー(「開始日」「終了日」)の中で、月を months 回めくってから、その月の day 日を押す */
+function pickDay(name: '開始日' | '終了日', day: number, months = 0) {
+  const group = screen.getByRole('group', { name })
+  for (let i = 0; i < Math.abs(months); i++) {
+    fireEvent.click(within(group).getByRole('button', { name: months > 0 ? '次の月へ' : '前の月へ' }))
+  }
+  const cells = Array.from(group.querySelectorAll<HTMLButtonElement>('button[data-kind]'))
+  const cell = cells.find((b) => b.firstChild?.textContent === String(day))
+  if (!cell) throw new Error(`${name}のカレンダーに ${day} 日が見つかりません`)
+  fireEvent.click(cell)
+}
+
+/** 期間の欄のカレンダーが「選んだ日」として出している文 */
+function selectedText(name: '開始日' | '終了日'): string {
+  return within(screen.getByRole('group', { name })).getByTestId('selected-date').textContent ?? ''
+}
 
 describe('PolicyStep', () => {
   it('祝日一覧が無ければ、祝日の確認をしていないと出し、読み込み直すボタンで読み直す', () => {
@@ -82,9 +100,9 @@ describe('PolicyStep', () => {
     // 平日の service を利用者が選んだままにする(選ばないと、走らない service は推定の候補から外れ、service が決まらない)
     fireEvent.change(screen.getByLabelText('平日のダイヤ(入れ替える側)'), { target: { value: 'WK' } })
     // 2026-11-07(土)〜11-08(日)。平日 WK の calendar とは重なるが、月〜金の日が1日も無い
-    fireEvent.change(screen.getByLabelText('開始日'), { target: { value: '2026-11-07' } })
+    pickDay('開始日', 7, 1)
     fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
-    fireEvent.change(screen.getByLabelText('終了日'), { target: { value: '2026-11-08' } })
+    pickDay('終了日', 8)
     const check = screen.getByRole('region', { name: '方針の確かめ' })
     const issue = check.querySelector('[data-code="weekdayNotActive"]')
     expect(issue?.getAttribute('data-severity')).toBe('error')
@@ -158,28 +176,30 @@ describe('PolicyStep', () => {
     const summary = screen.getByRole('region', { name: '適用した方針' })
     expect(summary.textContent).toContain('運転士の一時的な欠員(欠員 2 名)')
     fireEvent.click(within(summary).getByRole('button', { name: '方針を変える' }))
-    expect(screen.getByLabelText('開始日')).toHaveProperty('value', '2026-11-01')
+    expect(selectedText('開始日')).toContain('11月1日')
     expect(screen.getByLabelText('理由のメモ')).toHaveProperty('value', '欠員 2 名')
     fireEvent.click(screen.getByRole('button', { name: '変えずに戻る' }))
     expect(screen.getByRole('region', { name: '適用した方針' })).toBeTruthy()
   })
 
-  it('入力の有効期間の外の日付でも「対象便を確かめる」が止まらず、期間を入力の端にそろえる警告が届く(ブラウザ標準の範囲検証を使わない)', () => {
-    render(<PolicyStep />)
+  it('カレンダーは入力の有効期間の外の日を選べない。外の日の方針(Claude などが出したもの)でも「対象便を確かめる」が止まらず、期間を入力の端にそろえる警告が届く', () => {
     // 小さなフィードの有効期間は 2026-10-01〜2026-11-30
+    act(() => {
+      const { addBackTripIds: _a, ...settings } = basePlan({ period: { start: '20260915', end: '20261215' } })
+      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: null, note: '' } }, 'user')
+      useEditStore.getState().commit()
+    })
+    render(<PolicyStep />)
+    fireEvent.click(screen.getByRole('button', { name: '方針を変える' }))
     const form = screen.getByRole('form', { name: '減便の方針' }) as HTMLFormElement
+    // ブラウザ標準の範囲検証では止めない(範囲外の日付は、アプリ側の確かめが警告で知らせる)
     expect(form.noValidate).toBe(true)
-    fireEvent.change(screen.getByLabelText('開始日'), { target: { value: '2026-09-15' } })
-    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
-    fireEvent.change(screen.getByLabelText('終了日'), { target: { value: '2026-12-15' } })
-    // 日付の入力欄の min・max は残る(カレンダーの選べる範囲の案内)。範囲外であることはブラウザも知っている
-    const start = screen.getByLabelText('開始日') as HTMLInputElement
-    expect(start.min).toBe('2026-10-01')
-    expect(start.max).toBe('2026-11-30')
-    expect(start.validity.rangeUnderflow).toBe(true)
-    expect((screen.getByLabelText('終了日') as HTMLInputElement).validity.rangeOverflow).toBe(true)
 
-    // 入力の途中でも、アプリ側の確かめ(checkPolicy)の警告が出る
+    // 入力の有効期間の外の日はカレンダーで選べない(10/1 の前の月へはめくれず、11/30 の次の月へもめくれない)
+    const end = screen.getByRole('group', { name: '終了日' })
+    expect(within(end).getByRole('button', { name: '次の月へ' }).getAttribute('aria-disabled')).toBe('true')
+
+    // アプリ側の確かめ(checkPolicy)の警告が出る
     const check = screen.getByRole('region', { name: '方針の確かめ' })
     expect(check.querySelector('[data-code="periodStartClamped"]')?.textContent).toContain('入力の開始日(2026年10月1日)にそろえます')
     expect(check.querySelector('[data-code="periodEndClamped"]')?.textContent).toContain('入力の末日(2026年11月30日)にそろえます')
@@ -191,6 +211,77 @@ describe('PolicyStep', () => {
     expect(review.querySelector('[data-code="form2.periodStartClamped"]')).not.toBeNull()
     expect(review.querySelector('[data-code="form2.periodEndClamped"]')).not.toBeNull()
     expect(review.textContent).toContain('出力する GTFS の有効期間は 2026年10月1日〜2026年11月30日')
+  })
+
+  it('入力の有効期間の外の日は、カレンダーの日のボタンが押せない(disabled)', () => {
+    render(<PolicyStep />)
+    // 開始日のカレンダーは 2026-10 を開いている。10 月は 1 日から選べる。11 月は 30 日まで選べる
+    const group = screen.getByRole('group', { name: '開始日' })
+    const day = (n: number) => Array.from(group.querySelectorAll<HTMLButtonElement>('button[data-kind]')).find((b) => b.firstChild?.textContent === String(n))
+    expect(day(1)).toHaveProperty('disabled', false)
+    fireEvent.click(within(group).getByRole('button', { name: '次の月へ' }))
+    expect(day(30)).toHaveProperty('disabled', false)
+    // 12 月へはめくれない
+    expect(within(group).getByRole('button', { name: '次の月へ' }).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('終了日が開始日より前なら、badPeriod の理由を期間の欄の下に出し、「対象便を確かめる」を押せない', () => {
+    render(<PolicyStep />)
+    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    pickDay('開始日', 7, 1)
+    pickDay('終了日', 3)
+    const reason = screen.getByRole('group', { name: '期間の確かめ' })
+    const issue = reason.querySelector('[data-code="badPeriod"]')
+    expect(issue?.getAttribute('data-severity')).toBe('error')
+    expect(issue?.textContent).toContain('終了日(2026年11月3日)が開始日(2026年11月7日)より前です')
+    // 理由は期間の欄の下だけに出し、「方針の確かめ」には重ねない
+    expect(screen.getByText('期間', { selector: 'legend' }).closest('fieldset')!.contains(reason)).toBe(true)
+    expect(screen.queryByRole('region', { name: '方針の確かめ' })?.querySelector('[data-code="badPeriod"]') ?? null).toBeNull()
+    expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', true)
+    // 終了日を直すと理由が消える
+    pickDay('終了日', 20)
+    expect(screen.queryByRole('group', { name: '期間の確かめ' })).toBeNull()
+    expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', false)
+  })
+
+  it('開始日が入力の末日より後(方針を変える画面に出る既存の方針など)なら、emptyValidity の理由を期間の欄の下に出す', () => {
+    const base = useEditStore.getState().base!
+    render(
+      <PolicyForm
+        base={base}
+        initial={basePlan({ period: { start: '20261201', end: null } })}
+        initialReason={null}
+      />,
+    )
+    const reason = screen.getByRole('group', { name: '期間の確かめ' })
+    const issue = reason.querySelector('[data-code="emptyValidity"]')
+    expect(issue?.getAttribute('data-severity')).toBe('error')
+    expect(issue?.textContent).toContain('入力の有効期間(2026年10月1日〜2026年11月30日)と重なりません')
+    expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', true)
+  })
+
+  it('平日の service の calendar に日付の正しくない行があり、期間の中で1日も走らないときは、その行を数えていないと weekdayNotActive の文に添える', () => {
+    const feed = smallFeed()
+    const wk = feed.tables.get('calendar')!.rows.find((r) => r.service_id === 'WK')!
+    wk.start_date = '20261332'
+    act(() => useEditStore.getState().setBase({ feed, zip: new ArrayBuffer(0), label: 'test.zip', sample: null }))
+    render(<PolicyStep />)
+    fireEvent.change(screen.getByLabelText('平日のダイヤ(入れ替える側)'), { target: { value: 'WK' } })
+    const issue = screen.getByRole('region', { name: '方針の確かめ' }).querySelector('[data-code="weekdayNotActive"]')
+    expect(issue?.textContent).toContain('1日も走りません')
+    expect(issue?.textContent).toContain('日付の正しくない calendar の行は数えていません')
+    expect(issue?.textContent).toContain('日付の正しくない行が 1 行あります')
+  })
+
+  it('日付が正しい calendar の行だけなら、weekdayNotActive の文に日付の注意を足さない', () => {
+    render(<PolicyStep />)
+    fireEvent.change(screen.getByLabelText('平日のダイヤ(入れ替える側)'), { target: { value: 'WK' } })
+    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    pickDay('開始日', 7, 1)
+    pickDay('終了日', 8)
+    const issue = screen.getByRole('region', { name: '方針の確かめ' }).querySelector('[data-code="weekdayNotActive"]')
+    expect(issue?.textContent).toContain('1日も走りません')
+    expect(issue?.textContent).not.toContain('日付の正しくない')
   })
 
   it('Claude の下書きがあるときに方針を確かめると、画面の中で捨ててよいかを先に確かめる(「やめる」なら何も変わらない)', () => {

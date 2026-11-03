@@ -11,7 +11,7 @@ import { baseKeyOf, type OpDraft } from './policy/types'
 export { Notice47Table } from './policy/DiffTables'
 
 /**
- * 手順2:減便の方針(docs/interfaces-1104.md §3・§6)。
+ * 減便の方針の手順(docs/interfaces-1104.md §3・§6)。
  * 方針を入れて「対象便を確かめる」で下書きにし、対象便を確かめて「この内容で進める」で承認する。
  * 承認したあとは、適用した方針と件数を出し、「方針を変える」で入力に戻る。編集の履歴(元に戻す・すべて戻す)もここに出す。
  */
@@ -30,7 +30,7 @@ export default function PolicyStep() {
   return (
     <StepSection title="2. 減便の方針" id={STEP_IDS.policy}>
       {!base ? (
-        <p className="text-sm text-muted-foreground">手順1で GTFS を読み込むと、減便の方針を選べます。</p>
+        <p className="text-sm text-muted-foreground">「読み込み」の手順で GTFS を読み込むと、減便の方針を選べます。</p>
       ) : (
         <>
           {showForm && (

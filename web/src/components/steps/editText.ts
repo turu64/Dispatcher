@@ -4,6 +4,8 @@
 import type { ServiceRole } from '@/gtfs/edit/services'
 import type { EditRecord, PolicyKind, PolicyReason } from '@/gtfs/edit/ops'
 import type { Form2Report } from '@/gtfs/edit/form2'
+import type { GtfsFeed } from '@/gtfs/load'
+import { isValidGtfsDate } from '@/gtfs/calendar'
 import type { SampleGtfsInfo } from '@/gtfs/sample'
 import { formatDateJa } from '@/lib/dates'
 
@@ -134,4 +136,25 @@ export const UNDO_NOTE =
 /** 「外れた場所が戻る」の手がかりの表示(戻るセルの数と、そこの推計人口) */
 export function lostCellsText(lost: { cells: number; population: number }): string {
   return `外れたセルが戻る(${lost.cells.toLocaleString('ja-JP')} セル、約 ${Math.round(lost.population).toLocaleString('ja-JP')} 人)`
+}
+
+/**
+ * service の calendar の行のうち、日付(start_date・end_date)が正しくない行の数。
+ * 日付が正しくない行は運行日を生まないので、運行日の判定には数えない(calendar.ts・ops.ts と同じ)
+ */
+export function invalidCalendarRowCount(feed: GtfsFeed, serviceId: string): number {
+  const id = serviceId.trim()
+  let n = 0
+  for (const row of feed.tables.get('calendar')?.rows ?? []) {
+    if ((row.service_id ?? '').trim() !== id) continue
+    if (!isValidGtfsDate((row.start_date ?? '').trim()) || !isValidGtfsDate((row.end_date ?? '').trim())) n++
+  }
+  return n
+}
+
+/** 平日の service が期間の中で1日も走らない(weekdayNotActive)ときに添える、日付の正しくない calendar の行の説明。無ければ null */
+export function invalidCalendarNote(feed: GtfsFeed, serviceId: string): string | null {
+  const n = invalidCalendarRowCount(feed, serviceId)
+  if (n === 0) return null
+  return `この service(${serviceId.trim()})の calendar に、日付の正しくない行が ${n} 行あります。日付の正しくない calendar の行は数えていません。calendar.txt の start_date・end_date を確かめてください。`
 }

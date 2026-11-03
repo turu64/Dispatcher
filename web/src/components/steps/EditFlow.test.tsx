@@ -76,9 +76,8 @@ function openStep(key: StepKey, title: string): HTMLElement {
 }
 
 const POLICY = '3. 減便の方針'
-const DATE_BAND = '4. 日付と時間帯'
-const REACH = '5. 到達圏(減便の前後)'
-const RESTORE = '6. 足し戻し'
+const REACH = '4. 影響(到達圏)'
+const RESTORE = '5. 足し戻し'
 /** 出力の手順の中の GTFS のタブ(タブの中の見出しには番号を付けない) */
 const EXPORT = 'GTFS を出力'
 
@@ -125,7 +124,8 @@ describe('編集の画面の流れ', () => {
     const policy = openStep('policy', POLICY)
     expect(within(policy).getByLabelText('平日のダイヤ(入れ替える側)')).toHaveProperty('value', 'WK')
     expect(within(policy).getByLabelText('土曜のダイヤ(写す元)')).toHaveProperty('value', 'SA')
-    expect(within(policy).getByLabelText('開始日')).toHaveProperty('value', '2026-10-20')
+    // 開始日はカレンダーで選ぶ。選んでいる日は、カレンダーの下の文で確かめる
+    expect(within(within(policy).getByRole('group', { name: '開始日' })).getByTestId('selected-date').textContent).toContain('10月20日')
     expect(within(policy).getByText(/期間の中の祝日:/).textContent).toContain('勤労感謝の日')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
 
@@ -165,15 +165,20 @@ describe('編集の画面の流れ', () => {
     expect(zero.textContent).toContain('学校前')
     expect(zero.textContent).toContain('運行がゼロになる系統:1 系統')
     // 日付は出力の有効期間の中だけ
-    expect(within(openStep('dateBand', DATE_BAND)).getByText(/比べられるのは出力の有効期間/)).toBeTruthy()
+    expect(within(openStep('reach', REACH)).getByText(/比べられるのは出力の有効期間/)).toBeTruthy()
 
     // ---- 足し戻し:候補は手がかりの多い順(平日だけの系統 R3 が先頭)----
     const restore = openStep('restore', RESTORE)
-    const candidates = within(restore).getByRole('list', { name: '足し戻す便の候補' })
-    const first = within(candidates).getAllByRole('listitem')[0]
+    // 候補は系統ごとにたたんで出る。先頭の系統(全便が消える R3)を開いて、先頭の便を選ぶ
+    const candidates = within(restore).getByRole('group', { name: '足し戻す便の候補' })
+    const r3 = within(candidates).getAllByRole('region')[0]
+    fireEvent.click(within(r3).getByRole('button', { expanded: false }))
+    const first = within(r3).getAllByRole('listitem')[0]
     expect(first.textContent).toContain('R3_0730_WK')
     expect(first.textContent).toContain('平日だけの系統')
     fireEvent.click(within(first).getByRole('checkbox'))
+    // 休校日運休(学)の印は、足し戻した便の一覧に出る(GTFS には入れない)
+    fireEvent.click(within(restore).getByLabelText('R3_0730_WK を休校日運休(学)にする'))
     fireEvent.change(within(restore).getByLabelText(/足し戻す理由/), { target: { value: '高校の通学' } })
     fireEvent.click(within(restore).getByRole('button', { name: '選んだ 1 便を足し戻す' }))
 
@@ -181,6 +186,7 @@ describe('編集の画面の流れ', () => {
     const added = within(restore).getByRole('region', { name: '足し戻した便' })
     expect(added.textContent).toContain('足し戻した便(1 便)')
     expect(added.textContent).toContain('理由:高校の通学')
+    expect(added.textContent).toContain('休校日運休(学)')
     expect(added.textContent).toContain('足し戻した便 1 便、営業運行時間の合計 0時間20分')
     // 足し戻すと、S9 は運行がゼロの停留所でなくなる
     await waitFor(() => expect(within(openStep('reach', REACH)).getByRole('region', { name: '運行がゼロになる場所' }).textContent).toContain('運行がゼロになる停留所:0 件'))
@@ -229,7 +235,13 @@ describe('編集の画面の流れ', () => {
     load()
     renderSteps()
     const policy = openStep('policy', POLICY)
-    fireEvent.change(within(policy).getByLabelText('開始日'), { target: { value: '2026-11-24' } })
+    // 開始日のカレンダーで翌月に送り、11月24日を押す
+    const startCalendar = within(policy).getByRole('group', { name: '開始日' })
+    fireEvent.click(within(startCalendar).getByRole('button', { name: '次の月へ' }))
+    const day24 = [...startCalendar.querySelectorAll<HTMLButtonElement>('button[data-kind]')].find((b) => b.firstChild?.textContent === '24')
+    if (!day24) throw new Error('11月24日のボタンがありません')
+    fireEvent.click(day24)
+    expect(within(startCalendar).getByTestId('selected-date').textContent).toContain('11月24日')
     expect(within(policy).getByRole('region', { name: '方針の確かめ' }).textContent).toContain('このままでは出力できません')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
     const review = within(policy).getByRole('region', { name: '対象便の確かめ' })

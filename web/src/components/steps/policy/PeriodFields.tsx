@@ -1,9 +1,9 @@
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import HolidayCalendar from '@/components/HolidayCalendar'
 import { Label } from '@/components/ui/label'
 import type { PolicyKind } from '@/gtfs/edit/ops'
 import { holidaysBetween, uncoveredRanges } from '@/gtfs/holidays'
-import { formatDateJa, toInputDate } from '@/lib/dates'
+import { formatDateJa } from '@/lib/dates'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
 import { POLICY_KIND_LABELS } from '../editText'
 
@@ -34,63 +34,63 @@ export function PolicyKindField({
   )
 }
 
-/** 期間(開始日・終了日・当面の間)と、出力の有効期間、期間の中の祝日 */
+/** 期間の欄の下に出す、期間そのものの誤り(badPeriod・emptyValidity) */
+export interface PeriodProblem {
+  severity: 'error' | 'warning'
+  code: string
+  message: string
+}
+
+/** 期間の欄の下に出す確かめの code(checkPolicy が出す、期間が成り立たない誤り。入力の端にそろえる警告は「方針の確かめ」に出す) */
+export const PERIOD_PROBLEM_CODES: ReadonlySet<string> = new Set(['badPeriod', 'emptyValidity'])
+
+/**
+ * 期間(開始日・終了日・当面の間)と、出力の有効期間、期間の中の祝日。
+ * 開始日・終了日は祝日の色つきカレンダーで選ぶ。選べるのは入力の GTFS の有効期間の中だけ。
+ * 日付は GTFS と同じ 'YYYYMMDD'(まだ決まっていなければ '')
+ */
 export function PeriodFields({
   input,
-  startText,
+  start,
   onStartChange,
-  endText,
+  end,
   onEndChange,
   indefinite,
   onIndefiniteChange,
   validity,
   periodMessage,
+  periodProblems,
   holidayState,
 }: {
   /** 入力の GTFS の有効期間 */
   input: { start: string; end: string }
-  startText: string
+  start: string
   onStartChange: (v: string) => void
-  endText: string
+  end: string
   onEndChange: (v: string) => void
   indefinite: boolean
   onIndefiniteChange: (v: boolean) => void
   validity: { start: string; end: string; days: number } | null
   periodMessage: string | null
+  periodProblems: PeriodProblem[]
   holidayState: HolidayState
 }) {
+  const holidays = holidayState.status === 'ready' ? holidayState.list : null
   return (
     <fieldset className="flex flex-col gap-2">
       <legend className="mb-1 text-sm font-medium">期間</legend>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor="policy-start" className="text-xs">
-            開始日
-          </Label>
-          <Input
-            id="policy-start"
-            type="date"
-            min={toInputDate(input.start)}
-            max={toInputDate(input.end)}
-            value={startText}
-            onChange={(e) => onStartChange(e.target.value)}
-          />
-        </div>
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor="policy-end" className="text-xs">
-            終了日
-          </Label>
-          <Input
-            id="policy-end"
-            type="date"
-            min={toInputDate(input.start)}
-            max={toInputDate(input.end)}
-            value={indefinite ? '' : endText}
-            disabled={indefinite}
-            onChange={(e) => onEndChange(e.target.value)}
-          />
-        </div>
+      <div role="group" aria-label="開始日" className="flex flex-col gap-1">
+        <Label className="text-xs">開始日</Label>
+        <HolidayCalendar value={start || null} onChange={onStartChange} min={input.start} max={input.end} holidays={holidays} />
       </div>
+      {indefinite ? (
+        <p className="text-sm">終了日:決めません(入力の末日 {formatDateJa(input.end)} まで)。</p>
+      ) : (
+        <div role="group" aria-label="終了日" className="flex flex-col gap-1">
+          <Label className="text-xs">終了日</Label>
+          <HolidayCalendar value={end || null} onChange={onEndChange} min={input.start} max={input.end} holidays={holidays} />
+        </div>
+      )}
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
@@ -105,6 +105,21 @@ export function PeriodFields({
         {validity && <>出力の有効期間は {formatDateJa(validity.start)}〜{formatDateJa(validity.end)}({validity.days}日)になります。</>}
       </p>
       {periodMessage && <p className="text-sm text-destructive">{periodMessage}</p>}
+      {periodProblems.length > 0 && (
+        <div role="group" aria-label="期間の確かめ" className="flex flex-col gap-1">
+          {periodProblems.map((p, i) => (
+            <p
+              key={`${p.code}-${i}`}
+              data-code={p.code}
+              data-severity={p.severity}
+              className={p.severity === 'error' ? 'text-sm text-destructive' : 'text-xs text-amber-900'}
+            >
+              <span aria-hidden="true">{p.severity === 'error' ? '× ' : '! '}</span>
+              {p.message}
+            </p>
+          ))}
+        </div>
+      )}
       <HolidaysInPeriod state={holidayState} validity={validity} />
     </fieldset>
   )

@@ -19,15 +19,15 @@ import {
 } from '@/gtfs/edit/services'
 import type { HolidayList } from '@/gtfs/holidays'
 import type { ValidationIssue } from '@/gtfs/validate/edit'
-import { fromInputDate, toInputDate, todayInJapan } from '@/lib/dates'
+import { todayInJapan } from '@/lib/dates'
 import { setChatToolProviders } from '@/store/chat'
 import { useEditStore, type BaseGtfs } from '@/store/edit'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
 import { draftActor, proposeAsUser, replaceClaudeDraftMessage } from '../editActions'
 import { InlineConfirm, IssueList, NoteList } from '../editParts'
-import { REASON_LABELS, REPLACEMENT_LABELS } from '../editText'
+import { invalidCalendarNote, REASON_LABELS, REPLACEMENT_LABELS } from '../editText'
 import { ExcludedRoutes } from './DiffTables'
-import { PeriodFields, PolicyKindField } from './PeriodFields'
+import { PERIOD_PROBLEM_CODES, PeriodFields, PolicyKindField } from './PeriodFields'
 import { ServiceDetails, ServiceSelect } from './ServiceFields'
 import { routeTripCounts } from './stats'
 import type { ChoiceRole, Override } from './types'
@@ -57,14 +57,15 @@ export function PolicyForm({
   const services = useMemo(() => describeServices(feed, holidays), [feed, holidays])
 
   const [kind, setKind] = useState<PolicyKind>(initial?.kind ?? 'weekdayToSaturday')
-  const [startText, setStartText] = useState(() => {
-    if (initial) return toInputDate(initial.period.start)
+  // 期間の日付は GTFS と同じ 'YYYYMMDD'(まだ決まっていなければ '')
+  const [startDate, setStartDate] = useState(() => {
+    if (initial) return initial.period.start
     // 既定の開始日:今日が入力の有効期間の中なら今日、そうでなければ入力の開始日
     const today = todayInJapan(new Date())
-    return toInputDate(input && input.start <= today && today <= input.end ? today : (input?.start ?? ''))
+    return input && input.start <= today && today <= input.end ? today : (input?.start ?? '')
   })
   const [indefinite, setIndefinite] = useState(initial ? initial.period.end === null : true)
-  const [endText, setEndText] = useState(toInputDate(initial?.period.end ?? input?.end ?? ''))
+  const [endDate, setEndDate] = useState(initial?.period.end ?? input?.end ?? '')
   const [overrides, setOverrides] = useState<Partial<Record<ChoiceRole, Override>>>(() => {
     if (!initial) return {}
     const replacementRole: ChoiceRole = initial.kind === 'weekdayToSaturday' ? 'saturday' : 'sundayHoliday'
@@ -82,8 +83,8 @@ export function PolicyForm({
   const draft = useEditStore((s) => s.draft)
   const confirmingReplace = confirmDraftId !== null && draft !== null && draftActor(draft) === 'claude' && draft.id === confirmDraftId
 
-  const start = fromInputDate(startText)
-  const end = indefinite ? null : fromInputDate(endText)
+  const start = startDate || null
+  const end = indefinite ? null : endDate || null
   const period = useMemo(() => (start && (indefinite || end) ? { start, end } : null), [start, end, indefinite])
   const validity = useMemo(() => (input && period ? policyValidity(input, period) : null), [input, period])
   // 期間を変えるたびに推定し直す(利用者が選び直した役割は overrides が優先する)
@@ -121,7 +122,24 @@ export function PolicyForm({
         : null,
     [kind, weekday, replacement, period, excluded],
   )
-  const problems = useMemo(() => (settings ? checkPolicy(feed, settings) : []), [feed, settings])
+  // service がまだ決まらなくても、期間の誤り(badPeriod・emptyValidity)は確かめて期間の欄の下に出す
+  // (service が空のままの確かめが出す、service に関する誤りは出さない)
+  const allProblems = useMemo(
+    () =>
+      settings
+        ? checkPolicy(feed, settings)
+        : period
+          ? checkPolicy(feed, { kind, weekdayService: weekday ?? '', replacementService: replacement ?? '', period, excludedRoutes: excluded }).filter(
+              (p) => PERIOD_PROBLEM_CODES.has(p.code),
+            )
+          : [],
+    [feed, settings, period, kind, weekday, replacement, excluded],
+  )
+  const periodProblems = useMemo(() => allProblems.filter((p) => PERIOD_PROBLEM_CODES.has(p.code)), [allProblems])
+  // 期間の誤りは期間の欄の下に出すので、「方針の確かめ」には重ねて出さない
+  const problems = useMemo(() => allProblems.filter((p) => !PERIOD_PROBLEM_CODES.has(p.code)), [allProblems])
+  // 平日の service の calendar に日付の正しくない行があって、期間の中で1日も走らないとき、その行は数えていないと添える
+  const weekdayCalendarNote = useMemo(() => (weekday ? invalidCalendarNote(feed, weekday) : null), [feed, weekday])
   const sameSatSun = useMemo(
     () => (saturday && sundayHoliday && saturday !== sundayHoliday ? sameTimetable(feed, saturday, sundayHoliday) : false),
     [feed, saturday, sundayHoliday],
@@ -131,7 +149,7 @@ export function PolicyForm({
   const pick = (role: ChoiceRole, value: string) => {
     setOverrides((o) => ({ ...o, [role]: { value, guessAtPick: guess?.[role] ?? null } }))
   }
-  const hasError = problems.some((p) => p.severity === 'error')
+  const hasError = allProblems.some((p) => p.severity === 'error')
   const periodMessage = !start ? '開始日を選んでください。' : !indefinite && !end ? '終了日を選んでください。' : null
 
   function submit(replaceClaudeDraft = false) {
@@ -173,14 +191,15 @@ export function PolicyForm({
 
       <PeriodFields
         input={input}
-        startText={startText}
-        onStartChange={setStartText}
-        endText={endText}
-        onEndChange={setEndText}
+        start={startDate}
+        onStartChange={setStartDate}
+        end={endDate}
+        onEndChange={setEndDate}
         indefinite={indefinite}
         onIndefiniteChange={setIndefinite}
         validity={validity}
         periodMessage={periodMessage}
+        periodProblems={periodProblems}
         holidayState={holidayState}
       />
 
@@ -228,7 +247,7 @@ export function PolicyForm({
         <Input aria-label="理由のメモ" placeholder="メモ(例:運転士 2 名の欠員)" value={note} onChange={(e) => setNote(e.target.value)} />
       </fieldset>
 
-      <IssueList issues={problems.map(problemIssue)} title="方針の確かめ" />
+      <IssueList issues={problems.map((p) => problemIssue(p, weekdayCalendarNote))} title="方針の確かめ" />
       {message && (
         <Alert variant="destructive">
           <AlertDescription>{message}</AlertDescription>
@@ -258,6 +277,8 @@ export function PolicyForm({
   )
 }
 
-function problemIssue(p: { severity: 'error' | 'warning'; code: string; message: string }): ValidationIssue {
-  return { severity: p.severity, code: p.code, file: '', message: p.message, count: 1, examples: [] }
+function problemIssue(p: { severity: 'error' | 'warning'; code: string; message: string }, weekdayCalendarNote: string | null): ValidationIssue {
+  // 平日の service が1日も走らない理由が calendar の日付の不正にあるかもしれないので、その行は数えていないと添える
+  const message = p.code === 'weekdayNotActive' && weekdayCalendarNote ? `${p.message}${weekdayCalendarNote}` : p.message
+  return { severity: p.severity, code: p.code, file: '', message, count: 1, examples: [] }
 }

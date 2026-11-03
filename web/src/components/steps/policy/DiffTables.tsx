@@ -82,46 +82,106 @@ export function ExcludedRoutes({
   )
 }
 
-/** 件数(§6 の 1) */
+/** 比べる棒の1本分(前または後)。残る便は灰色、消える便は赤、入る便は主の色。全体の幅は前後で大きい方を 100% にそろえる */
+function CompareBar({ label, same, other, otherKind, scale }: { label: string; same: number; other: number; otherKind: 'removed' | 'added'; scale: number }) {
+  const pct = (n: number) => (scale > 0 ? (n / scale) * 100 : 0)
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-4 shrink-0 text-xs text-muted-foreground">{label}</span>
+      <div className="flex h-3 min-w-0 flex-1 overflow-hidden rounded-sm bg-muted">
+        <div className="bg-muted-foreground/50" style={{ width: `${pct(same)}%` }} />
+        <div className={otherKind === 'removed' ? 'bg-destructive' : 'bg-primary'} style={{ width: `${pct(other)}%` }} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 件数(§6 の 1)。先頭に平日の便数の前 → 後を大きく出し、消える・入る・残るの便数を並べる。
+ * 全曜日で便がなくなる系統があれば、その名前を目立つ枠で出す(最も重い影響なので見落とさせない)
+ */
 export function DiffCounts({ diff, result }: { diff: WeekdayDiff; result: Form2Result }) {
   const { before, after } = totals(diff)
   const excludedCount = diff.byRoute.filter((r) => r.excluded).length
   const addBack = result.report.addBack
   const rejected = addBackRejections(addBack, result.plan.kind)
+  const vanishing = diff.byRoute.filter((r) => r.vanishes)
+  const delta = after - before
+  const percent = before > 0 ? Math.round((Math.abs(delta) / before) * 100) : null
+  const scale = Math.max(before, after, 1)
+  const removed = diff.removed.length
+  const added = diff.added.length
+  const same = diff.same.length
   return (
-    <dl className="flex flex-col gap-0.5 text-sm" aria-label="平日便の件数">
-      <div>
-        <dt className="inline">平日便:</dt>
-        <dd className="inline">
-          <FromTo before={before} after={after} emphasizeDecrease={after < before} /> 便
-        </dd>
+    <div role="group" aria-label="平日便の件数" className="flex flex-col gap-2 text-sm">
+      <div className="rounded-md border bg-card px-3 py-2">
+        <p className="text-xs text-muted-foreground">平日の便数(前 → 後)</p>
+        <p className="flex flex-wrap items-baseline gap-x-1 tabular-nums">
+          <span className="text-2xl font-semibold">{before}</span>
+          <span aria-hidden="true" className="text-lg text-muted-foreground">
+            →
+          </span>
+          <span className="sr-only">から</span>
+          <span className={`text-2xl font-semibold ${delta < 0 ? 'text-destructive' : ''}`}>{after}</span>
+          <span className="text-sm">便</span>
+          {delta !== 0 && (
+            <span className={`ml-1 text-sm ${delta < 0 ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
+              {delta < 0 && <span aria-hidden="true">▼ </span>}
+              {delta < 0 ? '−' : '+'}
+              {Math.abs(delta)} 便{percent !== null && `(${percent}%)`}
+              {delta < 0 && <span className="sr-only">減る</span>}
+            </span>
+          )}
+        </p>
+        <p className="mt-1 tabular-nums" aria-label="消える・入る・残る便の内訳">
+          <span className={removed > 0 ? 'font-semibold text-destructive' : undefined}>消える {removed} 便</span>
+          <span aria-hidden="true">・</span>
+          <span className={added > 0 ? 'font-semibold text-primary' : undefined}>入る {added} 便</span>
+          <span aria-hidden="true">・</span>
+          <span>残る {same} 便</span>
+        </p>
+        <div className="mt-1.5 flex flex-col gap-1" role="img" aria-label={`前 ${before} 便(残る ${same}・消える ${removed})、後 ${after} 便(残る ${same}・入る ${added})`}>
+          <CompareBar label="前" same={same} other={removed} otherKind="removed" scale={scale} />
+          <CompareBar label="後" same={same} other={added} otherKind="added" scale={scale} />
+        </div>
       </div>
-      <div>
-        <dt className="inline">内訳:</dt>
-        <dd className="inline tabular-nums">
-          消える {diff.removed.length} 便・入る {diff.added.length} 便・残る {diff.same.length} 便
-        </dd>
-      </div>
-      <div>
-        <dt className="inline">除外した系統:</dt>
-        <dd className="inline tabular-nums">{excludedCount} 系統</dd>
-      </div>
-      <div className={diff.vanishingRoutes > 0 ? 'font-semibold text-destructive' : undefined}>
-        <dt className="inline">
-          {diff.vanishingRoutes > 0 && <span aria-hidden="true">⚠ </span>}全曜日で便がなくなる系統:
-        </dt>
-        <dd className="inline tabular-nums">{diff.vanishingRoutes} 系統</dd>
-      </div>
-      {addBack.requested > 0 && (
-        <div>
-          <dt className="inline">足し戻し:</dt>
-          <dd className="inline tabular-nums">
-            選んだ {addBack.requested} 便のうち、受け付け {addBack.accepted.length} 便
-            {rejected.length > 0 && `、受け付けなかった便 ${rejected.length} 便(理由は足し戻しの手順に)`}
-          </dd>
+      {vanishing.length > 0 && (
+        <div className="rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-destructive" data-vanishing-banner="true">
+          <p className="font-semibold">
+            <span aria-hidden="true">⚠ </span>全曜日で便がなくなる系統が {vanishing.length} 系統あります
+          </p>
+          <ul className="mt-0.5 list-disc pl-5 text-xs">
+            {vanishing.map((r) => (
+              <li key={r.routeId}>
+                {r.routeName}(平日 {r.before} 便 → {r.after} 便)
+              </li>
+            ))}
+          </ul>
+          <p className="mt-0.5 text-xs">路線の休止の届出に当たるかを運輸支局に確認してください。除外すると平日の便がそのまま残ります。</p>
         </div>
       )}
-    </dl>
+      <dl className="flex flex-col gap-0.5">
+        <div>
+          <dt className="inline">除外した系統:</dt>
+          <dd className="inline tabular-nums">{excludedCount} 系統</dd>
+        </div>
+        <div className={diff.vanishingRoutes > 0 ? 'font-semibold text-destructive' : undefined}>
+          <dt className="inline">
+            {diff.vanishingRoutes > 0 && <span aria-hidden="true">⚠ </span>}全曜日で便がなくなる系統:
+          </dt>
+          <dd className="inline tabular-nums">{diff.vanishingRoutes} 系統</dd>
+        </div>
+        {addBack.requested > 0 && (
+          <div>
+            <dt className="inline">足し戻し:</dt>
+            <dd className="inline tabular-nums">
+              選んだ {addBack.requested} 便のうち、受け付け {addBack.accepted.length} 便
+              {rejected.length > 0 && `、受け付けなかった便 ${rejected.length} 便(理由は足し戻しの手順に)`}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </div>
   )
 }
 
@@ -131,10 +191,13 @@ const EARLIER = (r: RouteDiff) =>
 /** 系統ごとの表(§6 の 2)。系統を開くと、消える便と入る便を始発の時刻順に並べる(§6 の 5) */
 export function RouteDiffList({ diff }: { diff: WeekdayDiff }) {
   const earlier = diff.byRoute.filter(EARLIER).length
+  const vanishing = diff.byRoute.filter((r) => r.vanishes).length
+  // 全曜日で便がなくなる系統を先頭に(あとは今の並び=route_id の順)
+  const routes = [...diff.byRoute.filter((r) => r.vanishes), ...diff.byRoute.filter((r) => !r.vanishes)]
   return (
     <details open className="text-xs">
       <summary className="cursor-pointer text-sm font-medium">
-        系統ごと({diff.byRoute.length} 系統{earlier > 0 && `。終発が早まる系統 ${earlier}`})
+        系統ごと({diff.byRoute.length} 系統{vanishing > 0 && `。全曜日で便なし ${vanishing}`}{earlier > 0 && `。終発が早まる系統 ${earlier}`})
       </summary>
       <div className="mt-1 grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-2 border-b pb-1 text-[11px] text-muted-foreground">
         <span>系統</span>
@@ -143,7 +206,7 @@ export function RouteDiffList({ diff }: { diff: WeekdayDiff }) {
         <span className="text-right">終発</span>
       </div>
       <ul className="flex flex-col">
-        {diff.byRoute.map((r) => (
+        {routes.map((r) => (
           <RouteDiffRow key={r.routeId} route={r} diff={diff} />
         ))}
       </ul>
@@ -160,7 +223,7 @@ function RouteDiffRow({ route: r, diff }: { route: RouteDiff; diff: WeekdayDiff 
   const added = diff.added.filter((t) => t.routeId === r.routeId)
   const clock = (v: string | null) => v ?? '—'
   return (
-    <li className="border-b py-0.5" data-route={r.routeId}>
+    <li className={`border-b py-0.5 ${r.vanishes ? 'rounded-sm border-l-2 border-l-destructive bg-destructive/10 pl-1' : ''}`} data-route={r.routeId}>
       <details>
         <summary className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto_auto_auto] items-baseline gap-x-2">
           {/* 印は系統名の下の行に置く(380px の幅で系統名が3行に折れないように) */}
@@ -263,14 +326,17 @@ export function StartBandTable({ diff }: { diff: WeekdayDiff }) {
   )
 }
 
+/** 公示の表の見出し(北海道運輸局 公示第47号の時間帯の区分で数える) */
+export const NOTICE47_HEADING = '届出の目安:時間帯ごとの便数(北海道運輸局 公示第47号の区分)'
+
 /** 公示第46号の表の下限を下回る系統(平日の回数が 11〜15 回の系統が 10 回以下になる。例 main の 0031 は 11 → 4 回) */
 function belowNotice46(r: RouteDiff): boolean {
   return r.before >= 11 && r.before <= 15 && r.after <= 10
 }
 
 /**
- * 公示第47号の時間帯ごとの表(§6 の 4)。系統 × 帯の前後の便数。0 回になる系統 × 帯に ✕、
- * 公示第46号の表の下限を下回る系統(系統の平日の回数で判定)に ▼ を付ける
+ * 届出の目安:時間帯ごとの便数(北海道運輸局 公示第47号の区分)(§6 の 4)。系統 × 帯の前後の便数。0 回になる系統 × 帯に ✕、
+ * 公示第46号の表の下限を下回る系統(系統の平日の回数で判定)に ▼ を付ける。運行管理者向けの補助情報なので、既定で折りたたむ
  */
 export function Notice47Table({ diff }: { diff: WeekdayDiff }) {
   const routes = diff.byRoute.filter((r) => r.before + r.after > 0)
@@ -280,8 +346,17 @@ export function Notice47Table({ diff }: { diff: WeekdayDiff }) {
   return (
     <details className="text-xs">
       <summary className="cursor-pointer text-sm font-medium">
-        公示第47号の時間帯ごとの便数{zeroCount > 0 && `(0 回になる系統 × 帯 ${zeroCount})`}
+        {NOTICE47_HEADING}
+        {zeroCount > 0 && `(0 回になる系統 × 帯 ${zeroCount})`}
+        {below.length > 0 && (
+          <span className="ml-1 font-normal text-destructive">
+            <span aria-hidden="true">▼</span>第46号の下限を下回る系統 {below.length}
+          </span>
+        )}
       </summary>
+      <p className="mt-1 text-muted-foreground">
+        ▼は、平日の回数が 11〜15 回の系統が 10 回以下になり、公示第46号の表の下限を下回ることを示す目安です。届出の区分は運輸支局に確認してください。
+      </p>
       <Table className="text-[11px]">
         <TableHeader>
           <TableRow>
@@ -342,7 +417,7 @@ export function Notice47Table({ diff }: { diff: WeekdayDiff }) {
         </ul>
       )}
       <p className="mt-1 text-muted-foreground">
-        記号:✕=0 回になる、▼=公示第46号の表の下限を下回る(系統の平日の回数が 11〜15 回から 10 回以下になる)。目安です。時間帯は始発停留所の出発時刻で数えています。回数の単位と届出の区分は判定しません。運輸支局に確認してください。
+        記号:✕=0 回になる、▼=公示第46号の表の下限を下回る。時間帯は始発停留所の出発時刻で数えています。回数の単位と届出の区分は判定しません。
       </p>
     </details>
   )

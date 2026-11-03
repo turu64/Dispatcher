@@ -1,7 +1,13 @@
-import type { RestoreHintContext } from '../gtfs/edit/restore'
+import type { ResearchResult } from '../claude/research'
+import type { FacilityResearchNote, HintFacility, RestoreHintContext } from '../gtfs/edit/restore'
 import type { GtfsFeed } from '../gtfs/load'
 import type { OriginStops } from '../reach/input'
-import type { EditedSource, ReachSnapshot } from './reach'
+import { cellAreaKm2, meshCode, parentCode } from '../reach/mesh'
+import type { ReachParams, ReachResult, RefData, RegionClass } from '../reach/reach'
+import { facilityCategory, type Facility } from '../ref/facilities'
+import { priorityCategory, priorityRank, usePriorityStore, type PriorityKey } from './priority'
+import type { EditedSource, ReachSnapshot, RefState } from './reach'
+import { useResearchStore, type FacilityState } from './research'
 
 /** buildRestoreHintContext が読む、到達圏の store の状態(useReachStore.getState() をそのまま渡せる) */
 export interface ReachStateForHints {
@@ -10,31 +16,68 @@ export interface ReachStateForHints {
   computing: boolean
   error: string | null
   snapshot: ReachSnapshot | null
+  /**
+   * 到達圏の参照データ(学校・病院の徒歩圏の区分に使う。T19)。渡さなければ、施設のあるセルの区分は到達圏の結果から取り、
+   * 取れなければ区分のバス停の距離の最大を使う
+   */
+  ref?: RefState
 }
 
-// 同じ結果からは同じ ctx を返す(足し戻しの手がかりは、外れたセルの索引を ctx ごとに覚えておくため)
-const cache = new WeakMap<ReachSnapshot, { origins: OriginStops; ctx: RestoreHintContext }>()
+/** 学校・病院の手がかり(T19)の材料。前提情報の store と重要拠点の優先順位の store の今の状態 */
+export interface FacilitySourceForHints {
+  facilities: FacilityState
+  results: ReadonlyMap<string, ResearchResult>
+  order: readonly PriorityKey[]
+}
+
+/** 前提情報の store と優先順位の store から、学校・病院の手がかりの材料を読む */
+export function currentFacilitySource(): FacilitySourceForHints {
+  const r = useResearchStore.getState()
+  return { facilities: r.facilities, results: r.results, order: usePriorityStore.getState().order }
+}
+
+interface CacheEntry {
+  origins: OriginStops
+  facilities: FacilityState
+  results: ReadonlyMap<string, ResearchResult>
+  order: readonly PriorityKey[]
+  ref: RefState | undefined
+  ctx: RestoreHintContext
+}
+
+// 同じ結果からは同じ ctx を返す(足し戻しの手がかりは、外れたセルの索引と施設の索引を ctx ごとに覚えておくため)
+const cache = new WeakMap<ReachSnapshot, CacheEntry>()
 
 /**
- * 到達圏の store の状態から、足し戻しの手がかり(onlyServiceAtStop・restoresLostCells)の ctx を作る
- * (docs/interfaces-1105.md §7)。ctx は、同じ日付・同じ条件の基準と編集後の結果(同じ起点・同じセル・同じ時間帯)から作る。
+ * 到達圏の store の状態から、足し戻しの手がかり(onlyServiceAtStop・restoresLostCells・nearFacility)の ctx を作る
+ * (docs/interfaces-1105.md §7、docs/tasks-1103.md の T19)。ctx は、同じ日付・同じ条件の基準と編集後の結果
+ * (同じ起点・同じセル・同じ時間帯)から作る。
  *
- * 前後の比較ができていなければ null を返す(画面とツールは、到達圏を使う2つの手がかりを出さない)。null になるのは:
+ * 前後の比較ができていなければ null を返す(画面とツールは、到達圏を使う2つの手がかりと学校・病院の手がかりを出さない)。null になるのは:
  * - 編集後の GTFS が無い、または結果に基準(baseline)と比較(comparison)が無い
  * - 計算中(条件か編集後の GTFS が変わり、出ている結果が古い)、または計算に失敗した(出ている結果が古い)
  * - editedFeed を渡したとき、到達圏の store の編集後のフィードがそれと違う(承認前の下書きの結果など)
  *
  * 足し戻しの候補を、ある編集後のフィード(承認済みの版など)から作るときは、そのフィードを editedFeed に渡す。
+ * facilitySource は前提情報の施設・調査の結果・重要拠点の優先順位(渡さなければ store の今の状態)。施設を読めていれば
+ * ctx.facilities に学校・病院を入れる(hintFacilities)
  */
-export function buildRestoreHintContext(state: ReachStateForHints, editedFeed?: GtfsFeed): RestoreHintContext | null {
+export function buildRestoreHintContext(
+  state: ReachStateForHints,
+  editedFeed?: GtfsFeed,
+  facilitySource: FacilitySourceForHints = currentFacilitySource(),
+): RestoreHintContext | null {
   const { edited, origins, snapshot } = state
   if (!edited || !origins || !snapshot || state.computing || state.error !== null) return null
   if (editedFeed !== undefined && edited.feed !== editedFeed) return null
   const baseline = snapshot.baseline
   if (!baseline || !snapshot.comparison) return null
 
+  const { facilities, results, order } = facilitySource
   const hit = cache.get(snapshot)
-  if (hit && hit.origins === origins) return hit.ctx
+  if (hit && hit.origins === origins && hit.facilities === facilities && hit.results === results && hit.order === order && hit.ref === state.ref) {
+    return hit.ctx
+  }
   const ctx: RestoreHintContext = {
     before: baseline.departures,
     after: snapshot.departures,
@@ -45,6 +88,113 @@ export function buildRestoreHintContext(state: ReachStateForHints, editedFeed?: 
     params: snapshot.params,
     stops: origins.stops,
   }
-  cache.set(snapshot, { origins, ctx })
+  if (facilities.status === 'ready') {
+    ctx.facilities = hintFacilities(facilities.facilities, { results, order, ref: refDataOf(state.ref), params: snapshot.params, result: baseline.result })
+  }
+  cache.set(snapshot, { origins, facilities, results, order, ref: state.ref, ctx })
   return ctx
+}
+
+function refDataOf(ref: RefState | undefined): RefData | null {
+  return ref?.status === 'done' && ref.result.ok ? ref.result.ref : null
+}
+
+// ---- 学校・病院の手がかりの施設(T19)----
+
+/** 手がかりに使う重要拠点の種類と、施設の種類(学校・病院)。診療所と小学校などは使わない */
+const HINT_CATEGORIES: ReadonlyMap<PriorityKey, HintFacility['kind']> = new Map([
+  ['inpatient_hospital', 'hospital'],
+  ['high_school', 'school'],
+  ['higher_education', 'school'],
+  ['junior_high', 'school'],
+])
+
+/** 休校中の学校は使わない(休校区分が「不明」「調査なし」の学校は使う) */
+const CLOSED_SCHOOL = '休校中'
+
+/** 調査の結果の要点に入れる事実の数の上限 */
+const MAX_RESEARCH_FACTS = 3
+
+/**
+ * 施設の位置の区分(都市部・郊外・中山間・地方)。到達圏の計算(reach.ts の computeReach)と同じ規則で、
+ * 施設のある 125m セルが DID の中なら都市部、外なら親の 250m セルの人口密度がしきい値以上なら郊外、未満なら中山間・地方。
+ * 到達圏は人口 1 人未満のセルを調べないが、施設は人の住まないセルにもあるので、人口 0 のセルは中山間・地方とする。
+ * 参照データが無いときは、到達圏が使った区分(参照データが無く fallbackClass で計算していれば、その区分)。決められなければ null
+ */
+export function facilityRegionClass(
+  lat: number,
+  lon: number,
+  ref: RefData | null,
+  params: ReachParams,
+  result: Pick<ReachResult, 'usedFallback' | 'classes'>,
+): RegionClass | null {
+  let cell: string
+  try {
+    cell = meshCode(lat, lon, 11)
+  } catch {
+    return null
+  }
+  if (ref) {
+    if (ref.did125.has(cell)) return 'urban'
+    const parent = parentCode(cell, 10)
+    const pop = ref.pop250.get(parent) ?? 0
+    return pop >= 1 && pop / cellAreaKm2(parent) >= params.densityThreshold ? 'suburban' : 'rural'
+  }
+  if (result.usedFallback && result.classes.length > 0) return result.classes[0]
+  return null
+}
+
+/** 区分のバス停の徒歩の距離(m)。区分が決められなければ、3区分の最大 */
+function walkRadiusM(cls: RegionClass | null, params: ReachParams): number {
+  const of = (c: RegionClass) => params.walkMinutes[c].bus * params.speedMPerMin
+  if (cls) return of(cls)
+  return Math.max(of('urban'), of('suburban'), of('rural'))
+}
+
+/** 調査の結果の要点(事実は先頭から MAX_RESEARCH_FACTS 件、出典は sources の番号から URL に直す) */
+export function researchNoteOf(r: ResearchResult): FacilityResearchNote {
+  return {
+    status: r.status,
+    checkedAt: r.checkedAt,
+    origin: r.origin,
+    facts: r.facts.slice(0, MAX_RESEARCH_FACTS).map((f) => ({ label: f.label, value: f.value, url: r.sources[f.source - 1]?.url ?? null })),
+  }
+}
+
+/**
+ * 前提情報の施設の参照データ(国土数値情報の学校 P29・医療機関 P04)から、学校・病院の手がかりに使う施設を作る。
+ * 使うのは重要拠点の優先順位にある学校(中学校・高校・大学など)と入院設備のある病院(診療所・小学校など・事業者は使わない)。
+ * 徒歩圏は、施設の位置の区分のバス停の分数 × 分速(到達圏と同じ距離)。優先順位は order の順位、調査の結果があれば要点を付ける
+ */
+export function hintFacilities(
+  facilities: readonly Facility[],
+  o: {
+    results: ReadonlyMap<string, ResearchResult>
+    order: readonly PriorityKey[]
+    ref: RefData | null
+    params: ReachParams
+    result: Pick<ReachResult, 'usedFallback' | 'classes'>
+  },
+): HintFacility[] {
+  const out: HintFacility[] = []
+  for (const f of facilities) {
+    const category = facilityCategory(f)
+    if (category === null) continue
+    const kind = HINT_CATEGORIES.get(category)
+    if (!kind) continue
+    if (f.kind === 'school' && f.openStatus === CLOSED_SCHOOL) continue
+    const research = o.results.get(f.targetId)
+    out.push({
+      targetId: f.targetId,
+      name: f.name,
+      kind,
+      categoryLabel: priorityCategory(category).label,
+      rank: priorityRank(o.order, category),
+      lat: f.lat,
+      lon: f.lon,
+      radiusM: walkRadiusM(facilityRegionClass(f.lat, f.lon, o.ref, o.params, o.result), o.params),
+      ...(research ? { research: researchNoteOf(research) } : {}),
+    })
+  }
+  return out
 }

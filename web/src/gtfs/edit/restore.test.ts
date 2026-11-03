@@ -8,9 +8,18 @@ import type { GtfsFeed } from '../load'
 import { toStops } from '../parse'
 import { diffWeekdayTrips } from './diff'
 import { applyForm2 } from './form2'
-import { basePlan, smallFeed } from './form2.fixture'
+import { basePlan, shiftTrip, smallFeed, withRows } from './form2.fixture'
 import type { Form2Plan } from './ops'
-import { compareByHints, createRestoreHinter, restoreHints, type RestoreHint, type RestoreHintContext } from './restore'
+import {
+  bestFacilityRank,
+  compareByHints,
+  createRestoreHinter,
+  nearFacilityText,
+  restoreHints,
+  type HintFacility,
+  type RestoreHint,
+  type RestoreHintContext,
+} from './restore'
 import { cellAt, centerAt, DATE, REACH_PARAMS, reachBaseFeed, reachPlan, reachRef, reachSetup, STATION_CELL, STOP_CELLS } from './restore.fixture'
 
 // 小さなフィード(form2.fixture.ts)を「平日を土曜ダイヤに」した版で、消える平日便は R1_0800_WK・R2_0900_WK・R3_0730_WK
@@ -390,5 +399,229 @@ describe('足し戻しの手がかり:到達圏の計算との往復', () => {
         ['Q', 1],
       ]),
     )
+  })
+})
+
+// ---- 学校・病院の手がかり(nearFacility。docs/tasks-1103.md の T19)。form2.fixture の小さなフィードを使う ----
+// 停留所:A 駅前 (43.76, 142.36)、B 市役所 (43.77, 142.37)、C 病院前 (43.78, 142.38)、S9 学校前 (43.79, 142.39)
+// 消える平日便:R1_0800_WK(A 08:00 → B 08:10)、R2_0900_WK(A 09:00 → C 09:20。C は終点)、R3_0730_WK(A 07:30 → S9 07:40 → B 07:50)
+
+const S9 = { lat: 43.79, lon: 142.39 }
+const C = { lat: 43.78, lon: 142.38 }
+const A = { lat: 43.76, lon: 142.36 }
+
+/** 点 p から北へ約 m メートルの点 */
+function north(p: { lat: number; lon: number }, m: number) {
+  return { lat: p.lat + m / 111_000, lon: p.lon }
+}
+
+function facility(o: Partial<HintFacility> & Pick<HintFacility, 'targetId' | 'lat' | 'lon'>): HintFacility {
+  return { name: o.targetId, kind: 'school', categoryLabel: '高校・特別支援学校', rank: 3, radiusM: 400, ...o }
+}
+
+const HIGH = facility({ targetId: 'P29:高校', name: '学校前高校', ...north(S9, 100) })
+const JUNIOR = facility({ targetId: 'P29:中学', name: '学校前中学校', categoryLabel: '中学校', rank: 8, ...north(S9, 50) })
+const HOSPITAL = facility({ targetId: 'P04:病院', name: '病院前病院', kind: 'hospital', categoryLabel: '入院設備のある病院', rank: 1, ...north(C, 200) })
+const HOSPITAL_A = facility({ targetId: 'P04:駅前病院', name: '駅前病院', kind: 'hospital', categoryLabel: '入院設備のある病院', rank: 1, ...north(A, 100) })
+
+/** 到達圏を使う2つが出ない(比較の日付が土曜で、平日の便が走らない)空の比較に、施設だけを入れた ctx */
+function facilityCtx(facilities: readonly HintFacility[] | undefined): RestoreHintContext {
+  const bands = makeBands(3)
+  const counts = { counts: new Map<string, number[]>(), skippedBlankTime: 0, skippedInvalidTime: 0, hasFrequencies: false }
+  const empty = { cells: [], classes: [], reachable: bands.map(() => []), coverable: [], usedFallback: false, excludedStops: 0, cellPopulation: [] }
+  return {
+    before: counts,
+    after: counts,
+    bands,
+    beforeResult: empty,
+    afterResult: empty,
+    date: '20261114',
+    params: REACH_PARAMS,
+    stops: [],
+    ...(facilities ? { facilities } : {}),
+  }
+}
+
+function facilitySetup(feed: GtfsFeed = smallFeed()) {
+  const plan = basePlan()
+  const outcome = applyForm2(feed, plan, { generatedAt: '202611041200' })
+  if (!outcome.ok) throw new Error(outcome.message)
+  const edited = outcome.result.feed
+  const diff = diffWeekdayTrips(feed, edited, plan.weekdayService)
+  const hinter = createRestoreHinter(feed, edited, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
+  const byId = new Map(diff.removed.map((t) => [t.tripId, t]))
+  return { base: feed, plan, edited, diff, hinter, byId }
+}
+
+describe('足し戻しの手がかり:学校・病院(nearFacility)', () => {
+  it('学校の徒歩圏の停留所に 7〜9時に着く便に nearFacility を付け、理由の文に施設名と種類を入れる', () => {
+    const { hinter, byId } = facilitySetup()
+    const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([HIGH]))
+    expect(d.hints).toContain('nearFacility')
+    expect(d.facilities).toHaveLength(1)
+    const n = d.facilities![0]
+    const dist = Math.round(distanceM(S9, HIGH))
+    expect(n).toEqual({
+      facility: HIGH,
+      stopId: 'S9',
+      stopName: '学校前',
+      distanceM: dist,
+      matches: [{ timing: 'arrive', stopId: 'S9', stopName: '学校前', time: '07:40', distanceM: dist }],
+    })
+    expect(nearFacilityText(n)).toBe(`学校前高校(高校・特別支援学校)の始業前(7〜9時着)に学校前 07:40着(施設まで約 ${dist}m)`)
+    // 学校の近くを通らない便には付けない(項目ごと無い)
+    expect(hinter(byId.get('R1_0800_WK')!, facilityCtx([HIGH]))).toEqual({ hints: ['lastTripOfRoute', 'morning'], lostCells: null })
+  })
+
+  it('病院の徒歩圏の終点(乗れない停留所)に 8〜11時に着く便にも付ける', () => {
+    const { hinter, byId } = facilitySetup()
+    const d = hinter(byId.get('R2_0900_WK')!, facilityCtx([HOSPITAL]))
+    expect(d.hints).toContain('nearFacility')
+    expect(d.facilities![0].matches).toEqual([{ timing: 'arrive', stopId: 'C', stopName: '病院前', time: '09:20', distanceM: Math.round(distanceM(C, HOSPITAL)) }])
+    expect(nearFacilityText(d.facilities![0])).toContain('病院前病院(入院設備のある病院)の通院の行き(8〜11時着)に病院前 09:20着')
+  })
+
+  it('窓は開始を含み終わりを含まない(病院に 11:00 ちょうどに着く便には付けない)', () => {
+    // R2 を 1時間40分遅らせると、C に 11:00:00 に着く
+    const { hinter, byId } = facilitySetup(shiftTrip(smallFeed(), 'R2_0900_WK', 6000))
+    const d = hinter(byId.get('R2_0900_WK')!, facilityCtx([HOSPITAL]))
+    expect(d.hints).not.toContain('nearFacility')
+    // 徒歩圏にはあるので facilities には入る(窓には当たらない)
+    expect(d.facilities?.map((n) => [n.facility.targetId, n.matches.length])).toEqual([['P04:病院', 0]])
+    expect(nearFacilityText(d.facilities![0])).toBe(`病院前病院(入院設備のある病院):病院前から約 ${Math.round(distanceM(C, HOSPITAL))}m`)
+  })
+
+  it('学校の下校(14〜18時に出る)にも付ける。始発の停留所には着かない', () => {
+    // R3 を 7時間遅らせる:A 14:30 発 → S9 14:40 → B 14:50
+    const { hinter, byId } = facilitySetup(shiftTrip(smallFeed(), 'R3_0730_WK', 7 * 3600))
+    const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([HIGH, HOSPITAL_A]))
+    expect(d.hints).toContain('nearFacility')
+    const high = d.facilities!.find((n) => n.facility.targetId === HIGH.targetId)!
+    expect(high.matches.map((m) => [m.timing, m.stopId, m.time])).toEqual([['depart', 'S9', '14:40']])
+    expect(nearFacilityText(high)).toContain('下校(14〜18時発)に学校前 14:40発')
+    // 駅前病院は始発の A の近く。A では降りられない(最初の停留所)ので着く窓に当たらず、14:30 発は病院の帰りの窓(11〜16時)に当たる
+    const hospital = d.facilities!.find((n) => n.facility.targetId === HOSPITAL_A.targetId)!
+    expect(hospital.matches.map((m) => [m.timing, m.stopId, m.time])).toEqual([['depart', 'A', '14:30']])
+  })
+
+  it('徒歩圏(radiusM)の外の施設は入れない。ちょうどの距離は届く', () => {
+    const { hinter, byId } = facilitySetup()
+    const exact = distanceM(S9, HIGH)
+    const out = hinter(byId.get('R3_0730_WK')!, facilityCtx([{ ...HIGH, radiusM: exact - 0.5 }]))
+    expect(out.hints).not.toContain('nearFacility')
+    expect(out.facilities).toBeUndefined()
+    const edge = hinter(byId.get('R3_0730_WK')!, facilityCtx([{ ...HIGH, radiusM: exact }]))
+    expect(edge.hints).toContain('nearFacility')
+  })
+
+  it('施設は、窓に当たるもの、重要拠点の優先順位、距離の順に並べる', () => {
+    const { hinter, byId } = facilitySetup()
+    // 中学校(8位)は高校(3位)より近いが、優先順位で後ろ。駅前病院(1位)は窓に当たらない(A は始発で 07:30 発)ので最後
+    const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([JUNIOR, HOSPITAL_A, HIGH]))
+    expect(d.facilities!.map((n) => n.facility.targetId)).toEqual([HIGH.targetId, JUNIOR.targetId, HOSPITAL_A.targetId])
+    expect(bestFacilityRank(d)).toBe(3)
+    // 優先順位を入れ替えると(中学校を 2位に)並びも変わる
+    const swapped = hinter(byId.get('R3_0730_WK')!, facilityCtx([{ ...JUNIOR, rank: 2 }, HOSPITAL_A, HIGH]))
+    expect(swapped.facilities!.map((n) => n.facility.targetId)).toEqual([JUNIOR.targetId, HIGH.targetId, HOSPITAL_A.targetId])
+  })
+
+  it('ctx に施設が無ければ(前提情報を読めていない)出さない。編集後の便には出さない', () => {
+    const { hinter, byId, diff } = facilitySetup()
+    const trip = byId.get('R3_0730_WK')!
+    expect(hinter(trip, facilityCtx(undefined))).toEqual(hinter(trip))
+    expect(hinter(trip, facilityCtx([]))).toEqual(hinter(trip))
+    for (const t of diff.added) expect(hinter(t, facilityCtx([HIGH, HOSPITAL, HOSPITAL_A])).facilities).toBeUndefined()
+  })
+
+  it('1つの便だけを調べても、索引を作って調べた結果と同じ', () => {
+    const { base, plan, edited, hinter, byId } = facilitySetup()
+    const ctx = facilityCtx([HIGH, JUNIOR, HOSPITAL, HOSPITAL_A])
+    for (const trip of byId.values()) expect(restoreHints(base, edited, plan, trip, ctx)).toEqual(hinter(trip, ctx))
+  })
+
+  it('手がかりの数が同じなら、窓に当たる施設の優先順位の高い便を先にする', () => {
+    const { byId } = facilitySetup()
+    const near = (rank: number) => [{ facility: { ...HIGH, rank }, stopId: 'S9', stopName: '学校前', distanceM: 100, matches: [{ timing: 'arrive' as const, stopId: 'S9', stopName: '学校前', time: '07:40', distanceM: 100 }] }]
+    const a = { trip: byId.get('R3_0730_WK')!, detail: { hints: ['nearFacility' as const], lostCells: null, facilities: near(8) } }
+    const b = { trip: byId.get('R1_0800_WK')!, detail: { hints: ['nearFacility' as const], lostCells: null, facilities: near(1) } }
+    expect([a, b].sort(compareByHints).map((c) => c.trip.tripId)).toEqual(['R1_0800_WK', 'R3_0730_WK'])
+  })
+
+  describe('乗り降りの扱い(pickup_type・drop_off_type)', () => {
+    /** R3_0730_WK の S9 学校前の行の pickup_type・drop_off_type を変えたフィード(ほかの行は同じ) */
+    function withS9Flags(feed: GtfsFeed, pickup: string, dropOff: string): GtfsFeed {
+      return withRows(
+        feed,
+        'stop_times',
+        feed.tables.get('stop_times')!.rows.map((r) => (r.trip_id === 'R3_0730_WK' && r.stop_id === 'S9' ? { ...r, pickup_type: pickup, drop_off_type: dropOff } : r)),
+      )
+    }
+
+    it('途中の停留所で降りられない(drop_off_type=1)便は、07:40 に着いても始業前の窓に当たらない', () => {
+      const { hinter, byId } = facilitySetup(withS9Flags(smallFeed(), '0', '1'))
+      const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([HIGH]))
+      expect(d.hints).not.toContain('nearFacility')
+      // 乗れる停留所なので徒歩圏の施設には入る(窓には当たらない)
+      expect(d.facilities?.map((n) => [n.facility.targetId, n.stopId, n.matches.length])).toEqual([[HIGH.targetId, 'S9', 0]])
+    })
+
+    it('途中の停留所で乗れない(pickup_type=1)便は、15:00 に出ても下校の窓に当たらない', () => {
+      // R3 を 7時間30分遅らせる:A 15:00 発 → S9 15:10 → B 15:20。S9 は降りられるが、着く 15:10 は始業前の窓の外
+      const shifted = shiftTrip(smallFeed(), 'R3_0730_WK', 7.5 * 3600)
+      const plain = facilitySetup(shifted)
+      const open = plain.hinter(plain.byId.get('R3_0730_WK')!, facilityCtx([HIGH]))
+      expect(open.facilities![0].matches.map((m) => [m.timing, m.time])).toEqual([['depart', '15:10']])
+      const { hinter, byId } = facilitySetup(withS9Flags(shifted, '1', '0'))
+      const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([HIGH]))
+      expect(d.hints).not.toContain('nearFacility')
+      expect(d.facilities?.map((n) => [n.facility.targetId, n.matches.length])).toEqual([[HIGH.targetId, 0]])
+    })
+
+    it('乗ることも降りることもできない停留所しか徒歩圏に無い施設は入れない', () => {
+      const { hinter, byId } = facilitySetup(withS9Flags(smallFeed(), '1', '1'))
+      const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([HIGH]))
+      expect(d.hints).not.toContain('nearFacility')
+      expect(d.facilities).toBeUndefined()
+    })
+
+    it('最寄りの停留所は、乗り降りできる停留所から選ぶ(近くの通過する停留所は使わない)', () => {
+      // 学校前高校の北 約 250m に乗り降りできる S8 を足し、R3 は S9(学校から約 100m)を通過して S8 に 07:45 に着く
+      const base = smallFeed()
+      const s8 = north(S9, 350)
+      const stops = withRows(base, 'stops', [...base.tables.get('stops')!.rows, { stop_id: 'S8', stop_name: '学校北', stop_lat: String(s8.lat), stop_lon: String(s8.lon) }])
+      const rows = withS9Flags(stops, '1', '1').tables.get('stop_times')!.rows.flatMap((r) =>
+        r.trip_id === 'R3_0730_WK' && r.stop_id === 'B'
+          ? [{ ...r, stop_id: 'S8', arrival_time: '07:45:00', departure_time: '07:45:00', stop_sequence: '3', pickup_type: '0', drop_off_type: '0' }, { ...r, stop_sequence: '4' }]
+          : [r],
+      )
+      const { hinter, byId } = facilitySetup(withRows(stops, 'stop_times', rows))
+      const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([HIGH]))
+      const dist = Math.round(distanceM(s8, HIGH))
+      expect(dist).toBeGreaterThan(240)
+      expect(d.facilities).toEqual([
+        {
+          facility: HIGH,
+          stopId: 'S8',
+          stopName: '学校北',
+          distanceM: dist,
+          matches: [{ timing: 'arrive', stopId: 'S8', stopName: '学校北', time: '07:45', distanceM: dist }],
+        },
+      ])
+    })
+  })
+
+  it('到達圏を使う2つの手がかりは、施設を足しても変わらない', () => {
+    const { ctx, hinter, byId } = reachHinter()
+    const stops = new Map(Object.entries(STOP_CELLS).map(([id, [dr, dc]]) => [id, centerAt(dr, dc)]))
+    // P の近くの高校(P を 07:00 に出る A_0700_WK は、P が始発なので着く窓には当たらない。Q に 09:05 に着く B_0855_WK も 9時を過ぎる)
+    const withFacilities = { ...ctx, facilities: [facility({ targetId: 'P29:P', ...north(stops.get('Q')!, 30) })] }
+    for (const trip of byId.values()) {
+      const plain = hinter(trip, ctx)
+      const got = hinter(trip, withFacilities)
+      expect(got.hints.filter((h) => h !== 'nearFacility'), trip.tripId).toEqual(plain.hints)
+      expect(got.lostCells).toEqual(plain.lostCells)
+    }
+    // B_0855_WK は Q に 09:05 に着く(9時を過ぎる)ので窓に当たらないが、徒歩圏にはある
+    expect(hinter(byId.get('B_0855_WK')!, withFacilities).facilities?.map((n) => n.matches.length)).toEqual([0])
   })
 })

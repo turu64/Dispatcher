@@ -2,12 +2,12 @@ import KDBush from 'kdbush'
 import { activeServiceIds } from '../calendar'
 import { parseGtfsTime, type DepartureCounts, type TimeBand } from '../departures'
 import type { GtfsFeed, GtfsRow } from '../load'
-import { NON_NEGATIVE_INTEGER } from '../parse'
+import { NON_NEGATIVE_INTEGER, toStops } from '../parse'
 import { distanceM, meshCenter, type LatLon } from '../../reach/mesh'
 import type { ReachParams, ReachResult } from '../../reach/reach'
 import { createTripBriefer, notice47BandOf, type TripBrief } from './diff'
 import type { Form2Plan } from './ops'
-import { stopTimesByTrip } from './signature'
+import { compareStrings, sortByStopSequence, stopTimesByTrip } from './signature'
 
 /**
  * 足し戻しの手がかり(docs/interfaces-1104.md §8、docs/interfaces-1105.md §7)。コードが出し、画面の並べ替え・絞り込みと、
@@ -15,6 +15,7 @@ import { stopTimesByTrip } from './signature'
  * 基準と編集後の便の表だけで決まる手がかり(weekdayOnlyRoute〜evening)は、いつでも出す。
  * 到達圏を使う onlyServiceAtStop・restoresLostCells は、到達圏の前後の比較(ctx。store/restoreHintContext.ts の
  * buildRestoreHintContext で作る)を渡したときだけ出す。ctx を渡さなければ 11/4 と同じ結果になる。
+ * 学校・病院の手がかり nearFacility(docs/tasks-1103.md の T19)は、ctx に前提情報の施設(ctx.facilities)があるときだけ出す。
  * 時間帯はすべて開始を含み終わりを含まない。
  */
 
@@ -37,6 +38,11 @@ export type RestoreHint =
   | 'onlyServiceAtStop'
   /** その便の乗れる停留所が、その時間帯に「減便で外れた」セルを、区分のバス停の距離の中に含む(11/5) */
   | 'restoresLostCells'
+  /**
+   * 便の停留所の徒歩圏に学校・病院があり、学校は始業前(7〜9時着)か下校(14〜18時発)、病院は 8〜11時着か 11〜16時発に
+   * その停留所に着く・出る(T19。FACILITY_WINDOWS)
+   */
+  | 'nearFacility'
 
 export interface RestoreHintDetail {
   hints: RestoreHint[]
@@ -45,6 +51,99 @@ export interface RestoreHintDetail {
    * 同じセルは、2つの時間帯で戻っても1つと数える。ほかの便の足し戻しとの重なりは考えない
    */
   lostCells: { cells: number; population: number } | null
+  /**
+   * 便の停留所の徒歩圏にある学校・病院(T19)。時間帯の窓に当たる施設を先に、次に重要拠点の優先順位、施設までの距離の順。
+   * ctx に施設が無いときと、徒歩圏に施設が1つも無いときは入れない(項目ごと無い)
+   */
+  facilities?: NearFacility[]
+}
+
+// ---- 学校・病院の手がかり(T19)----
+
+/** 手がかりに使う施設の種類。学校(中学校・高校・大学など)と、入院設備のある病院 */
+export type FacilityHintKind = 'school' | 'hospital'
+
+/** 学校・病院の時間帯の窓(時。開始を含み終わりを含まない)。画面での変更は作らない(T19 の決定) */
+export const FACILITY_WINDOWS: Record<FacilityHintKind, Record<FacilityTiming, readonly [number, number]>> = {
+  school: { arrive: [7, 9], depart: [14, 18] },
+  hospital: { arrive: [8, 11], depart: [11, 16] },
+}
+
+/** arrive は施設の最寄りの停留所に着く(降りる)、depart はそこから出る(乗る) */
+export type FacilityTiming = 'arrive' | 'depart'
+
+/** 時間帯の窓の名前(理由の文に入れる) */
+export const FACILITY_WINDOW_LABELS: Record<FacilityHintKind, Record<FacilityTiming, string>> = {
+  school: { arrive: '始業前(7〜9時着)', depart: '下校(14〜18時発)' },
+  hospital: { arrive: '通院の行き(8〜11時着)', depart: '通院の帰り(11〜16時発)' },
+}
+
+/** 前提情報の調査の結果の要点(調べた施設だけ) */
+export interface FacilityResearchNote {
+  status: 'found' | 'partial' | 'not_found'
+  /** 確認日時(日本時間の ISO 8601) */
+  checkedAt: string
+  origin: 'web' | 'demo'
+  /** 事実(ラベル・値・出典の URL。出典が読めなければ null) */
+  facts: { label: string; value: string; url: string | null }[]
+}
+
+/** 手がかりに使う施設(store/restoreHintContext.ts が、前提情報の施設の参照データと到達圏の条件から作る) */
+export interface HintFacility {
+  targetId: string
+  name: string
+  kind: FacilityHintKind
+  /** 重要拠点の種類の名前(「高校・特別支援学校」など) */
+  categoryLabel: string
+  /** 重要拠点の優先順位(1 が最も高い) */
+  rank: number
+  lat: number
+  lon: number
+  /** 徒歩圏の半径(m)。施設のあるセルの区分のバス停の分数 × 分速(到達圏の計算と同じ距離) */
+  radiusM: number
+  /** 前提情報の調査の結果(あれば) */
+  research?: FacilityResearchNote
+}
+
+/** 便が施設の時間帯の窓に当たった停留所と時刻 */
+export interface FacilityMatch {
+  timing: FacilityTiming
+  stopId: string
+  stopName: string
+  /** 着く(arrive)・出る(depart)時刻 'HH:MM' */
+  time: string
+  /** 停留所から施設までの直線距離(m、整数に丸める) */
+  distanceM: number
+}
+
+/** 便の停留所の徒歩圏にある施設 */
+export interface NearFacility {
+  facility: HintFacility
+  /** 便の停留所のうち、施設に最も近いもの(乗るか降りるかできる停留所だけ。通過する停留所は除く) */
+  stopId: string
+  stopName: string
+  /** その停留所から施設までの直線距離(m、整数に丸める) */
+  distanceM: number
+  /** 時間帯の窓に当たった停留所と時刻(arrive・depart の順に最大1つずつ)。空なら徒歩圏にあるだけ */
+  matches: FacilityMatch[]
+}
+
+/** 施設の手がかりの理由の文(施設名・種類・窓・停留所・時刻・距離)。窓に当たらなければ徒歩圏にあることだけを書く */
+export function nearFacilityText(n: NearFacility): string {
+  const f = n.facility
+  const head = `${f.name}(${f.categoryLabel})`
+  if (n.matches.length === 0) return `${head}:${n.stopName}から約 ${n.distanceM}m`
+  const parts = n.matches.map(
+    (m) => `${FACILITY_WINDOW_LABELS[f.kind][m.timing]}に${m.stopName} ${m.time}${m.timing === 'arrive' ? '着' : '発'}(施設まで約 ${m.distanceM}m)`,
+  )
+  return `${head}の${parts.join('、')}`
+}
+
+/** 窓に当たった施設のうち、最も高い優先順位(無ければ Infinity) */
+export function bestFacilityRank(detail: RestoreHintDetail): number {
+  let best = Infinity
+  for (const n of detail.facilities ?? []) if (n.matches.length > 0 && n.facility.rank < best) best = n.facility.rank
+  return best
 }
 
 /**
@@ -67,6 +166,11 @@ export interface RestoreHintContext {
   params: ReachParams
   /** 到達圏の起点の停留所(store の origins.stops)。停留所の位置はここから取る */
   stops: readonly { id: string; lat: number; lon: number }[]
+  /**
+   * 学校・病院の手がかり(nearFacility)に使う施設(T19)。前提情報の施設の参照データを読めていなければ undefined で、
+   * nearFacility を出さない。読めていて対象の施設が無ければ空の配列
+   */
+  facilities?: readonly HintFacility[]
 }
 
 /** 画面に出す手がかりの名前(並びは RestoreHint の順) */
@@ -80,6 +184,7 @@ export const RESTORE_HINT_LABELS: Record<RestoreHint, string> = {
   evening: '夕方(15〜19時)',
   onlyServiceAtStop: '停留所で唯一の便',
   restoresLostCells: '外れた場所が戻る',
+  nearFacility: '学校・病院の近く',
 }
 
 const HINT_ORDER: RestoreHint[] = [
@@ -92,6 +197,7 @@ const HINT_ORDER: RestoreHint[] = [
   'evening',
   'onlyServiceAtStop',
   'restoresLostCells',
+  'nearFacility',
 ]
 
 function trimmed(v: string | undefined): string {
@@ -261,6 +367,79 @@ function bandOf(index: LostCellIndex, seconds: number): number {
   return -1
 }
 
+// ---- 学校・病院の手がかりの計算(T19)----
+
+/** 便の1行の、施設の窓に使う時刻(秒)。arrive は降りられる行の到着、depart は乗れる行の出発。使えなければ null */
+interface FacilityRow {
+  stopId: string
+  arrive: number | null
+  depart: number | null
+  /** 降りられるか乗れる行(時刻が空でも)。どちらもできない行(通過など)は、施設の最寄りの停留所にもしない */
+  usable: boolean
+}
+
+/**
+ * 便の行を、施設の窓に使う時刻にする(stop_sequence の順)。
+ * - arrive:降りられる行(drop_off_type が '1' でなく、便の最初の停留所でない行)の arrival_time。空なら departure_time
+ *   (GTFS では、到着と出発を分けないときは同じ値を入れる)。最後の停留所(終点)も含む(学校前が終点の便があるため)
+ * - depart:乗れる行(pickup_type が '1' でなく、便の最後の停留所でない行)の departure_time。空なら arrival_time
+ * 最初・最後の停留所は stop_sequence を数として比べて決める(同じ値の行が複数あれば、どれも最初・最後)。
+ * stop_sequence の読めない行は、最初・最後のどちらにもしない。stop_id が空の行は除く
+ */
+function facilityRowsOf(rows: readonly GtfsRow[]): FacilityRow[] {
+  let first: string | null = null
+  let last: string | null = null
+  for (const row of rows) {
+    const seq = sequenceOf(row)
+    if (seq === null) continue
+    if (first === null || isLaterSequence(first, seq)) first = seq
+    if (last === null || isLaterSequence(seq, last)) last = seq
+  }
+  const out: FacilityRow[] = []
+  for (const row of sortByStopSequence(rows)) {
+    const stopId = trimmed(row.stop_id)
+    if (stopId === '') continue
+    const seq = sequenceOf(row)
+    const arrival = parseGtfsTime(trimmed(row.arrival_time)) ?? parseGtfsTime(trimmed(row.departure_time))
+    const departure = parseGtfsTime(trimmed(row.departure_time)) ?? parseGtfsTime(trimmed(row.arrival_time))
+    const canAlight = trimmed(row.drop_off_type) !== '1' && !(seq !== null && seq === first)
+    const canBoard = trimmed(row.pickup_type) !== '1' && !(seq !== null && seq === last)
+    out.push({ stopId, arrive: canAlight ? arrival : null, depart: canBoard ? departure : null, usable: canAlight || canBoard })
+  }
+  return out
+}
+
+/** 秒を 'HH:MM' にする */
+function clockOf(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+function inWindow(seconds: number, [from, to]: readonly [number, number]): boolean {
+  return seconds >= from * 3600 && seconds < to * 3600
+}
+
+const TIMINGS: readonly FacilityTiming[] = ['arrive', 'depart']
+
+/** 施設の索引(施設の並びごとに1回だけ作る)。停留所ごとの徒歩圏の施設は、使った停留所の分だけ覚えておく */
+interface FacilityIndex {
+  index: KDBush | null
+  points: readonly HintFacility[]
+  maxRadius: number
+  byStop: Map<string, { facility: HintFacility; distance: number }[]>
+}
+
+/** 施設の並びの、手がかりの並び:窓に当たる施設を先に、次に優先順位、施設までの距離、target_id の順 */
+function compareNear(a: NearFacility & { raw: number }, b: NearFacility & { raw: number }): number {
+  const ma = a.matches.length > 0 ? 0 : 1
+  const mb = b.matches.length > 0 ? 0 : 1
+  if (ma !== mb) return ma - mb
+  if (a.facility.rank !== b.facility.rank) return a.facility.rank - b.facility.rank
+  if (a.raw !== b.raw) return a.raw - b.raw
+  return compareStrings(a.facility.targetId, b.facility.targetId)
+}
+
 /**
  * 手がかりを判定する関数を作る。基準と編集後の索引は1回だけ作り、候補の便ごとに使い回す。
  * baseWeekday は基準の平日便、editedWeekday は編集後の平日便。手がかりに使うのは系統と始発の時刻だけなので、
@@ -272,6 +451,12 @@ function bandOf(index: LostCellIndex, seconds: number): number {
  * - 乗れる行(pickup_type が 1 でなく、最後の行でない)の出発の時刻が入る時間帯で数える(出発が空の行は数えない)。6〜24時の外は数えない
  * - 停留所ごとのまわりの外れたセルは ctx ごとに1回だけ探して覚えておくので、候補の一覧をまとめて調べても速い
  * - ctx は、edited から作った到達圏の比較を渡す(別の版の比較を渡すと、出発の数が合わない)
+ *
+ * ctx に施設(ctx.facilities)があれば、学校・病院の手がかり nearFacility も判定する(T19)。
+ * - 対象は feed が base の便(停留所と時刻は基準の stop_times から取る)。比較の日付に走るかは問わない
+ * - 便の乗るか降りるかできる停留所から施設ごとの徒歩圏(radiusM)の中にある施設を detail.facilities に入れ、そのうち時間帯の窓
+ *   (FACILITY_WINDOWS。学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)に当たる施設があれば nearFacility を付ける
+ * - 停留所の徒歩圏の施設は、施設の並びごとに停留所ごとに1回だけ探して覚えておく
  */
 export function createRestoreHinter(
   base: GtfsFeed,
@@ -351,6 +536,92 @@ export function createRestoreHinter(
     return { onlyServiceAtStop, lostCells: { cells: cells.size, population } }
   }
 
+  // 学校・病院の手がかり(T19)。停留所の位置と名前は基準の stops.txt から取る(終点だけの停留所は到達圏の起点に入らないため)
+  let stopPlaces: Map<string, { name: string; lat: number; lon: number }> | null = null
+  const facilityRows = new Map<string, FacilityRow[]>()
+  const facilityIndexes = new WeakMap<readonly HintFacility[], FacilityIndex>()
+
+  function stopPlaceOf(stopId: string): { name: string; lat: number; lon: number } | undefined {
+    if (!stopPlaces) {
+      stopPlaces = new Map()
+      for (const s of toStops(base).stops) if (!stopPlaces.has(s.id)) stopPlaces.set(s.id, { name: s.name.trim(), lat: s.lat, lon: s.lon })
+    }
+    return stopPlaces.get(stopId)
+  }
+
+  function facilityIndexOf(facilities: readonly HintFacility[]): FacilityIndex {
+    let idx = facilityIndexes.get(facilities)
+    if (!idx) {
+      const points = facilities.filter((f) => Number.isFinite(f.lat) && Number.isFinite(f.lon) && Number.isFinite(f.radiusM) && f.radiusM >= 0)
+      let index: KDBush | null = null
+      if (points.length > 0) {
+        index = new KDBush(points.length)
+        for (const p of points) index.add(p.lon, p.lat)
+        index.finish()
+      }
+      idx = { index, points, maxRadius: Math.max(0, ...points.map((p) => p.radiusM)), byStop: new Map() }
+      facilityIndexes.set(facilities, idx)
+    }
+    return idx
+  }
+
+  /** 停留所から、施設ごとの徒歩圏(radiusM)の中にある施設と距離。ちょうどの距離は届くとする */
+  function facilitiesNear(idx: FacilityIndex, stopId: string): { facility: HintFacility; distance: number }[] {
+    const cached = idx.byStop.get(stopId)
+    if (cached) return cached
+    const out: { facility: HintFacility; distance: number }[] = []
+    const place = stopPlaceOf(stopId)
+    if (place && idx.index) {
+      const dLat = (idx.maxRadius / M_PER_DEG_LOWER) * BOX_MARGIN
+      const north = Math.min(Math.abs(place.lat) + dLat, 89)
+      const dLon = (idx.maxRadius / (M_PER_DEG_LOWER * Math.cos(north * RAD))) * BOX_MARGIN
+      for (const k of idx.index.range(place.lon - dLon, place.lat - dLat, place.lon + dLon, place.lat + dLat)) {
+        const facility = idx.points[k]
+        const distance = distanceM(place, facility)
+        if (distance <= facility.radiusM) out.push({ facility, distance })
+      }
+    }
+    idx.byStop.set(stopId, out)
+    return out
+  }
+
+  function nearFacilitiesOf(trip: TripBrief, facilities: readonly HintFacility[]): NearFacility[] {
+    if (trip.feed !== 'base' || facilities.length === 0) return []
+    let rows = facilityRows.get(trip.tripId)
+    if (!rows) {
+      groups ??= stopTimesByTrip(base.tables.get('stop_times')?.rows ?? [])
+      rows = facilityRowsOf(groups.get(trip.tripId) ?? [])
+      facilityRows.set(trip.tripId, rows)
+    }
+    const idx = facilityIndexOf(facilities)
+    const found = new Map<string, NearFacility & { raw: number; rawMatch: Partial<Record<FacilityTiming, number>> }>()
+    for (const row of rows) {
+      // 乗ることも降りることもできない行(通過など)は、施設の最寄りの停留所にも窓にも使わない(使えない停留所を「最寄り」と書かないため)
+      if (!row.usable) continue
+      for (const { facility, distance } of facilitiesNear(idx, row.stopId)) {
+        const stopName = stopPlaceOf(row.stopId)?.name ?? row.stopId
+        let entry = found.get(facility.targetId)
+        if (!entry) {
+          entry = { facility, stopId: row.stopId, stopName, distanceM: Math.round(distance), raw: distance, matches: [], rawMatch: {} }
+          found.set(facility.targetId, entry)
+        } else if (distance < entry.raw) {
+          Object.assign(entry, { stopId: row.stopId, stopName, distanceM: Math.round(distance), raw: distance })
+        }
+        for (const timing of TIMINGS) {
+          const seconds = row[timing]
+          if (seconds === null || !inWindow(seconds, FACILITY_WINDOWS[facility.kind][timing])) continue
+          // 同じ窓に当たる停留所が複数あれば、施設に最も近い停留所(同じ距離なら便の中で先の停留所)
+          const prev = entry.rawMatch[timing]
+          if (prev !== undefined && prev <= distance) continue
+          entry.rawMatch[timing] = distance
+          const match: FacilityMatch = { timing, stopId: row.stopId, stopName, time: clockOf(seconds), distanceM: Math.round(distance) }
+          entry.matches = [...entry.matches.filter((m) => m.timing !== timing), match].sort((a, b) => TIMINGS.indexOf(a.timing) - TIMINGS.indexOf(b.timing))
+        }
+      }
+    }
+    return [...found.values()].sort(compareNear).map(({ facility, stopId, stopName, distanceM, matches }) => ({ facility, stopId, stopName, distanceM, matches }))
+  }
+
   return (trip, ctx) => {
     const hints = new Set<RestoreHint>()
     if (!replacementRoutes.has(trip.routeId)) hints.add('weekdayOnlyRoute')
@@ -376,7 +647,10 @@ export function createRestoreHinter(
         lostCells = reach.lostCells
       }
     }
-    return { hints: HINT_ORDER.filter((h) => hints.has(h)), lostCells }
+    // 学校・病院は比較の日付によらない(便が施設の近くを窓の時刻に通るか)ので、比較の日付に走るかは問わない
+    const near = ctx?.facilities ? nearFacilitiesOf(trip, ctx.facilities) : []
+    if (near.some((n) => n.matches.length > 0)) hints.add('nearFacility')
+    return { hints: HINT_ORDER.filter((h) => hints.has(h)), lostCells, ...(near.length > 0 ? { facilities: near } : {}) }
   }
 }
 
@@ -400,12 +674,18 @@ export function restoreHints(
   return createRestoreHinter(base, edited, plan, weekdayOf(base, 'base'), weekdayOf(edited, 'edited'))(trip, ctx)
 }
 
-/** 候補の並びの既定:手がかりの多い順、同じなら始発時刻の順(時刻の無い便は後ろ)、同じなら trip_id の順 */
+/**
+ * 候補の並びの既定:手がかりの多い順、同じなら窓に当たる学校・病院の重要拠点の優先順位の高い順(当たらない便は後ろ)、
+ * 同じなら始発時刻の順(時刻の無い便は後ろ)、同じなら trip_id の順
+ */
 export function compareByHints(
   a: { trip: TripBrief; detail: RestoreHintDetail },
   b: { trip: TripBrief; detail: RestoreHintDetail },
 ): number {
   if (a.detail.hints.length !== b.detail.hints.length) return b.detail.hints.length - a.detail.hints.length
+  const ra = bestFacilityRank(a.detail)
+  const rb = bestFacilityRank(b.detail)
+  if (ra !== rb) return ra < rb ? -1 : 1
   const ta = a.trip.firstSeconds
   const tb = b.trip.firstSeconds
   if (ta !== tb) {

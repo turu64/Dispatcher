@@ -7,12 +7,21 @@ import { Label } from '@/components/ui/label'
 import { createTripBriefer, restoreTotals, type TripBrief } from '@/gtfs/edit/diff'
 import type { Form2Result } from '@/gtfs/edit/form2'
 import { addBackReasons, planOf, type EditOp, type Form2Plan } from '@/gtfs/edit/ops'
-import { createRestoreHinter, RESTORE_HINT_LABELS, type RestoreHint, type RestoreHintContext } from '@/gtfs/edit/restore'
+import {
+  createRestoreHinter,
+  nearFacilityText,
+  RESTORE_HINT_LABELS,
+  type NearFacility,
+  type RestoreHint,
+  type RestoreHintContext,
+} from '@/gtfs/edit/restore'
 import { createRouteDirectionTimeline } from '@/gtfs/edit/stopDiff'
 import { activeServiceIds } from '@/gtfs/calendar'
 import { formatDateJa } from '@/lib/dates'
 import { diffOf, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
+import { usePriorityStore } from '@/store/priority'
 import { useReachStore } from '@/store/reach'
+import { useResearchStore, type FacilityState } from '@/store/research'
 import { buildRestoreHintContext } from '@/store/restoreHintContext'
 import { draftActor, proposeAndCommit, replaceClaudeDraftMessage } from './editActions'
 import { AskRestoreButton } from '@/components/chat/AskRestoreButton'
@@ -64,6 +73,43 @@ function reachHintStatus(o: {
   return { kind: 'absent', text: REACH_HINTS_ABSENT.none }
 }
 
+/** 学校・病院の手がかりの説明(施設を読めていて、到達圏の比較があるとき) */
+const FACILITY_HINT_NOTE =
+  '「学校・病院の近く」は、停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)にある中学校・高校・大学など・入院設備のある病院(国土数値情報)に、学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発で当たる便です。'
+
+/** 学校・病院の手がかりの状態の文。出していれば説明、出していなければ理由 */
+function facilityHintStatus(ctx: RestoreHintContext | null, facilities: FacilityState): string {
+  if (!ctx) return '「学校・病院の近く」も、到達圏の前後の比較ができてから出します(徒歩圏の距離に到達圏の条件を使うため)。'
+  if (ctx.facilities) return FACILITY_HINT_NOTE
+  if (facilities.status === 'loading') return '前提情報の学校・病院を読み込んでいます。読み込むと「学校・病院の近く」も出します。'
+  if (facilities.status === 'error')
+    return '前提情報の学校・病院の参照データを読み込めなかったので、「学校・病院の近く」は出していません。手順「前提情報」で読み込み直せます。'
+  return '手順「前提情報」で学校・病院を読み込むと、「学校・病院の近く」も出します。'
+}
+
+/** 時間帯の窓に当たる施設(優先順位の順) */
+function matchedFacilities(facilities: readonly NearFacility[] | undefined): NearFacility[] {
+  return (facilities ?? []).filter((n) => n.matches.length > 0)
+}
+
+/** 候補のうち、学校・病院の窓に当たる便の数を施設ごとに数える(優先順位、便の多い順、名前の順。上位 max 件) */
+function facilityTally(candidates: readonly Candidate[], max: number): { list: { name: string; label: string; trips: number }[]; more: number } {
+  const byId = new Map<string, { name: string; label: string; rank: number; trips: number }>()
+  for (const c of candidates) {
+    for (const n of matchedFacilities(c.detail.facilities)) {
+      const f = n.facility
+      const e = byId.get(f.targetId)
+      if (e) e.trips++
+      else byId.set(f.targetId, { name: f.name, label: f.categoryLabel, rank: f.rank, trips: 1 })
+    }
+  }
+  const sorted = [...byId.values()].sort((a, b) => a.rank - b.rank || b.trips - a.trips || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  return { list: sorted.slice(0, max), more: Math.max(0, sorted.length - max) }
+}
+
+/** 一覧の下に出す、学校・病院の窓に当たる便の数の施設の上限 */
+const MAX_FACILITY_TALLY = 8
+
 /**
  * 足し戻しの手順(docs/interfaces-1104.md §8)。手順の番号は components/steps/registry.ts の並びで決まるので、文言に番号を書かない。
  * 候補は、基準の平日便のうち、承認済みの編集後に同じ署名の便が無いもの(消える便)。系統・始発の時間帯・停留所名・手がかりで絞り込む。
@@ -72,6 +118,7 @@ function reachHintStatus(o: {
  * 「AI に候補を聞く」の結果(Claude の足し戻しの下書き)の便は、一覧の先頭の「AI のおすすめ」にまとめる。
  * 足し戻す便ごとに「休校日運休(学)」の印を付けられる(addBack の schoolDaysOnly。GTFS には入れない)。
  * 「足し戻す」「取り消す」は押したことを承認とみなす。
+ * 学校・病院の手がかり(nearFacility、T19)は、前提情報の施設と到達圏の条件から出し、施設ごとの便の数と、選んだ便の理由の文を出す。
  */
 export default function RestoreStep() {
   const base = useEditStore((s) => s.base)
@@ -117,13 +164,19 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   const reachComputing = useReachStore((s) => s.computing)
   const reachError = useReachStore((s) => s.error)
   const reachSnapshot = useReachStore((s) => s.snapshot)
+  const reachRef = useReachStore((s) => s.ref)
+  // 学校・病院の手がかり(T19)の材料。前提情報の施設・調査の結果・重要拠点の優先順位が変わったら作り直す
+  const facilities = useResearchStore((s) => s.facilities)
+  const researchResults = useResearchStore((s) => s.results)
+  const priorityOrder = usePriorityStore((s) => s.order)
   const ctx = useMemo(
     () =>
       buildRestoreHintContext(
-        { edited: reachEdited, origins: reachOrigins, computing: reachComputing, error: reachError, snapshot: reachSnapshot },
+        { edited: reachEdited, origins: reachOrigins, computing: reachComputing, error: reachError, snapshot: reachSnapshot, ref: reachRef },
         version.feed,
+        { facilities, results: researchResults, order: priorityOrder },
       ),
-    [reachEdited, reachOrigins, reachComputing, reachError, reachSnapshot, version.feed],
+    [reachEdited, reachOrigins, reachComputing, reachError, reachSnapshot, reachRef, version.feed, facilities, researchResults, priorityOrder],
   )
   const candidates = useMemo<Candidate[]>(() => {
     const hinter = createRestoreHinter(base.feed, version.feed, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
@@ -177,6 +230,8 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
     () => (ctx ? activeServiceIds(base.feed, ctx.date).has(plan.weekdayService.trim()) : false),
     [ctx, base.feed, plan.weekdayService],
   )
+  const facilityStatus = facilityHintStatus(ctx, facilities)
+  const tally = useMemo(() => facilityTally(candidates, MAX_FACILITY_TALLY), [candidates])
   const reachStatus = reachHintStatus({
     ctx,
     weekdayRuns,
@@ -352,12 +407,29 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       />
       {(reachStatus.kind === 'absent' || hintsPresent.includes('onlyServiceAtStop') || hintsPresent.includes('restoresLostCells')) &&
         candidates.length > 0 && <p className="text-xs text-muted-foreground">{reachStatus.text}</p>}
+      {candidates.length > 0 && (
+        <section className="flex flex-col gap-0.5 text-xs text-muted-foreground" aria-label="学校・病院の手がかり">
+          <p>{facilityStatus}</p>
+          {ctx?.facilities &&
+            (tally.list.length > 0 ? (
+              <p>
+                当たる便の数:
+                {tally.list.map((t) => `${t.name}(${t.label})${t.trips} 便`).join('、')}
+                {tally.more > 0 && `、ほか ${tally.more} 施設`}
+              </p>
+            ) : (
+              <p>候補の便で、学校・病院の時間帯に当たる便はありません。</p>
+            ))}
+        </section>
+      )}
       <SelectedTrips
         trips={selectedNow.map((id) => candidateById.get(id)!)}
         school={schoolSet}
         onSchool={(id, checked) => setSchool((s) => (checked ? (s.includes(id) ? s : [...s, id]) : s.filter((x) => x !== id)))}
         onRemove={(id) => select(id, false)}
       />
+
+      <SelectedFacilityReasons trips={selectedNow.map((id) => candidateById.get(id)!)} onUse={setReason} />
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="restore-reason" className="text-xs">
@@ -387,6 +459,63 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       />
       <NoteList items={[SCHOOL_HOLIDAY_NOTE, RESTORE_DUTY_NOTE]} label="足し戻しの注意" />
     </div>
+  )
+}
+
+/** 選んだ便ごとに出す、学校・病院の理由の文の上限 */
+const MAX_REASONS_PER_TRIP = 3
+
+/**
+ * 選んだ便のうち、学校・病院の時間帯に当たる便の理由の文(施設名と種類つき。コードが出した文)。
+ * 「理由に使う」で、足し戻す理由の欄にその文を入れる(書き換えられる)。
+ * 理由の欄は選んだ便すべてに入り、文は便ごとの停留所・時刻を含むので、「理由に使う」は1便だけ選んだときに出す
+ * (2便以上で使うと、ほかの便の履歴と変更指示書に、その便に当てはまらない停留所・時刻が残るため)
+ */
+function SelectedFacilityReasons({ trips, onUse }: { trips: readonly Candidate[]; onUse: (reason: string) => void }) {
+  const rows = trips.flatMap((c) => {
+    const matched = matchedFacilities(c.detail.facilities).slice(0, MAX_REASONS_PER_TRIP)
+    return matched.length > 0 ? [{ c, texts: matched.map(nearFacilityText) }] : []
+  })
+  if (rows.length === 0) return null
+  const single = trips.length === 1
+  return (
+    <section className="flex flex-col gap-1 text-xs" aria-label="選んだ便の近くの学校・病院">
+      <h3 className="font-medium">選んだ便の近くの学校・病院</h3>
+      {!single && (
+        <p className="text-muted-foreground">
+          足し戻す理由は選んだ便すべてに入るので、この文を理由の欄に入れる「理由に使う」は、1便だけ選んだときに使えます。
+        </p>
+      )}
+      <ul className="flex flex-col divide-y rounded-md border">
+        {rows.map(({ c, texts }) => (
+          <li key={c.trip.tripId} className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1 px-2 py-1">
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span>
+                <span className="font-medium tabular-nums">{c.trip.firstDeparture ?? '—'}</span> {c.trip.routeName}{' '}
+                <span className="font-mono text-[10px] text-muted-foreground">{c.trip.tripId}</span>
+              </span>
+              {texts.map((t) => (
+                <span key={t} className="break-words text-muted-foreground">
+                  {t}
+                </span>
+              ))}
+            </span>
+            {single && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 px-1.5 text-xs"
+                onClick={() => onUse(texts[0])}
+                aria-label={`${c.trip.tripId} の学校・病院の文を、理由の欄に入れる`}
+              >
+                理由に使う
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

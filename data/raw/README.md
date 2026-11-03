@@ -2,12 +2,13 @@
 
 ここには元データを置きます。中身はコミットしません(`.gitignore` で除外しています)。
 GTFS は利用フォームの記入が先なので、利用者が手で入手して置きます。
+道北バスの周辺の事業者の GTFS だけは、利用者がフォームに記入したうえで指示したので、2026-11-03 に北海道オープンデータプラットフォームからダウンロードしました(記録は下)。
 e-Stat の人口メッシュ、国土数値情報、内閣府の祝日一覧は、公式の配布元からダウンロードしてよいことになっています(2026-11-03 に利用者が許可)。
 加工スクリプト(`uv run dispatcher-data`、`uv run dispatcher-holidays`)自体はダウンロードしません。
 
 | 置く場所 | データ | 入手先 | 利用条件 |
 | --- | --- | --- | --- |
-| `gtfs/` | 道北バスなど北海道の事業者の GTFS(ZIP)。道北バスは `dohoku_bus_減便前.zip`(9/17 作成の版。画面の「サンプルを読み込む」で使う)と `dohoku_bus_減便後.zip`(10/29 作成の版。比較用)の名前で置く。どちらもテストで使う | 北海道オープンデータプラットフォーム(ckan.hoda.jp、データセット「gtfs-data」)。**利用前にフォームへの記入が必要** | CC BY 4.0 |
+| `gtfs/` | 道北バスなど北海道の事業者の GTFS(ZIP)。道北バスは `dohoku_bus_減便前.zip`(9/17 作成の版。画面の「サンプルを読み込む」で使う)と `dohoku_bus_減便後.zip`(10/29 作成の版。比較用)の名前で置く。どちらもテストで使う。周辺の事業者の GTFS は配布元のファイル名のまま置く(テストでは使わない) | 北海道オープンデータプラットフォーム(ckan.hoda.jp、データセット「gtfs-data」)。**利用前にフォームへの記入が必要** | CC BY 4.0 |
 | `mesh/` | 令和2年国勢調査 地域メッシュ統計「人口及び世帯」の 4分の1地域メッシュ(約 250m、統計表 T001142)。1次メッシュごとの `tblT001142Q{1次メッシュ}.zip` と、展開した `tblT001142Q{1次メッシュ}.txt` | e-Stat「地図で見る統計(統計GIS)」のデータダウンロード | 政府標準利用規約(CC BY 4.0 互換) |
 | `did/` | 人口集中地区(A16、2020年、北海道)。`A16-20_01_GML.zip` と、展開した `A16-20_01_GML/A16-20_01_DID.geojson` ほか | 国土数値情報 | 配布ページの記載は「1995年(平成7年)以降:商用可」 |
 | `rail/` | 鉄道(N02、2025年度版、全国)。`N02-25_GML.zip` と、展開した `N02-25_GML/UTF-8/N02-25_Station.geojson` ほか | 国土数値情報 | 2020年以降はオープンデータ(CC BY 4.0) |
@@ -69,6 +70,31 @@ e-Stat の人口メッシュ、国土数値情報、内閣府の祝日一覧は�
 - P11 の GML:`ksj:BusStop` の `ksj:bsn` が停留所名、`ksj:boc` が事業者名(コミュニティバスは自治体名)、`ksj:loc` が `gml:Point` への参照
 - 加工は `cd data && uv run dispatcher-data`(参照データと一緒に `data/out/ref/facilities/{1次メッシュ}.json` ができる)か、施設だけなら `uv run python -m dispatcher_data.facilities`。加工の決め事は `data/src/dispatcher_data/facilities.py` の先頭に書いてある
 - `data/src/dispatcher_data/hokkaido_municipalities.csv`(コミットする。195 行)は `admin/AdminiBoundary_CD.xlsx` の「01」で始まる行から、北海道全体の行(01000)、改正で欠番になった行、読み仮名を除いて作った。xlsx の取り直しで更新するときも同じ条件で作る
+
+2026-11-03 23:07(日本時間)に curl でダウンロードした(道北バスの周辺の事業者の GTFS)。利用者は北海道オープンデータプラットフォームの利用フォームに記入済みで、ダウンロードを指示した。
+対象は、前提情報の手順が道北バスのサンプルで洗い出した周辺の事業者(国土数値情報のバス停留所 P11 の事業者名)のうち、データセット「gtfs-data」(https://ckan.hoda.jp/dataset/gtfs-data)に ZIP があるもの。
+新しい空のフォルダにダウンロードし、`unzip -t` で壊れていないことと中身を確かめてから `gtfs/` に移した。展開していない。大きさは CKAN の API(`package_show?id=gtfs-data`)の `size` と一致した。
+
+| 置いた場所 | 事業者(配布元の表記) | 入手元の URL | 大きさ | サーバーの `Last-Modified`(日本時間) | calendar の期間 | SHA-256 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `gtfs/shibetsu_kido.zip` | 士別軌道 | https://ckan.hoda.jp/dataset/24d1dd70-5395-4d6b-b41f-0d83e8eabdb9/resource/a5702fbb-eac7-401c-8dff-e7675091fd26/download/shibetsu_kido.zip | 108,229 バイト | 2026-09-03 13:53 | 2026-09-01〜2027-02-28 | `21b758d0790bc14d6a617ae6e72875d02182258f872276693e58602fdda5fab7` |
+| `gtfs/nayoroshi_com.zip` | 名寄市コミュニティ | https://ckan.hoda.jp/dataset/24d1dd70-5395-4d6b-b41f-0d83e8eabdb9/resource/4abe45b3-7390-4d7d-8bf1-e8c7230ab962/download/nayoroshi_com.zip | 24,358 バイト | 2025-12-25 10:36 | 2025-12-24〜2026-06-23(期限切れ) | `8abf1134b3536a3f9833720fbe03bb5590ff4922ce4e5f9d22a3475bf599c191` |
+| `gtfs/asahikawa_denki.zip` | 旭川電気軌道 | https://ckan.hoda.jp/dataset/24d1dd70-5395-4d6b-b41f-0d83e8eabdb9/resource/41ea2ac6-c6e4-47b2-9c1c-b482feaee17c/download/asahikawa_denki.zip | 643,366 バイト | 2026-10-29 09:00 | 2026-11-11〜2028-11-10(下の注意) | `6e6e98b9a34153d6e034257cfbaf08ae4c28509343b486ef91598abf8f9c2f46` |
+| `gtfs/engan_bus.zip` | 沿岸バス | https://ckan.hoda.jp/dataset/24d1dd70-5395-4d6b-b41f-0d83e8eabdb9/resource/0dd30c37-4d45-4a23-8f86-12b74f6e65e1/download/engan_bus.zip | 381,185 バイト | 2026-09-03 13:53 | 2026-09-01〜2027-02-28 | `c5d47cf7d507da4c8bf7a9fc0b6ee059e2d0917cca784954b2c25dbc39740ee5` |
+| `gtfs/meishi_bus.zip` | 名士バス | https://ckan.hoda.jp/dataset/24d1dd70-5395-4d6b-b41f-0d83e8eabdb9/resource/4bddd9a6-5edf-4887-82aa-b61cb93afc9e/download/meishi_bus.zip | 108,004 バイト | 2026-09-03 13:53 | 2026-09-01〜2027-02-28 | `6dc86a33eb77cfc8bc8e08825f9d2b4ab95d4c0a5ac648d98d07febceaff238f` |
+| `gtfs/sorachi_chuo_bus.zip` | 空知中央バス | https://ckan.hoda.jp/dataset/24d1dd70-5395-4d6b-b41f-0d83e8eabdb9/resource/671debb1-44c5-4dea-99eb-be693911c50c/download/sorachi_chuo_bus.zip | 70,006 バイト | 2026-09-03 13:53 | 2026-09-01〜2027-02-28 | `4688b503fd670fc130ca773d1a1ddbe6c340d105a4fd76010077fa2fdd3e9ec7` |
+| `gtfs/hokkaido_chuo.zip` | 北海道中央バス | https://ckan.hoda.jp/dataset/24d1dd70-5395-4d6b-b41f-0d83e8eabdb9/resource/dbadfccc-670e-49b9-be77-c3f346ee3160/download/hokkaido_chuo.zip | 2,087,697 バイト | 2026-10-29 10:40 | 2026-10-01〜2027-03-31 | `3366bb558e1598065c0593795b0025937b4d9dab22e7f6c148d61383a320ead2` |
+| `gtfs/hokumon_bus.zip` | 北紋バス | https://ckan.hoda.jp/dataset/24d1dd70-5395-4d6b-b41f-0d83e8eabdb9/resource/226fe0ae-79af-4971-b15f-332770cdc9c1/download/hokumon_bus.zip | 124,601 バイト | 2026-09-03 13:53 | 2026-09-01〜2027-02-28 | `0edab65567649529a3eec6f8f3692f33aacf1e40304537b17cf14f973b80b30b` |
+| `gtfs/haborocho_com.zip` | 羽幌町コミュニティ | https://ckan.hoda.jp/dataset/24d1dd70-5395-4d6b-b41f-0d83e8eabdb9/resource/635cdd26-246c-4bd7-a095-6705c1eebb91/download/haborocho_com.zip | 11,079 バイト | 2026-09-03 13:53 | 2026-09-01〜2027-02-26 | `bede5b02af1fec0876442cbf94cba76765e89dba8691106ff0b6123eeac48559` |
+
+中身と注意:
+
+- 旭川電気軌道を除く 8 つは、feed_info の `feed_publisher_name` がジョルダン株式会社で、`feed_version` は 2.0。旭川電気軌道は `feed_publisher_name` が旭川電気軌道で、feed_info の開始日・終了日・版が空。`agency.txt` などの先頭に BOM がある
+- 名寄市コミュニティは有効期間が 2026-06-23 で切れている。データセットの版はこれだけ(CKAN の最終更新は 2025-12-25)
+- 旭川電気軌道は、平日(service_id `01`、589 便)と土日(`03`、489 便)の本体の便が 2026-11-11 から。11/10 までは、calendar_dates で足した一部の便(service_id が `0770-` で始まる 36 便)だけが運行日を持つ
+- 便の数(trips.txt の行数):士別軌道 58、名寄市コミュニティ 8、旭川電気軌道 1,114、沿岸バス 88、名士バス 74、空知中央バス 57、北海道中央バス 8,639、北紋バス 92、羽幌町コミュニティ 4
+- 周辺の事業者のうち、士別市・新十津川町・芦別市・(株)美唄自動車学校の GTFS は見つからなかった。データセット「gtfs-data」に名前が無く、GTFS データリポジトリの北海道の一覧(https://api.gtfs-data.jp/v2/feeds?pref=1)にも無い。データセットには「美唄市コミュニティ」(美唄市 市民バス 東線・西線)の項目があるが、ファイルが無く、市のページへの案内だけ
+- 道北バスは置いてある 2 つを使い、取り直していない
 
 確かめた配布ページと定義:
 

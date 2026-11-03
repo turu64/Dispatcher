@@ -56,6 +56,34 @@ describe('dataSourceRows', () => {
     expect(dataSourceRows(ready)).toHaveLength(6)
   })
 
+  it('施設の参照データを使っていなければ、P11・P29・P04 の行を出さない', () => {
+    for (const usage of [undefined, {}, { facilities: false }]) {
+      const data = dataSourceRows(ready, usage).map((r) => r.data)
+      expect(data.some((d) => /P11|P29|P04/.test(d))).toBe(false)
+    }
+  })
+
+  it('施設の参照データを使ったときだけ、P11・P29・P04 の行を鉄道駅の後ろに出す(国土数値情報を加工した旨と CC BY 4.0)', () => {
+    const rows = dataSourceRows(ready, { facilities: true })
+    expect(rows.map((r) => r.data)).toEqual([
+      'GTFS(道北バスなど)',
+      '人口(令和2年国勢調査 地域メッシュ統計、250m)',
+      '人口集中地区(A16、2020年)',
+      '鉄道駅(N02、2025年度)',
+      'バス停留所(P11、2022年度)',
+      '学校(P29、2023年度)',
+      '医療機関(P04、2020年度)',
+      '国民の祝日(内閣府)',
+      '背景地図',
+    ])
+    for (const r of rows.filter((x) => /P11|P29|P04/.test(x.data))) {
+      expect(r.source).toBe('国土数値情報(国土交通省)を加工して作成')
+      expect(r.license).toBe('CC BY 4.0')
+    }
+    // 祝日一覧を読めていなくても、施設の行は出す
+    expect(dataSourceRows({ status: 'missing' }, { facilities: true })).toHaveLength(8)
+  })
+
   it('ほかの出典はこれまでどおり出す', () => {
     const data = dataSourceRows({ status: 'idle' }).map((r) => r.data)
     expect(data).toEqual([

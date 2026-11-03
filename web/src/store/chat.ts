@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { ScreenLineTracker, type EditSnapshot, type ScreenState } from '../claude/screenLines'
 import { ClaudeSession, createSessionApi, type ConnectionState, type DisplayStreamEvent, type SessionApi, type SessionDeps, type SessionEvent, type TextBlock } from '../claude/session'
+import { createResearchApi, type ResearchApi, type ResearchOverview, type ResearchStartView } from '../claude/research'
 import { ClaudeRequestError, NOT_CONNECTED } from '../claude/sse'
 import { byteLength, runTool, toolLabel, type PolicyServices, type ToolDeps, type ToolOutcome } from '../claude/tools'
 import { planOf } from '../gtfs/edit/ops'
@@ -48,6 +49,14 @@ export const RESEARCH_KEEP_OPEN = '調査の間は、この画面を開いたま
 /** 止めたときに調査の run が開いていれば出す文(§4.9) */
 export const RESEARCH_PAUSED = '調査が止まっているかもしれません。続けるときは『調査を続けて』と送ってください'
 /** 足し戻しの手順の「AI に候補を聞く」で送る文(§6) */
+/** 調査を始めたときにサーバーが会話に入れる [画面の操作] の行(server の research.START_LINE と同じ文。「AI に送る情報」に残す) */
+export function researchStartLine(count: number): string {
+  return `[画面の操作] 利用者が前提情報の調査を始めました(対象 ${count} 件)。`
+}
+
+/** 調査の API がつながっていないとき(テストで research を渡していないなど) */
+export const RESEARCH_UNAVAILABLE = '調査の API が使えません。'
+
 export const ASK_RESTORE_PROMPT =
   '方針で消える平日の便のうち、通勤・通学・通院などのために足し戻したほうがよい便を、手がかりと停留所名から選び、理由をつけて足し戻しの下書きにしてください。数は多くても 10 便くらいにしてください。'
 
@@ -186,6 +195,8 @@ export interface ChatState {
   /** 予算に達した(入力欄を閉じ、「新しく始める」を出す) */
   budgetReached: boolean
   research: ResearchProgress
+  /** 前提情報の調査を始められなかった・結果を読めなかった理由(前提情報の手順に出す)。無ければ null */
+  researchError: string | null
 
   /** 中継の状態を読む(画面を開いたとき、GTFS を読み込んだとき) */
   loadStatus: () => Promise<void>
@@ -197,6 +208,14 @@ export interface ChatState {
   send: (text: string, options?: { extraLines?: string[] }) => Promise<boolean>
   /** 足し戻しの手順の「AI に候補を聞く」 */
   askRestore: () => Promise<boolean>
+  /**
+   * 前提情報の手順の「前提情報を調べる」。セッションが無ければ作り、ストリームをつないでから
+   * POST /api/claude/session/research に target_ids だけを送る([画面の操作] の行はサーバーが会話に入れる)。
+   * 始められたら対象の一覧、始められなければ null(理由は researchError か、会話の欄の文)
+   */
+  startResearch: (targetIds: readonly string[]) => Promise<ResearchStartView | null>
+  /** このセッションの対象と保存済みの結果(GET /api/claude/session/research)。セッションが無い・読めなければ null */
+  loadResearch: () => Promise<ResearchOverview | null>
   /** 止める(実行中のツールを止め、interrupt を送る) */
   stop: () => Promise<void>
   /** 新しく始める(予算に達したときなど)。今のセッションを終え、次に送るときに作り直す。表示は残す */
@@ -247,6 +266,8 @@ export interface ChatStoreDeps {
   now: () => Date
   /** GTFS を読み込み直したときに onChange を呼ぶように見張る(会話を消すため)。省けば見張らない */
   watchBase?: (onChange: () => void) => void
+  /** 前提情報の調査の API(createResearchApi)。省けば調査は始められない */
+  research?: ResearchApi
   /** セッションの待ち時間(テストで差し替える) */
   session?: Pick<SessionDeps, 'sleep' | 'reconnectDelays' | 'retryDelays' | 'batchDelayMs'>
 }
@@ -434,8 +455,8 @@ export function createChatStore(deps: ChatStoreDeps) {
       ...deps.session,
     })
 
-    /** 送る前の確かめ。送れなければ理由を出して false */
-    async function ready(text: string): Promise<boolean> {
+    /** 送る前の確かめ。送れなければ理由を出して false。text が null(調査を始めるとき)なら、入力欄に戻す文は無い */
+    async function ready(text: string | null): Promise<boolean> {
       const state = get().status.state
       if (state === 'unknown' || state === 'loading') await get().loadStatus()
       const { status, token, budgetReached, toolRunning } = get()
@@ -444,19 +465,19 @@ export function createChatStore(deps: ChatStoreDeps) {
         return false
       }
       if (status.tokenRequired && !token) {
-        set({ tokenError: TOKEN_MISSING, unsent: text })
+        set({ tokenError: TOKEN_MISSING, ...(text !== null && { unsent: text }) })
         return false
       }
       if (budgetReached) {
-        set({ unsent: text })
+        if (text !== null) set({ unsent: text })
         return false
       }
       if (toolRunning) {
         push({ kind: 'error', text: TOOLS_WAITING })
-        set({ unsent: text })
+        if (text !== null) set({ unsent: text })
         return false
       }
-      if (byteLength(text) > MAX_TEXT_BYTES) {
+      if (text !== null && byteLength(text) > MAX_TEXT_BYTES) {
         push({ kind: 'error', text: TEXT_TOO_LONG })
         set({ unsent: text })
         return false
@@ -489,6 +510,7 @@ export function createChatStore(deps: ChatStoreDeps) {
       budgetCents: null,
       budgetReached: false,
       research: EMPTY_RESEARCH,
+      researchError: null,
 
       async loadStatus() {
         set({ status: { state: 'loading' } })
@@ -554,6 +576,85 @@ export function createChatStore(deps: ChatStoreDeps) {
         return get().send(ASK_RESTORE_PROMPT)
       },
 
+      async startResearch(targetIds) {
+        if (targetIds.length === 0 || get().sending) return null
+        const api = deps.research
+        if (!api) {
+          set({ researchError: RESEARCH_UNAVAILABLE })
+          return null
+        }
+        const gen = generation
+        set({ sending: true, researchError: null })
+        try {
+          if (!(await ready(null))) {
+            const { status, tokenError, budgetReached, budgetCents } = get()
+            const reason =
+              status.state === 'error'
+                ? status.message
+                : status.state === 'ready' && !status.available
+                  ? CLAUDE_UNAVAILABLE
+                  : tokenError
+                    ? `${tokenError}(「AI に相談」の欄)`
+                    : budgetReached
+                      ? budgetReachedMessage(budgetCents)
+                      : TOOLS_WAITING
+            set({ researchError: reason })
+            return null
+          }
+          if (gen !== generation) return null
+          // 取っ手が使えなくなっていたら(404・410)、1回だけ新しいセッションで始め直す
+          for (let attempt = 0; ; attempt++) {
+            try {
+              if (!session.handle) tracker.reset()
+              const created = await session.start()
+              if (created) set({ budgetCents: session.budgetCents, usage: null, research: EMPTY_RESEARCH })
+              const handle = session.handle
+              if (!handle) throw new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます')
+              const view = await api.start(get().token, handle, targetIds)
+              if (gen !== generation) return null
+              log([{ kind: 'screen', text: researchStartLine(view.total) }])
+              // 保存済み(cached)の対象は調べない(§3.2)。調べる対象が無ければ、進み具合は「調べ終えました」から始める
+              const saved = view.targets.filter((t) => t.cached !== null).length
+              const active = saved < view.total
+              set({
+                replying: true,
+                research: { ...EMPTY_RESEARCH, active, saved, total: view.total, outcome: active ? null : 'done' },
+              })
+              return view
+            } catch (e) {
+              if (gen !== generation) return null
+              if (attempt === 0 && e instanceof ClaudeRequestError && (e.status === 404 || e.status === 410)) {
+                session.forget()
+                continue
+              }
+              if (e instanceof ClaudeRequestError && e.status === 401) {
+                deps.storage.set(null)
+                set({ token: null, tokenError: TOKEN_WRONG, researchError: `${TOKEN_WRONG}(「AI に相談」の欄)` })
+                return null
+              }
+              set({ researchError: errorText(e, '調査を始められませんでした。もう一度試してください') })
+              return null
+            }
+          }
+        } finally {
+          if (gen === generation) set({ sending: false })
+        }
+      },
+
+      async loadResearch() {
+        const api = deps.research
+        const handle = session.handle
+        if (!api || !handle) return null
+        const gen = generation
+        try {
+          const overview = await api.overview(get().token, handle)
+          return gen === generation ? overview : null
+        } catch (e) {
+          if (gen === generation) set({ researchError: errorText(e, '調査の結果を読めませんでした。') })
+          return null
+        }
+      },
+
       async stop() {
         if (!session.handle) return
         try {
@@ -569,7 +670,7 @@ export function createChatStore(deps: ChatStoreDeps) {
         tracker.reset()
         closeStreaming()
         skipRunning()
-        set({ sending: false, replying: false, toolRunning: false, connection: 'none', usage: null, budgetCents: null, budgetReached: false, research: EMPTY_RESEARCH })
+        set({ sending: false, replying: false, toolRunning: false, connection: 'none', usage: null, budgetCents: null, budgetReached: false, research: EMPTY_RESEARCH, researchError: null })
         push({ kind: 'notice', text: NEW_SESSION_NOTICE })
       },
 
@@ -589,6 +690,7 @@ export function createChatStore(deps: ChatStoreDeps) {
           budgetCents: null,
           budgetReached: false,
           research: EMPTY_RESEARCH,
+          researchError: null,
         })
         if (notice) push({ kind: 'notice', text: notice })
       },
@@ -760,6 +862,7 @@ export function currentScreenState(): ScreenState {
 export const useChatStore = createChatStore({
   fetchStatus: () => fetchClaudeStatus(),
   api: createSessionApi(),
+  research: createResearchApi(),
   runTool: (name, input, signal) => runTool(name, input, chatToolDeps, signal),
   screen: currentScreenState,
   edits: () => {

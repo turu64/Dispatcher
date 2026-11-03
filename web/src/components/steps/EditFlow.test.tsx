@@ -116,6 +116,7 @@ afterEach(() => {
 })
 
 describe('編集の画面の流れ', () => {
+  // 手順を通しで描くので、全件を並列で走らせると既定の 5 秒を超えることがある(単独なら 2 秒ほど)
   it('方針の適用 → 確かめ → 承認 → 比較 → 足し戻し → 元に戻す → 出力を、小さなフィードで通す', async () => {
     const base = load()
     renderSteps()
@@ -216,7 +217,7 @@ describe('編集の画面の流れ', () => {
     expect(decode(input.edited.tables.get('trips')!)).toBe(decode(expected.result.feed.tables.get('trips') as never))
     expect(input.attribution).toContain('Dispatcher で減便を反映して加工したもの')
     expect(URL.createObjectURL).toHaveBeenCalled()
-  })
+  }, 30_000)
 
   it('方針の下書きを「やめる」と、入れた値のまま入力に戻り、履歴は変わらない', () => {
     load()

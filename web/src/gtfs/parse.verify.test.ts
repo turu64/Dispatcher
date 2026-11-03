@@ -155,6 +155,7 @@ const SAMPLES = [{ file: 'dohoku_bus_減便前.zip' }, { file: 'dohoku_bus_減�
   path: fileURLToPath(new URL(`../../../data/raw/gtfs/${s.file}`, import.meta.url)),
 }))
 
+// 実物の ZIP を読むので、全件を並列で走らせると既定の 5 秒を超えることがある。1件ごとに 30 秒まで待つ
 for (const sample of SAMPLES) {
   describe.skipIf(!existsSync(sample.path))(`道北バス(${sample.file})の停留所`, () => {
     it('停留所は 1582 件で、除かれる行は無い', async () => {
@@ -171,7 +172,7 @@ for (const sample of SAMPLES) {
       // 道北バスの停留所はすべて location_type 0 で、親の駅を持たない
       expect(stops.every((s) => s.locationType === 0)).toBe(true)
       expect(stops.every((s) => s.parentStation === '')).toBe(true)
-    })
+    }, 30_000)
 
     it('緯度経度が北海道北部の範囲に入る(列の取り違えが無い)', async () => {
       const buf = readFileSync(sample.path)
@@ -184,7 +185,7 @@ for (const sample of SAMPLES) {
       expect(Math.max(...lats)).toBeLessThan(45)
       expect(Math.min(...lons)).toBeGreaterThan(141)
       expect(Math.max(...lons)).toBeLessThan(144)
-    })
+    }, 30_000)
 
     it('全行の緯度経度が、stops.txt の文字列を Number にした値と一致する', async () => {
       const feed = await loadGtfsZip(bufferOf(sample.path))
@@ -200,7 +201,7 @@ for (const sample of SAMPLES) {
           rows[i].stop_name,
         ])
       }
-    })
+    }, 30_000)
 
     it('運行日の出発を数えた停留所は、すべて toStops の id にある(stop_id の空白の扱いが両方で同じ)', async () => {
       const feed = await loadGtfsZip(bufferOf(sample.path))
@@ -214,7 +215,7 @@ for (const sample of SAMPLES) {
       expect(counts.size).toBeGreaterThan(500) // 何も数えていないための一致にしない
       const missing = [...counts.keys()].filter((id) => !ids.has(id))
       expect(missing).toEqual([])
-    })
+    }, 30_000)
 
     it('Worker を通した窓口で読んだ feed から、直接読んだときと同じ停留所が取れる(ZIP の実物・Blob も)', async () => {
       const data = bufferOf(sample.path)
@@ -231,14 +232,14 @@ for (const sample of SAMPLES) {
       }
       expect(fromBuffer.warnings).toEqual(expected.warnings)
       expect(data.byteLength).toBeGreaterThan(0) // 渡した ArrayBuffer を取り上げない
-    })
+    }, 30_000)
 
     it('途中で切れた ZIP は、Worker を通した窓口でも日本語のメッセージで失敗し、続けて読める', async () => {
       const data = bufferOf(sample.path)
       const client = createGtfsWorkerClient(() => createLoopback())
       await expect(client.load(data.slice(0, Math.floor(data.byteLength / 2)))).rejects.toThrow('ZIP として開けませんでした')
       await expect(client.load(data)).resolves.toBeDefined()
-    })
+    }, 30_000)
 
     it('先頭の停留所の値が stops.txt と合う', async () => {
       const buf = readFileSync(sample.path)
@@ -252,6 +253,6 @@ for (const sample of SAMPLES) {
         locationType: 0,
         parentStation: '',
       })
-    })
+    }, 30_000)
   })
 }

@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import OutputStep from '@/components/output/OutputStep'
-import ReachLayers from '@/map/ReachLayers'
+import MapOverlays from '@/map/FacilityLayer'
 import { useStepStore, type StepKey } from '@/store/steps'
 import LoadStep from './LoadStep'
 import PolicyStep from './PolicyStep'
@@ -19,7 +19,8 @@ export interface StepDef {
   showMap: boolean
   /**
    * 地図に重ねる部品。同じ部品を続けて使う手順の間では作り直さない(地図の位置合わせをやり直さないため)。
-   * 地図を出さない手順では、直前の重ねを残しておく
+   * 地図を出さない手順では、直前の重ねを残しておく。
+   * 地図を出す手順はすべて MapOverlays(到達圏と、前提情報の手順でだけ見せる施設の記号)を使う
    */
   mapOverlay?: ComponentType
 }
@@ -29,11 +30,11 @@ export interface StepDef {
  * 並びは docs/tasks-1103.md の指摘3・7(読み込み → 前提情報 → 減便の方針 → 影響(到達圏。日付と時間帯を含む)→ 足し戻し → 出力)
  */
 export const STEPS: readonly StepDef[] = [
-  { key: 'load', title: '読み込み', component: LoadStep, showMap: true, mapOverlay: ReachLayers },
-  { key: 'research', title: '前提情報', component: ResearchStep, showMap: true, mapOverlay: ReachLayers },
+  { key: 'load', title: '読み込み', component: LoadStep, showMap: true, mapOverlay: MapOverlays },
+  { key: 'research', title: '前提情報', component: ResearchStep, showMap: true, mapOverlay: MapOverlays },
   { key: 'policy', title: '減便の方針', component: PolicyStep, showMap: false },
-  { key: 'reach', title: '影響(到達圏)', component: ReachStep, showMap: true, mapOverlay: ReachLayers },
-  { key: 'restore', title: '足し戻し', component: RestoreStep, showMap: true, mapOverlay: ReachLayers },
+  { key: 'reach', title: '影響(到達圏)', component: ReachStep, showMap: true, mapOverlay: MapOverlays },
+  { key: 'restore', title: '足し戻し', component: RestoreStep, showMap: true, mapOverlay: MapOverlays },
   { key: 'output', title: '出力', component: OutputStep, showMap: false },
 ]
 

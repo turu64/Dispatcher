@@ -1,17 +1,21 @@
 import asyncio
 import contextlib
+import json
 import os
 import re
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from starlette.convertors import Convertor, register_url_convertor
 
-from . import agent_session
+from . import agent_session, research
 from .agent_relay import router as agent_router
 from .settings import load_env
+from .store import get_store
 
 # 開発ではリポジトリ直下の .env を読む(既にある環境変数は上書きしない。ファイルが無ければ何もしない)。
 # Claude の中継の設定(API キー・エージェントの ID・合言葉など)は、要求のたびに環境変数から読む
@@ -124,6 +128,64 @@ def holidays() -> FileResponse:
         media_type="application/json",
         headers={"Cache-Control": "public, max-age=3600"},
     )
+
+
+FACILITIES_NOT_FOUND = (
+    "1次メッシュ {mesh1} の施設の参照データが見つかりません。"
+    "その範囲に施設が無いか、data/ の加工で data/out/ref/facilities に作っていません。"
+)
+
+
+# 前提情報の調査の対象(国土数値情報の学校 P29・医療機関 P04・バス停留所 P11 の事業者)。data/ の facilities.py が
+# data/out/ref/facilities/{mesh1}.json に書き出す。画面は停留所の外接矩形 +2km の対象を選ぶのに使う。
+# 公開データなので合言葉は掛けない(利用者の決定 11/3)。区切りを含む「facilities/6542」は /api/ref/{mesh1} に
+# 当たらないので、下の受け皿(/api/ref/{rest:anypath})より先に置く
+@app.get("/api/ref/facilities/{mesh1}")
+def ref_facilities(mesh1: str) -> FileResponse:
+    if not MESH1_PATTERN.fullmatch(mesh1):
+        raise HTTPException(status_code=404, detail=REF_MESH1_ERROR)
+    path = ref_dir_path() / "facilities" / f"{mesh1}.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=FACILITIES_NOT_FOUND.format(mesh1=mesh1))
+    return FileResponse(
+        path,
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+def _json_list(text: str | None) -> list[Any]:
+    try:
+        value = json.loads(text or "[]")
+    except ValueError:
+        return []
+    return value if isinstance(value, list) else []
+
+
+# デモ用の保存済みの調査の結果(origin: demo。dispatcher-research-seed で入れたもの)。画面の「保存済みの結果(デモ)を使う」が、
+# AI を呼ばずに結果を見せ、その対象を選ぶのに使う。公開情報だけなので合言葉は掛けない。
+# 参照データに無い対象は返さない(種類・名前・位置はサーバーの参照データから入れる)。ログには何も残さない
+@app.get("/api/research/demo")
+def research_demo() -> dict[str, Any]:
+    index = research.load_targets()
+    rows = get_store().all_valid_research_results(time.time())
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        target = index.get(row["target_id"])
+        if row["origin"] != "demo" or target is None:
+            continue
+        results.append(
+            {
+                **target.as_dict(),
+                "status": row["status"],
+                "facts": _json_list(row["facts_json"]),
+                "sources": _json_list(row["sources_json"]),
+                "note": row["note"] or "",
+                "checked_at": research.display_time(row["checked_at"]),
+                "origin": "demo",
+            }
+        )
+    return {"results": results}
 
 
 class AnyPathConvertor(Convertor[str]):

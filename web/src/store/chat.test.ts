@@ -1,0 +1,483 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fakeApi } from '../claude/session.fixture'
+import type { SessionPostBody } from '../claude/session'
+import { ClaudeRequestError, NOT_CONNECTED, type SessionStreamEvent } from '../claude/sse'
+import { runTool, type ToolDeps, type ToolOutcome } from '../claude/tools'
+import { smallFeed } from '../gtfs/edit/form2.fixture'
+import {
+  budgetReachedMessage,
+  canStop,
+  CLAUDE_UNAVAILABLE,
+  createChatStore,
+  draftMessage,
+  dollars,
+  fetchClaudeStatus,
+  ENDED_NOTICE,
+  RELOAD_NOTICE,
+  researchText,
+  RESEARCH_PAUSED,
+  sendBlockedReason,
+  sessionTokenStorage,
+  STATUS_SHAPE,
+  STOPPED_NOTICE,
+  TOKEN_CHARS,
+  TOKEN_MISSING,
+  TOKEN_WRONG,
+  TOOLS_WAITING,
+  usageText,
+  type ChatStoreDeps,
+  type TokenStorage,
+} from './chat'
+import { createEditStore, type BaseGtfs } from './edit'
+
+const NOW = new Date('2026-11-04T00:30:00Z')
+const TODAY_LINE = '[画面の状態] 今日は 2026年11月4日(水)です(日本時間)。'
+
+function memoryStorage(initial: string | null = null): TokenStorage & { value: string | null } {
+  const s = {
+    value: initial,
+    get: () => s.value,
+    set: (t: string | null) => {
+      s.value = t
+    },
+  }
+  return s
+}
+
+const POLICY_INPUT = {
+  kind: 'weekday_to_saturday',
+  start_date: '20261109',
+  end_date: null,
+  excluded_route_ids: [],
+  reason_category: null,
+  reason_note: '',
+}
+
+function setup(overrides: Partial<ChatStoreDeps> = {}, status = { available: true, tokenRequired: false }) {
+  const edit = createEditStore({ now: () => NOW, onEdited: vi.fn() })
+  const base: BaseGtfs = { feed: smallFeed(), zip: new ArrayBuffer(0), label: 'test.zip', sample: null }
+  edit.getState().setBase(base)
+  const toolDeps: ToolDeps = {
+    edit: () => edit.getState(),
+    reach: { getState: () => ({ computing: false }) as never, subscribe: () => () => undefined },
+    holidays: () => null,
+    today: () => '20261104',
+    policyServices: () => ({ weekday: 'WK', saturday: 'SA', sundayHoliday: 'SU' }),
+    hintContext: () => null,
+  }
+  let onBaseChange: () => void = () => undefined
+  const fake = fakeApi()
+  const runToolSpy = vi.fn((name: string, input: unknown, signal: AbortSignal): Promise<ToolOutcome> => runTool(name, input, toolDeps, signal))
+  const deps: ChatStoreDeps = {
+    fetchStatus: async () => status,
+    api: fake.api,
+    runTool: runToolSpy,
+    screen: () => ({ today: '20261104', gtfs: null, reach: null }),
+    edits: () => edit.getState(),
+    takeDraftNotices: () => edit.getState().takeDraftNotices(),
+    storage: memoryStorage(),
+    now: () => NOW,
+    watchBase: (fn) => {
+      onBaseChange = fn
+    },
+    session: { sleep: async () => undefined, batchDelayMs: 0 },
+    ...overrides,
+  }
+  const chat = createChatStore(deps)
+  const s = chat.getState
+  const messages = () => fake.posts.filter((p) => p.body.kind === 'message').map((p) => (p.body as Extract<SessionPostBody, { kind: 'message' }>).content)
+  return { chat, s, edit, fake, runToolSpy, storage: deps.storage as ReturnType<typeof memoryStorage>, reload: () => onBaseChange(), messages }
+}
+
+const status = (id: string, state: string, reason: string | null = null): SessionStreamEvent => ({ type: 'status', id, state, reason })
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('中継の状態と合言葉', () => {
+  it('状態を読めないときは、ブラウザの英語の文ではなく日本語の決まった文を出す', async () => {
+    // つながらない(fetch の TypeError: Failed to fetch)
+    const offline = (async () => {
+      throw new TypeError('Failed to fetch')
+    }) as unknown as typeof fetch
+    await expect(fetchClaudeStatus(offline)).rejects.toThrow(NOT_CONNECTED)
+    // 200 だが JSON でない(nginx が画面の HTML を返したときなど。res.json() の SyntaxError)
+    const html = (async () => new Response('<!doctype html><html></html>', { status: 200 })) as unknown as typeof fetch
+    await expect(fetchClaudeStatus(html)).rejects.toThrow(STATUS_SHAPE)
+    const shape = (async () => Response.json({ available: 'yes' })) as unknown as typeof fetch
+    await expect(fetchClaudeStatus(shape)).rejects.toThrow(STATUS_SHAPE)
+    await expect(fetchClaudeStatus((async () => Response.json({ available: true, tokenRequired: false })) as unknown as typeof fetch)).resolves.toEqual({
+      available: true,
+      tokenRequired: false,
+    })
+    // store の状態の文にも、英語の文は入らない
+    const { s } = setup({ fetchStatus: () => fetchClaudeStatus(offline) })
+    await s().loadStatus()
+    expect(s().status).toEqual({ state: 'error', message: NOT_CONNECTED })
+  })
+
+  it('AI が使えなければ送らずに「AI は使えません」を出す', async () => {
+    const { s, fake } = setup({}, { available: false, tokenRequired: false })
+    await s().loadStatus()
+    expect(s().status).toEqual({ state: 'ready', available: false, tokenRequired: false })
+    expect(sendBlockedReason(s())).toBe(CLAUDE_UNAVAILABLE)
+    expect(await s().send('こんにちは')).toBe(false)
+    expect(fake.api.create).not.toHaveBeenCalled()
+    expect(s().items.at(-1)).toMatchObject({ kind: 'error', text: CLAUDE_UNAVAILABLE })
+  })
+
+  it('合言葉が要るのに無ければ送らず、入れた合言葉を保存してヘッダーに使う', async () => {
+    const { s, storage, fake } = setup({}, { available: true, tokenRequired: true })
+    await s().loadStatus()
+    expect(await s().send('こんにちは')).toBe(false)
+    expect(s().tokenError).toBe(TOKEN_MISSING)
+    expect(s().unsent).toBe('こんにちは')
+    s().setToken('あいことば')
+    expect(s().tokenError).toBe(TOKEN_CHARS)
+    expect(storage.value).toBeNull()
+    s().setToken(' secret-1 ')
+    expect(storage.value).toBe('secret-1')
+    expect(s().tokenError).toBeNull()
+    expect(await s().send('こんにちは')).toBe(true)
+    expect(fake.posts[0].token).toBe('secret-1')
+  })
+
+  it('401 なら合言葉を消して合言葉の欄に戻し「合言葉が違います」を出す', async () => {
+    const { s, storage, fake } = setup({ storage: memoryStorage('old') }, { available: true, tokenRequired: true })
+    await s().loadStatus()
+    expect(s().token).toBe('old')
+    fake.api.create = vi.fn(async () => {
+      throw new ClaudeRequestError(401, '合言葉が違います。')
+    })
+    expect(await s().send('こんにちは')).toBe(false)
+    expect(s()).toMatchObject({ token: null, tokenError: TOKEN_WRONG, unsent: 'こんにちは', sending: false })
+    expect(storage.value).toBeNull()
+  })
+
+  it('429 などはサーバーの文をそのまま出し、入力欄の文を残す', async () => {
+    const { s, fake } = setup()
+    fake.api.create = vi.fn(async () => {
+      throw new ClaudeRequestError(429, '今日の AI の利用額の上限に達しました。日本時間の翌日になってから使ってください')
+    })
+    expect(await s().send('こんにちは')).toBe(false)
+    expect(s().items.at(-1)).toMatchObject({ kind: 'error', text: '今日の AI の利用額の上限に達しました。日本時間の翌日になってから使ってください' })
+    expect(s().unsent).toBe('こんにちは')
+  })
+
+  it('sessionStorage が使えなくても(読み書きで例外が出ても)止まらない', () => {
+    vi.stubGlobal('sessionStorage', {
+      getItem: () => {
+        throw new Error('blocked')
+      },
+      setItem: () => {
+        throw new Error('blocked')
+      },
+      removeItem: () => {
+        throw new Error('blocked')
+      },
+    })
+    expect(sessionTokenStorage.get()).toBeNull()
+    expect(() => sessionTokenStorage.set('x')).not.toThrow()
+    expect(() => sessionTokenStorage.set(null)).not.toThrow()
+  })
+})
+
+describe('セッションを始めて送る', () => {
+  it('最初に送るときにセッションを作り、ストリームをつないでから、[画面の状態] の行と利用者の文を送る', async () => {
+    const { s, fake, messages } = setup()
+    expect(s().connection).toBe('none')
+    expect(await s().send('平日を土曜ダイヤにしてください')).toBe(true)
+    expect(fake.api.create).toHaveBeenCalledTimes(1)
+    expect(fake.streams).toHaveLength(1)
+    expect(messages()).toEqual([
+      [
+        { type: 'text', text: TODAY_LINE },
+        { type: 'text', text: '平日を土曜ダイヤにしてください' },
+      ],
+    ])
+    expect(s()).toMatchObject({ connection: 'open', replying: true, sending: false, budgetCents: 300 })
+    expect(s().items.map((i) => i.kind)).toEqual(['user'])
+    expect(s().sentLog[0].parts).toEqual([
+      { kind: 'screen', text: TODAY_LINE },
+      { kind: 'user', text: '平日を土曜ダイヤにしてください' },
+    ])
+    expect(s().sentLog[0].at).toBe('2026-11-04T09:30:00+09:00')
+    // 2回目は同じセッションで、変わらない [画面の状態] は入れない
+    expect(await s().send('続けて')).toBe(true)
+    expect(fake.api.create).toHaveBeenCalledTimes(1)
+    expect(messages()[1]).toEqual([{ type: 'text', text: '続けて' }])
+  })
+
+  it('409 が返ったら、入力欄の文を残して同じ文を出す', async () => {
+    const { s, fake } = setup()
+    await s().send('一つ目')
+    fake.postFailures.push(new ClaudeRequestError(409, 'AI がツールの結果を待っています。少し待ってから送ってください'))
+    expect(await s().send('二つ目')).toBe(false)
+    expect(s().unsent).toBe('二つ目')
+    expect(s().items.at(-1)).toMatchObject({ kind: 'error', text: 'AI がツールの結果を待っています。少し待ってから送ってください' })
+  })
+
+  it('取っ手が使えなくなっていたら(404)、新しいセッションを作って最初の発言として送り直す', async () => {
+    const { s, fake, messages } = setup()
+    await s().send('一つ目')
+    fake.postFailures.push(new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます'))
+    expect(await s().send('二つ目')).toBe(true)
+    expect(fake.api.create).toHaveBeenCalledTimes(2)
+    expect(messages().at(-1)).toEqual([
+      { type: 'text', text: TODAY_LINE },
+      { type: 'text', text: '二つ目' },
+    ])
+    expect(s().items.map((i) => i.kind)).toEqual(['user', 'user', 'notice'])
+  })
+})
+
+describe('受け取った返答の表示', () => {
+  it('delta で途中まで出し message で置き換える。同じ id のイベントを2回受け取っても1回だけ扱う', async () => {
+    const { s, fake } = setup()
+    await s().send('こんにちは')
+    const ch = fake.last()
+    ch.push(
+      { type: 'thinking', id: 'e1' },
+      { type: 'delta', id: null, messageId: 'm1', text: 'はい、' },
+      { type: 'delta', id: null, messageId: 'm1', text: 'わか' },
+    )
+    await vi.waitFor(() => expect(s().items.find((i) => i.kind === 'assistant')).toMatchObject({ text: 'はい、わか', streaming: true }))
+    expect(s().replying).toBe(true)
+    ch.push(
+      { type: 'message', id: 'e2', messageId: 'm1', text: 'はい、分かりました。' },
+      // 落ちた途中経過が後から来ても使わない
+      { type: 'delta', id: null, messageId: 'm1', text: '遅れた' },
+      { type: 'message', id: 'e2', messageId: 'm1', text: 'はい、分かりました。' },
+      { type: 'usage', id: 'e3', costCents: 42, budgetCents: 300 },
+      status('e4', 'idle', 'end_turn'),
+    )
+    await vi.waitFor(() => expect(s().replying).toBe(false))
+    const assistants = s().items.filter((i) => i.kind === 'assistant')
+    expect(assistants).toHaveLength(1)
+    expect(assistants[0]).toMatchObject({ text: 'はい、分かりました。', streaming: false })
+    expect(s().usage).toEqual({ costCents: 42, budgetCents: 300 })
+    expect(usageText(s().usage!)).toBe('この会話の AI の利用額 約 $0.42 / 上限 $3')
+    expect(dollars(250)).toBe('$2.50')
+  })
+
+  it('Anthropic への接続が切れた(upstream)ときは文を出さず、ほかのエラーは出す', async () => {
+    const { s, fake } = setup()
+    await s().send('こんにちは')
+    fake.last().push(
+      { type: 'error', id: null, message: 'AI への接続が切れました', code: 'upstream' },
+      { type: 'error', id: 'e1', message: 'AI の処理でエラーが起きました', code: 'session_error' },
+    )
+    await vi.waitFor(() => expect(s().items.at(-1)).toMatchObject({ kind: 'error', text: 'AI の処理でエラーが起きました' }))
+    expect(s().items.filter((i) => i.kind === 'error')).toHaveLength(1)
+    expect(s().replying).toBe(false)
+  })
+
+  it('サーバーのツールの動きを出し、答えたら終える', async () => {
+    const { s, fake } = setup()
+    await s().send('調べて')
+    fake.last().push({ type: 'tool_activity', id: null, name: 'get_research_targets', done: false })
+    await vi.waitFor(() => expect(s().items.at(-1)).toMatchObject({ kind: 'tool', label: '調査の対象を読んでいます…', status: 'running' }))
+    fake.last().push({ type: 'tool_activity', id: null, name: 'get_research_targets', done: true })
+    await vi.waitFor(() => expect(s().items.at(-1)).toMatchObject({ kind: 'tool', status: 'done' }))
+  })
+})
+
+describe('tool_call を実行して tool_results で送り、実行している間は送れない', () => {
+  it('ツールの動きと下書きの知らせを出し、結果を「AI に送る情報」に残す。実行中は送るボタンを押せない', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((r) => (release = r))
+    const { s, fake, edit, runToolSpy } = setup()
+    const inner = runToolSpy.getMockImplementation()!
+    runToolSpy.mockImplementation(async (name, input, signal) => {
+      await gate
+      return inner(name, input, signal)
+    })
+    await s().send('土曜ダイヤにして')
+    fake.last().push({ type: 'tool_call', id: 'sevt_1', name: 'apply_policy', input: POLICY_INPUT })
+    await vi.waitFor(() => expect(s().toolRunning).toBe(true))
+    expect(sendBlockedReason(s())).toBe(TOOLS_WAITING)
+    expect(canStop(s())).toBe(true)
+    expect(await s().send('まだ?')).toBe(false)
+    expect(s().items.at(-1)).toMatchObject({ kind: 'error', text: TOOLS_WAITING })
+    release()
+    await vi.waitFor(() => expect(s().toolRunning).toBe(false))
+    expect(edit.getState().draft?.id).toBe('d1')
+    const items = s()
+      .items.filter((i) => i.kind === 'tool' || i.kind === 'draft')
+      .map(({ id: _id, ...rest }) => rest)
+    expect(items).toEqual([
+      { kind: 'tool', callId: 'sevt_1', name: 'apply_policy', label: '方針の下書きを作っています…', status: 'done' },
+      { kind: 'draft', draftId: 'd1', text: draftMessage('d1'), step: 'policy' },
+    ])
+    const results = fake.posts.filter((p) => p.body.kind === 'tool_results')
+    expect(results).toHaveLength(1)
+    const sent = (results[0].body as Extract<SessionPostBody, { kind: 'tool_results' }>).results
+    expect(sent.map((r) => r.custom_tool_use_id)).toEqual(['sevt_1'])
+    expect(JSON.parse(sent[0].text)).toMatchObject({ status: 'draft', draft_id: 'd1' })
+    expect(s().sentLog.at(-1)!.parts).toEqual([{ kind: 'tool_result', text: sent[0].text, toolName: 'apply_policy', isError: false }])
+  })
+
+  it('承認・取り消しを、次の発言の先頭に [画面の操作] の行で入れる', async () => {
+    const { s, fake, edit, messages } = setup()
+    await s().send('土曜ダイヤにして')
+    fake.last().push({ type: 'tool_call', id: 'sevt_1', name: 'apply_policy', input: POLICY_INPUT })
+    await vi.waitFor(() => expect(fake.posts.some((p) => p.body.kind === 'tool_results')).toBe(true))
+    expect(edit.getState().commit()).toEqual({ ok: true })
+    await s().send('学校の便を足し戻して')
+    expect(messages().at(-1)).toEqual([
+      { type: 'text', text: '[画面の操作] 下書き d1 を利用者が承認しました。' },
+      { type: 'text', text: '学校の便を足し戻して' },
+    ])
+    // 利用者がボタンで足し戻した便の数
+    expect(edit.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '', schoolDaysOnly: false }] }, 'user').ok).toBe(true)
+    edit.getState().commit()
+    await s().send('どうなった?')
+    expect(messages().at(-1)![0]).toEqual({ type: 'text', text: '[画面の操作] 利用者が便を 1 本足し戻しました。' })
+  })
+
+  it('「止める」で、答えていない呼び出しの「利用者が止めました」を results に入れた interrupt を1回で送る', async () => {
+    const { s, fake, runToolSpy } = setup()
+    runToolSpy.mockImplementation(
+      (_name, _input, signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new DOMException('止めました', 'AbortError')))),
+    )
+    await s().send('影響を見せて')
+    fake.last().push({ type: 'tool_call', id: 'sevt_1', name: 'summarize_impact', input: { date: null, step_hours: null } })
+    await vi.waitFor(() => expect(s().toolRunning).toBe(true))
+    await s().stop()
+    const interrupts = fake.posts.filter((p) => p.body.kind === 'interrupt')
+    expect(interrupts).toHaveLength(1)
+    const results = (interrupts[0].body as Extract<SessionPostBody, { kind: 'interrupt' }>).results
+    expect(results).toEqual([{ custom_tool_use_id: 'sevt_1', text: JSON.stringify({ status: 'error', message: '利用者が止めました' }), is_error: true }])
+    expect(fake.posts.filter((p) => p.body.kind === 'tool_results')).toHaveLength(0)
+    expect(s().toolRunning).toBe(false)
+    expect(s().items.find((i) => i.kind === 'tool')).toMatchObject({ status: 'error' })
+    // サーバーが止めた後の idle を送ってくる。調査の run が開いていれば案内を出す
+    fake.last().push({ type: 'research', id: 'e1', kind: 'run_started', runId: 'wfr_1', name: null, phase: null, result: null, saved: null, total: null })
+    fake.last().push(status('e2', 'idle', 'interrupted'))
+    await vi.waitFor(() => expect(s().items.at(-1)).toMatchObject({ kind: 'notice', text: RESEARCH_PAUSED }))
+    expect(s().items.at(-2)).toMatchObject({ kind: 'notice', text: STOPPED_NOTICE })
+    expect(s().replying).toBe(false)
+  })
+})
+
+describe('GTFS を読み込み直したら、DELETE を送り、表示と取っ手を消す', () => {
+  it('発言を消して知らせを出し、次の発言は新しいセッションの最初として [画面の状態] から送る', async () => {
+    const { s, fake, reload, messages } = setup()
+    await s().send('一つ目')
+    reload()
+    expect(fake.removed).toEqual(['h1'])
+    expect(s().items.map((i) => i.kind)).toEqual(['notice'])
+    expect(s().items[0]).toMatchObject({ text: RELOAD_NOTICE })
+    expect(s()).toMatchObject({ sentLog: [], connection: 'none', usage: null, budgetCents: null })
+    await s().send('二つ目')
+    expect(fake.api.create).toHaveBeenCalledTimes(2)
+    expect(messages().at(-1)).toEqual([
+      { type: 'text', text: TODAY_LINE },
+      { type: 'text', text: '二つ目' },
+    ])
+  })
+
+  it('セッションを作っている間に読み込み直したら、作ったセッションを消し、消した後の表示に失敗を出さない', async () => {
+    const { s, fake, reload } = setup()
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((r) => (release = r))
+    const create = fake.api.create
+    fake.api.create = vi.fn(async (token: string | null) => {
+      await gate
+      return create(token)
+    })
+    const sending = s().send('一つ目')
+    await vi.waitFor(() => expect(fake.api.create).toHaveBeenCalled())
+    reload()
+    release()
+    expect(await sending).toBe(false)
+    expect(fake.removed).toEqual(['h1'])
+    expect(s().items.map((i) => i.kind)).toEqual(['notice'])
+    expect(s()).toMatchObject({ sending: false, unsent: null })
+    expect(fake.posts).toEqual([])
+  })
+
+  it('会話が無ければ知らせも DELETE も出さない', () => {
+    const { s, fake, reload } = setup()
+    reload()
+    expect(s().items).toEqual([])
+    expect(fake.removed).toEqual([])
+  })
+
+  it('ページを閉じるとき(endSession)も DELETE を送る', async () => {
+    const { s, fake } = setup()
+    await s().send('一つ目')
+    s().endSession()
+    expect(fake.removed).toEqual(['h1'])
+  })
+})
+
+describe('予算に達したら入力欄を閉じ、「新しく始める」を出す', () => {
+  it('budget_reached で送れなくし、新しく始めると DELETE の後に作り直し、承認済みの編集の要約から送る', async () => {
+    const { s, fake, edit, messages } = setup()
+    await s().send('一つ目')
+    expect(edit.getState().propose({ type: 'applyPolicy', settings: { kind: 'weekdayToSaturday', weekdayService: 'WK', replacementService: 'SA', period: { start: '20261109', end: null }, excludedRoutes: [] }, reason: { category: null, note: '' } }, 'user').ok).toBe(true)
+    edit.getState().commit()
+    fake.last().push(status('e1', 'idle', 'budget_reached'))
+    await vi.waitFor(() => expect(s().budgetReached).toBe(true))
+    expect(s().items.at(-1)).toMatchObject({ kind: 'notice', text: budgetReachedMessage(300) })
+    expect(budgetReachedMessage(300)).toBe(
+      'この会話の AI の利用額が上限(3 ドル)に達しました。続けるときは『新しく始める』を押してください。GTFS の編集はそのまま残ります。AI はここまでの会話を覚えていません',
+    )
+    expect(sendBlockedReason(s())).toBe(budgetReachedMessage(300))
+    expect(await s().send('二つ目')).toBe(false)
+    expect(s().unsent).toBe('二つ目')
+    expect(messages()).toHaveLength(1)
+
+    s().startOver()
+    expect(fake.removed).toEqual(['h1'])
+    expect(s()).toMatchObject({ budgetReached: false, connection: 'none' })
+    expect(await s().send('三つ目')).toBe(true)
+    expect(fake.api.create).toHaveBeenCalledTimes(2)
+    expect(messages().at(-1)).toEqual([
+      {
+        type: 'text',
+        text: `${TODAY_LINE}\n[画面の操作] これまでに承認された編集:方針の適用(平日を土曜ダイヤに、2026年11月9日〜当面の間)、足し戻し 0 本。`,
+      },
+      { type: 'text', text: '三つ目' },
+    ])
+  })
+
+  it('セッションが終わった(ended)ら知らせ、次に送ると新しく始める', async () => {
+    const { s, fake } = setup()
+    await s().send('一つ目')
+    fake.last().push(status('e1', 'ended'))
+    await vi.waitFor(() => expect(s().items.at(-1)).toMatchObject({ kind: 'notice', text: ENDED_NOTICE }))
+    expect(s().connection).toBe('none')
+    expect(await s().send('二つ目')).toBe(true)
+    expect(fake.api.create).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('調査の進み具合(11/6)', () => {
+  it('run の始まり・段階・保存の数・終わりを数え、調べ終えたかを出す', async () => {
+    const { s, fake } = setup()
+    await s().send('調べて')
+    const r = (kind: string, extra: Partial<Extract<SessionStreamEvent, { type: 'research' }>> = {}): SessionStreamEvent => ({
+      type: 'research',
+      id: `r-${kind}-${extra.saved ?? ''}`,
+      kind,
+      runId: 'wfr_1',
+      name: null,
+      phase: null,
+      result: null,
+      saved: null,
+      total: null,
+      ...extra,
+    })
+    fake.last().push(r('run_started'), r('phase_started', { name: '施設を調べる' }), r('saved', { saved: 2, total: 5 }))
+    await vi.waitFor(() => expect(researchText(s().research)).toBe('調べています 2 / 5 件(施設を調べる)'))
+    // run の間は、返答を終えても idle が来ない
+    fake.last().push({ type: 'message', id: 'm1', messageId: 'm1', text: '調べています' })
+    await vi.waitFor(() => expect(s().replying).toBe(false))
+    fake.last().push(r('saved', { saved: 4, total: 5 }), r('run_ended', { result: 'completed' }))
+    await vi.waitFor(() => expect(researchText(s().research)).toBe('一部を調べられませんでした'))
+    expect(s().research.openRuns).toEqual([])
+  })
+})

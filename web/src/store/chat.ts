@@ -1,0 +1,771 @@
+import { create } from 'zustand'
+import { ScreenLineTracker, type EditSnapshot, type ScreenState } from '../claude/screenLines'
+import { ClaudeSession, createSessionApi, type ConnectionState, type DisplayStreamEvent, type SessionApi, type SessionDeps, type SessionEvent, type TextBlock } from '../claude/session'
+import { ClaudeRequestError, NOT_CONNECTED } from '../claude/sse'
+import { byteLength, runTool, toolLabel, type PolicyServices, type ToolDeps, type ToolOutcome } from '../claude/tools'
+import { planOf } from '../gtfs/edit/ops'
+import type { RestoreHintContext } from '../gtfs/edit/restore'
+import { describeServices, feedValidity, guessServiceChoice, policyValidity } from '../gtfs/edit/services'
+import type { GtfsFeed } from '../gtfs/load'
+import { todayInJapan } from '../lib/dates'
+import { japanIso, useEditStore, type DraftNotice } from './edit'
+import { useHolidayStore } from './holidays'
+import { useReachStore } from './reach'
+import { buildRestoreHintContext } from './restoreHintContext'
+
+/**
+ * アプリ内の Claude との会話の store(docs/interfaces-1105.md §6)。
+ * 中継の状態(GET /api/claude/status)、合言葉、表示する発言の列、送信中か、考えているか、ツールを実行しているか、
+ * 利用額、予算に達したか、調査の進み具合、「AI に送る情報」の記録を持つ。
+ * 会話の履歴は Anthropic のセッションが持つ(ブラウザは表示用の発言だけ)。セッション・ストリーム・ツールの実行と送信は
+ * claude/session.ts、ツールの中身は claude/tools.ts、[画面の…] の行は claude/screenLines.ts。画面の部品は表示と入力だけをする
+ */
+
+// ---- 画面の文言 ----
+
+export const CLAUDE_UNAVAILABLE = 'AI は使えません(API キーが設定されていません)'
+export const TOKEN_WRONG = '合言葉が違います'
+export const TOKEN_MISSING = '合言葉を入れてください'
+export const TOKEN_CHARS = '合言葉は半角の英数字と記号で入れてください'
+export const RELOAD_NOTICE = 'GTFS を読み込み直したので、AI との会話を新しく始めます'
+export const ENDED_NOTICE = 'AI との会話が終わりました。次に送ると新しく始めます'
+export const NEW_SESSION_NOTICE = 'AI との会話を新しく始めます。AI はここまでの会話を覚えていません。GTFS の編集はそのまま残ります'
+export const STOPPED_NOTICE = '止めました'
+export const TOOLS_WAITING = 'AI がツールの結果を待っています'
+export const SENDING = '送っています…'
+export const THINKING = '考えています…'
+export const RECONNECTING = 'つなぎ直しています…'
+export const TEXT_TOO_LONG = '文が長すぎます。短くして送ってください'
+/** 送る前に入力欄の下に出す文(§6.4) */
+export const SEND_INFO_NOTE =
+  '送るのは、あなたの文と、画面の状態・操作の行、ツールの結果(便の一覧や件数)です。GTFS のファイルは送りません'
+/** 調査を始めるときに SEND_INFO_NOTE に足す文(11/6) */
+export const RESEARCH_SEND_NOTE = '調べる施設・事業者の名前と位置(国土数値情報)を送り、AI が Web で検索します'
+/** 調査の間に出す文 */
+export const RESEARCH_KEEP_OPEN = '調査の間は、この画面を開いたままにしてください'
+/** 止めたときに調査の run が開いていれば出す文(§4.9) */
+export const RESEARCH_PAUSED = '調査が止まっているかもしれません。続けるときは『調査を続けて』と送ってください'
+/** 足し戻しの手順の「AI に候補を聞く」で送る文(§6) */
+export const ASK_RESTORE_PROMPT =
+  '方針で消える平日の便のうち、通勤・通学・通院などのために足し戻したほうがよい便を、手がかりと停留所名から選び、理由をつけて足し戻しの下書きにしてください。数は多くても 10 便くらいにしてください。'
+
+/** 利用者の文の上限(UTF-8 のバイト数。サーバーは [画面の…] の行と合わせて 32KB まで) */
+export const MAX_TEXT_BYTES = 24 * 1024
+
+/** セント → 「$0.42」「$3」(整数のドルは小数を付けない) */
+export function dollars(cents: number): string {
+  const v = Math.max(0, cents) / 100
+  return Number.isInteger(v) ? `$${v}` : `$${v.toFixed(2)}`
+}
+
+/** 入力欄の下の利用額(§6.4)。上限は budget_cents から作る(金額を直接書かない) */
+export function usageText(usage: { costCents: number; budgetCents: number }): string {
+  return `この会話の AI の利用額 約 ${dollars(usage.costCents)} / 上限 ${dollars(usage.budgetCents)}`
+}
+
+/** 予算に達したときの文(§4.9) */
+export function budgetReachedMessage(budgetCents: number | null): string {
+  const limit = budgetCents === null ? '' : `(${(budgetCents / 100).toString()} ドル)`
+  return `この会話の AI の利用額が上限${limit}に達しました。続けるときは『新しく始める』を押してください。GTFS の編集はそのまま残ります。AI はここまでの会話を覚えていません`
+}
+
+/** 下書きの知らせの文 */
+export function draftMessage(id: string): string {
+  return `下書き ${id} を作りました。上の欄で確かめて承認してください`
+}
+
+// ---- 状態 ----
+
+/** 下書きを確かめる手順(該当する手順へ移るボタン用) */
+export type DraftStep = 'policy' | 'restore'
+
+export type ChatItem =
+  | { id: number; kind: 'user'; text: string; at: string }
+  /** AI の返答(改行を保つ)。delta で途中まで出し、同じ messageId の message で置き換える */
+  | { id: number; kind: 'assistant'; messageId: string; text: string; streaming: boolean }
+  /**
+   * ツールの動き。callId はブラウザのツールの呼び出しの id(サーバーのツールは null)。
+   * skipped は実行しなかったもの(止めた・会話を終えた)
+   */
+  | { id: number; kind: 'tool'; callId: string | null; name: string; label: string; status: 'running' | 'done' | 'error' | 'skipped' }
+  /** 下書きの知らせ */
+  | { id: number; kind: 'draft'; draftId: string; text: string; step: DraftStep }
+  | { id: number; kind: 'notice'; text: string }
+  | { id: number; kind: 'error'; text: string }
+
+/** id を除いた項目(項目の種類ごとに Omit する) */
+type NewChatItem = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, 'id'> : never) : never
+
+/** 「AI に送る情報」の1件の中身 */
+export interface SentPart {
+  kind: 'user' | 'screen' | 'tool_result' | 'interrupt'
+  text: string
+  /** kind が tool_result のときのツールの名前 */
+  toolName?: string
+  isError?: boolean
+}
+
+/** 「AI に送る情報」の1件(送るたびに、そのとき送った中身) */
+export interface SentLogEntry {
+  id: number
+  /** ISO 8601 の日本時間 */
+  at: string
+  parts: SentPart[]
+}
+
+export type ClaudeStatus =
+  | { state: 'unknown' | 'loading' }
+  | { state: 'ready'; available: boolean; tokenRequired: boolean }
+  | { state: 'error'; message: string }
+
+/** 調査の進み具合(§4.6 の research。画面は 11/6) */
+export interface ResearchProgress {
+  /** 調べている(run が開いているか、対象のうち保存していないものがある) */
+  active: boolean
+  /** 開いている workflow run の ID */
+  openRuns: string[]
+  /** run の段階の名前 */
+  phase: string | null
+  /** run が一時停止した */
+  paused: boolean
+  /** 保存した数と対象の数(save_research に答えたとき) */
+  saved: number
+  total: number | null
+  /** 調査役に1件ずつ頼んだ数 */
+  delegated: number
+  /** 終わったときの結果。done は「調べ終えました」、partial は「一部を調べられませんでした」 */
+  outcome: 'done' | 'partial' | null
+}
+
+export const EMPTY_RESEARCH: ResearchProgress = {
+  active: false,
+  openRuns: [],
+  phase: null,
+  paused: false,
+  saved: 0,
+  total: null,
+  delegated: 0,
+  outcome: null,
+}
+
+/** 調査の進み具合の文(調べていなければ null) */
+export function researchText(r: ResearchProgress): string | null {
+  if (r.active) {
+    const count = r.total === null ? `${r.saved} 件` : `${r.saved} / ${r.total} 件`
+    return `調べています ${count}${r.phase ? `(${r.phase})` : ''}`
+  }
+  if (r.outcome === 'done') return '調べ終えました'
+  if (r.outcome === 'partial') return '一部を調べられませんでした'
+  return null
+}
+
+export interface ChatState {
+  status: ClaudeStatus
+  /** 合言葉(sessionStorage に保存。使えなければこのタブの間だけ持つ) */
+  token: string | null
+  /** 合言葉の欄に出す文(「合言葉が違います」など) */
+  tokenError: string | null
+  items: ChatItem[]
+  sentLog: SentLogEntry[]
+  /** 送れなかった利用者の文(画面が入力欄に戻す) */
+  unsent: string | null
+  /** 発言を送っている(セッションを作っている間も) */
+  sending: boolean
+  /** AI が返答している(「考えています…」を出す)。利用者が送ってから、返答を終えるまで */
+  replying: boolean
+  /** ブラウザのツールを実行している・結果を送っている(この間は送れない) */
+  toolRunning: boolean
+  /** 中継のストリームのつながり。none はセッションが無い */
+  connection: ConnectionState | 'none'
+  /** この会話の利用額(usage)。届いていなければ null */
+  usage: { costCents: number; budgetCents: number } | null
+  /** この会話の予算(POST /api/claude/session が返した budget_cents) */
+  budgetCents: number | null
+  /** 予算に達した(入力欄を閉じ、「新しく始める」を出す) */
+  budgetReached: boolean
+  research: ResearchProgress
+
+  /** 中継の状態を読む(画面を開いたとき、GTFS を読み込んだとき) */
+  loadStatus: () => Promise<void>
+  setToken: (token: string) => void
+  /**
+   * 利用者の文を送る。セッションが無ければ作り、ストリームをつないでから送る。送れたら true。
+   * extraLines は [画面の操作] の行の後ろに足す行(11/6 の「調査を始めました」など)
+   */
+  send: (text: string, options?: { extraLines?: string[] }) => Promise<boolean>
+  /** 足し戻しの手順の「AI に候補を聞く」 */
+  askRestore: () => Promise<boolean>
+  /** 止める(実行中のツールを止め、interrupt を送る) */
+  stop: () => Promise<void>
+  /** 新しく始める(予算に達したときなど)。今のセッションを終え、次に送るときに作り直す。表示は残す */
+  startOver: () => void
+  /** 会話を消す(GTFS の読み込み直し。notice があれば、消したあとに出す) */
+  reset: (notice?: string) => void
+  /** ページを閉じるとき(pagehide)。セッションを終える(DELETE を keepalive で送る) */
+  endSession: () => void
+}
+
+/** 送るボタンを押せない理由(押せるなら null) */
+export function sendBlockedReason(s: Pick<ChatState, 'status' | 'budgetReached' | 'toolRunning' | 'sending' | 'budgetCents'>): string | null {
+  if (s.status.state === 'ready' && !s.status.available) return CLAUDE_UNAVAILABLE
+  if (s.status.state === 'error') return s.status.message
+  if (s.budgetReached) return budgetReachedMessage(s.budgetCents)
+  if (s.toolRunning) return TOOLS_WAITING
+  if (s.sending) return SENDING
+  return null
+}
+
+/** 「止める」を押せる(返答の途中か、ツールを実行している) */
+export function canStop(s: Pick<ChatState, 'replying' | 'toolRunning' | 'connection'>): boolean {
+  return s.connection !== 'none' && s.connection !== 'closed' && (s.replying || s.toolRunning)
+}
+
+export interface TokenStorage {
+  get: () => string | null
+  set: (token: string | null) => void
+}
+
+export interface ChatStoreDeps {
+  fetchStatus: () => Promise<{ available: boolean; tokenRequired: boolean }>
+  /** 中継の API(createSessionApi) */
+  api: SessionApi
+  runTool: (name: string, input: unknown, signal: AbortSignal) => Promise<ToolOutcome>
+  screen: () => ScreenState
+  edits: () => EditSnapshot
+  takeDraftNotices: () => DraftNotice[]
+  storage: TokenStorage
+  now: () => Date
+  /** GTFS を読み込み直したときに onChange を呼ぶように見張る(会話を消すため)。省けば見張らない */
+  watchBase?: (onChange: () => void) => void
+  /** セッションの待ち時間(テストで差し替える) */
+  session?: Pick<SessionDeps, 'sleep' | 'reconnectDelays' | 'retryDelays' | 'batchDelayMs'>
+}
+
+const STEP_OF_TOOL: Record<string, DraftStep> = { apply_policy: 'policy', undo_edit: 'policy', add_back_trips: 'restore' }
+
+/** GET /api/claude/status の返答が JSON でないか、形が違うときの文 */
+export const STATUS_SHAPE = 'AI の状態の形が違います。'
+
+function errorText(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message ? e.message : fallback
+}
+
+/** チャットの store を作る(テストでは中継・ツール・画面の状態を差し替える) */
+export function createChatStore(deps: ChatStoreDeps) {
+  // store の中の関数から使う。store を作る関数の中で作る(onEvent が store の set を使うため)
+  let session: ClaudeSession
+  const tracker = new ScreenLineTracker({ screen: deps.screen, edits: deps.edits, takeDraftNotices: deps.takeDraftNotices })
+
+  const store = create<ChatState>()((set, get) => {
+    let nextId = 1
+    // 会話の世代。消した(reset)・新しく始めた(startOver)ら増やし、それより前に始めた送信の結果は表示に使わない
+    let generation = 0
+
+    function push(item: NewChatItem): void {
+      set({ items: [...get().items, { ...item, id: nextId++ } as ChatItem] })
+    }
+
+    function update(id: number, change: (item: ChatItem) => ChatItem): void {
+      set({ items: get().items.map((i) => (i.id === id ? change(i) : i)) })
+    }
+
+    function log(parts: SentPart[]): void {
+      set({ sentLog: [...get().sentLog, { id: nextId++, at: japanIso(deps.now()), parts }] })
+    }
+
+    /** 流れている返答の項目を閉じ、実行中のサーバーのツールの項目を終える */
+    function closeStreaming(): void {
+      const items = get().items
+      if (!items.some((i) => (i.kind === 'assistant' && i.streaming) || (i.kind === 'tool' && i.callId === null && i.status === 'running'))) return
+      set({
+        items: items.map((i) =>
+          i.kind === 'assistant' && i.streaming
+            ? { ...i, streaming: false }
+            : i.kind === 'tool' && i.callId === null && i.status === 'running'
+              ? { ...i, status: 'done' }
+              : i,
+        ),
+      })
+    }
+
+    /** 実行中のブラウザのツールの項目を skipped にする(会話を終えたとき) */
+    function skipRunning(): void {
+      set({ items: get().items.map((i) => (i.kind === 'tool' && i.status === 'running' ? { ...i, status: 'skipped' } : i)) })
+    }
+
+    function onDisplay(e: DisplayStreamEvent): void {
+      switch (e.type) {
+        case 'delta': {
+          const item = get().items.find((i) => i.kind === 'assistant' && i.messageId === e.messageId)
+          if (item?.kind === 'assistant') {
+            // message で置き換えた後の途中経過は使わない
+            if (item.streaming) update(item.id, (i) => ({ ...i, text: (i as { text: string }).text + e.text }))
+          } else {
+            push({ kind: 'assistant', messageId: e.messageId, text: e.text, streaming: true })
+          }
+          set({ replying: true })
+          return
+        }
+        case 'message': {
+          const item = get().items.find((i) => i.kind === 'assistant' && i.messageId === e.messageId)
+          if (item) update(item.id, (i) => ({ ...i, text: e.text, streaming: false }))
+          else push({ kind: 'assistant', messageId: e.messageId, text: e.text, streaming: false })
+          // 調査の run が開いている間は、返答を終えても idle が来ない(§6.4)
+          if (get().research.openRuns.length > 0) set({ replying: false })
+          return
+        }
+        case 'thinking':
+          set({ replying: true })
+          return
+        case 'tool_activity': {
+          if (!e.done) {
+            push({ kind: 'tool', callId: null, name: e.name, label: toolLabel(e.name), status: 'running' })
+          } else {
+            const running = [...get().items].reverse().find((i) => i.kind === 'tool' && i.callId === null && i.name === e.name && i.status === 'running')
+            if (running) update(running.id, (i) => ({ ...i, status: 'done' }) as ChatItem)
+          }
+          return
+        }
+        case 'research':
+          set({ research: nextResearch(get().research, e) })
+          return
+        case 'status':
+          onStatus(e.state, e.reason)
+          return
+        case 'usage':
+          set({ usage: { costCents: e.costCents, budgetCents: e.budgetCents }, budgetCents: e.budgetCents })
+          return
+        case 'error':
+          // Anthropic への接続が切れた(サーバーがストリームを閉じる)。つなぎ直すので、文は出さない
+          if (e.code === 'upstream') return
+          push({ kind: 'error', text: e.message })
+          set({ replying: false })
+          closeStreaming()
+          return
+      }
+    }
+
+    function onStatus(state: string, reason: string | null): void {
+      if (state === 'ended') {
+        closeStreaming()
+        skipRunning()
+        set({ replying: false, research: { ...get().research, active: false, openRuns: [] } })
+        push({ kind: 'notice', text: ENDED_NOTICE })
+        return
+      }
+      if (state !== 'idle' || reason === 'requires_action') return
+      closeStreaming()
+      const research = get().research
+      // run が無く、1件ずつ頼んだ調査が終わった
+      const finished =
+        research.openRuns.length === 0 && research.active
+          ? { ...research, active: false, outcome: research.total !== null && research.saved >= research.total ? ('done' as const) : ('partial' as const) }
+          : research
+      set({ replying: false, research: finished })
+      if (reason === 'budget_reached') {
+        set({ budgetReached: true })
+        push({ kind: 'notice', text: budgetReachedMessage(get().budgetCents) })
+      } else if (reason === 'interrupted') {
+        push({ kind: 'notice', text: STOPPED_NOTICE })
+        if (research.openRuns.length > 0) push({ kind: 'notice', text: RESEARCH_PAUSED })
+      }
+    }
+
+    function onSessionEvent(e: SessionEvent): void {
+      switch (e.type) {
+        case 'connection':
+          set({ connection: e.state === 'closed' && !session.handle ? 'none' : e.state })
+          return
+        case 'stream':
+          onDisplay(e.event)
+          return
+        case 'tool_start':
+          push({ kind: 'tool', callId: e.id, name: e.name, label: toolLabel(e.name), status: 'running' })
+          set({ replying: true })
+          return
+        case 'tool_done': {
+          const item = get().items.find((i) => i.kind === 'tool' && i.callId === e.id)
+          if (item) update(item.id, (i) => ({ ...i, status: e.outcome.isError ? 'error' : 'done' }) as ChatItem)
+          const draft = e.outcome.draft
+          if (draft?.kind === 'undo') tracker.noteUndoDraft(draft.id)
+          if (draft && !e.outcome.isError) push({ kind: 'draft', draftId: draft.id, text: draftMessage(draft.id), step: STEP_OF_TOOL[e.name] ?? 'policy' })
+          return
+        }
+        case 'tools':
+          set({ toolRunning: e.pending > 0 })
+          return
+        case 'sent':
+          log([
+            ...e.results.map((r) => ({ kind: 'tool_result' as const, text: r.text, toolName: r.name, isError: r.isError })),
+            ...(e.kind === 'interrupt' ? [{ kind: 'interrupt' as const, text: STOPPED_NOTICE }] : []),
+          ])
+          return
+        case 'lost':
+          closeStreaming()
+          skipRunning()
+          set({ replying: false, connection: 'none' })
+          push({ kind: 'notice', text: e.message })
+          return
+        case 'unauthorized':
+          deps.storage.set(null)
+          set({ token: null, tokenError: TOKEN_WRONG })
+          return
+        case 'send_failed':
+          push({ kind: 'error', text: e.message })
+          return
+      }
+    }
+
+    session = new ClaudeSession({
+      api: deps.api,
+      token: () => get().token,
+      runTool: deps.runTool,
+      onEvent: onSessionEvent,
+      ...deps.session,
+    })
+
+    /** 送る前の確かめ。送れなければ理由を出して false */
+    async function ready(text: string): Promise<boolean> {
+      const state = get().status.state
+      if (state === 'unknown' || state === 'loading') await get().loadStatus()
+      const { status, token, budgetReached, toolRunning } = get()
+      if (status.state !== 'ready' || !status.available) {
+        push({ kind: 'error', text: status.state === 'error' ? status.message : CLAUDE_UNAVAILABLE })
+        return false
+      }
+      if (status.tokenRequired && !token) {
+        set({ tokenError: TOKEN_MISSING, unsent: text })
+        return false
+      }
+      if (budgetReached) {
+        set({ unsent: text })
+        return false
+      }
+      if (toolRunning) {
+        push({ kind: 'error', text: TOOLS_WAITING })
+        set({ unsent: text })
+        return false
+      }
+      if (byteLength(text) > MAX_TEXT_BYTES) {
+        push({ kind: 'error', text: TEXT_TOO_LONG })
+        set({ unsent: text })
+        return false
+      }
+      return true
+    }
+
+    function onSendError(e: unknown, text: string): void {
+      set({ unsent: text })
+      if (e instanceof ClaudeRequestError && e.status === 401) {
+        deps.storage.set(null)
+        set({ token: null, tokenError: TOKEN_WRONG })
+        return
+      }
+      push({ kind: 'error', text: errorText(e, 'AI に送れませんでした。もう一度送ってください') })
+    }
+
+    return {
+      status: { state: 'unknown' },
+      token: deps.storage.get(),
+      tokenError: null,
+      items: [],
+      sentLog: [],
+      unsent: null,
+      sending: false,
+      replying: false,
+      toolRunning: false,
+      connection: 'none',
+      usage: null,
+      budgetCents: null,
+      budgetReached: false,
+      research: EMPTY_RESEARCH,
+
+      async loadStatus() {
+        set({ status: { state: 'loading' } })
+        try {
+          const s = await deps.fetchStatus()
+          set({ status: { state: 'ready', available: s.available, tokenRequired: s.tokenRequired } })
+        } catch (e) {
+          set({ status: { state: 'error', message: errorText(e, 'AI の状態を確かめられませんでした。') } })
+        }
+      },
+
+      setToken(token) {
+        const t = token.trim()
+        // HTTP のヘッダーで送るので、半角の英数字と記号だけ
+        if (t !== '' && !/^[\x21-\x7e]+$/.test(t)) {
+          set({ tokenError: TOKEN_CHARS })
+          return
+        }
+        deps.storage.set(t === '' ? null : t)
+        set({ token: t === '' ? null : t, tokenError: null })
+      },
+
+      async send(text, options = {}) {
+        const t = text.trim()
+        if (t === '' || get().sending) return false
+        const gen = generation
+        set({ sending: true })
+        try {
+          if (!(await ready(t))) return false
+          if (gen !== generation) return false
+          push({ kind: 'user', text: t, at: japanIso(deps.now()) })
+          set({ unsent: null })
+          // 取っ手が使えなくなっていたら(404・410)、1回だけ新しいセッションで送り直す
+          for (let attempt = 0; ; attempt++) {
+            try {
+              if (!session.handle) tracker.reset()
+              const created = await session.start()
+              if (created) set({ budgetCents: session.budgetCents, usage: null, research: EMPTY_RESEARCH })
+              const prepared = tracker.prepare(options.extraLines ?? [])
+              const content: TextBlock[] = []
+              if (prepared.lines.length > 0) content.push({ type: 'text', text: prepared.lines.join('\n') })
+              content.push({ type: 'text', text: t })
+              await session.sendMessage(content)
+              if (gen !== generation) return false
+              prepared.commit()
+              log([...(prepared.lines.length > 0 ? [{ kind: 'screen' as const, text: prepared.lines.join('\n') }] : []), { kind: 'user', text: t }])
+              set({ replying: true })
+              return true
+            } catch (e) {
+              // 送っている間に会話を消した・新しく始めた(GTFS の読み込み直しなど)。消した後の表示に失敗を出さない
+              if (gen !== generation) return false
+              if (attempt === 0 && e instanceof ClaudeRequestError && (e.status === 404 || e.status === 410) && !session.handle) continue
+              onSendError(e, t)
+              return false
+            }
+          }
+        } finally {
+          if (gen === generation) set({ sending: false })
+        }
+      },
+
+      askRestore() {
+        return get().send(ASK_RESTORE_PROMPT)
+      },
+
+      async stop() {
+        if (!session.handle) return
+        try {
+          await session.interrupt()
+        } catch (e) {
+          push({ kind: 'error', text: errorText(e, 'AI を止められませんでした。') })
+        }
+      },
+
+      startOver() {
+        generation++
+        session.close()
+        tracker.reset()
+        closeStreaming()
+        skipRunning()
+        set({ sending: false, replying: false, toolRunning: false, connection: 'none', usage: null, budgetCents: null, budgetReached: false, research: EMPTY_RESEARCH })
+        push({ kind: 'notice', text: NEW_SESSION_NOTICE })
+      },
+
+      reset(notice) {
+        generation++
+        session.close()
+        tracker.reset()
+        set({
+          items: [],
+          sentLog: [],
+          unsent: null,
+          sending: false,
+          replying: false,
+          toolRunning: false,
+          connection: 'none',
+          usage: null,
+          budgetCents: null,
+          budgetReached: false,
+          research: EMPTY_RESEARCH,
+        })
+        if (notice) push({ kind: 'notice', text: notice })
+      },
+
+      endSession() {
+        session.close()
+      },
+    }
+  })
+  deps.watchBase?.(() => {
+    const s = store.getState()
+    const hadConversation = s.items.length > 0 || s.sending || session.handle !== null
+    s.reset(hadConversation ? RELOAD_NOTICE : undefined)
+  })
+  return store
+}
+
+/** research のイベントで、調査の進み具合を進める */
+function nextResearch(r: ResearchProgress, e: Extract<DisplayStreamEvent, { type: 'research' }>): ResearchProgress {
+  const runs = new Set(r.openRuns)
+  switch (e.kind) {
+    case 'run_started':
+      if (e.runId) runs.add(e.runId)
+      return { ...r, active: true, openRuns: [...runs], phase: null, paused: false, outcome: null }
+    case 'phase_started':
+      return { ...r, phase: e.name ?? e.phase ?? r.phase, paused: false }
+    case 'phase_ended':
+      return r
+    case 'run_paused':
+      return { ...r, paused: true }
+    case 'run_ended':
+    case 'run_error': {
+      if (e.runId) runs.delete(e.runId)
+      const openRuns = [...runs]
+      if (openRuns.length > 0) return { ...r, openRuns }
+      const complete = e.kind === 'run_ended' && e.result === 'completed' && (r.total === null || r.saved >= r.total)
+      return { ...r, active: false, openRuns, phase: null, paused: false, outcome: complete ? 'done' : 'partial' }
+    }
+    case 'delegated':
+      return { ...r, active: true, delegated: r.delegated + 1, outcome: null }
+    case 'saved':
+      return { ...r, saved: e.saved ?? r.saved, total: e.total ?? r.total }
+    default:
+      return r
+  }
+}
+
+// ---- 本物のつなぎ ----
+
+const TOKEN_KEY = 'dispatcher.claude.token'
+
+/** sessionStorage の合言葉(読み書きは try/catch。使えなければ保存しない) */
+export const sessionTokenStorage: TokenStorage = {
+  get() {
+    try {
+      return globalThis.sessionStorage?.getItem(TOKEN_KEY) ?? null
+    } catch {
+      return null
+    }
+  },
+  set(token) {
+    try {
+      if (token === null) globalThis.sessionStorage?.removeItem(TOKEN_KEY)
+      else globalThis.sessionStorage?.setItem(TOKEN_KEY, token)
+    } catch {
+      // 使えなければ、このタブの間だけ store に持つ(読み込み直したら入れ直す)
+    }
+  },
+}
+
+/**
+ * GET /api/claude/status を読む。失敗はどれも日本語の決まった文の Error にする
+ * (つながらないときの fetch の TypeError や、JSON でない返答の SyntaxError の英語の文を画面に出さない)
+ */
+export async function fetchClaudeStatus(fetchImpl: typeof fetch = (input, init) => fetch(input, init)): Promise<{ available: boolean; tokenRequired: boolean }> {
+  let res: Response
+  try {
+    res = await fetchImpl('/api/claude/status')
+  } catch {
+    throw new Error(NOT_CONNECTED)
+  }
+  if (!res.ok) throw new Error(`AI の状態を確かめられませんでした(${res.status})。`)
+  let body: unknown
+  try {
+    body = await res.json()
+  } catch {
+    throw new Error(STATUS_SHAPE)
+  }
+  const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>
+  if (typeof b.available !== 'boolean' || typeof b.tokenRequired !== 'boolean') throw new Error(STATUS_SHAPE)
+  return { available: b.available, tokenRequired: b.tokenRequired }
+}
+
+/**
+ * 画面とのつなぎの口。方針の手順で画面が選んでいる service と、到達圏を使う手がかりの ctx を、画面の側から渡せる
+ * (渡さなければ、service は画面と同じ推定に承認済みの方針を重ねたもの、ctx は到達圏の store から buildRestoreHintContext で作る)
+ */
+export interface ChatToolProviders {
+  policyServices: ((validity: { start: string; end: string } | null) => PolicyServices | null) | null
+  hintContext: ((editedFeed: GtfsFeed) => RestoreHintContext | null) | null
+}
+
+const providers: ChatToolProviders = { policyServices: null, hintContext: null }
+
+/** 画面の部品が、自分の選択をツールに渡す(null を渡すと既定に戻す) */
+export function setChatToolProviders(p: Partial<ChatToolProviders>): void {
+  Object.assign(providers, p)
+}
+
+function holidayList() {
+  const h = useHolidayStore.getState().holidays
+  return h.status === 'ready' ? h.list : null
+}
+
+/**
+ * 画面が選び直していないときの service。方針の手順と同じ推定(guessServiceChoice)に、承認済みの方針で選んだ service を重ねる。
+ * validity が null なら、承認済みの方針の有効期間(無ければ入力の有効期間)で推定する
+ */
+export function defaultPolicyServices(validity: { start: string; end: string } | null): PolicyServices | null {
+  const { base, history } = useEditStore.getState()
+  if (!base) return null
+  const plan = planOf(history)
+  const input = feedValidity(base.feed)
+  const v = validity ?? (input && plan ? (policyValidity(input, plan.period) ?? input) : input)
+  const guess = v ? guessServiceChoice(base.feed, describeServices(base.feed, holidayList()), v) : null
+  const out: PolicyServices = { weekday: guess?.weekday ?? null, saturday: guess?.saturday ?? null, sundayHoliday: guess?.sundayHoliday ?? null }
+  if (plan) {
+    out.weekday = plan.weekdayService
+    if (plan.kind === 'weekdayToSaturday') out.saturday = plan.replacementService
+    else out.sundayHoliday = plan.replacementService
+  }
+  return out
+}
+
+function policyServices(validity: { start: string; end: string } | null): PolicyServices | null {
+  return providers.policyServices ? providers.policyServices(validity) : defaultPolicyServices(validity)
+}
+
+/** 到達圏を使う手がかりの ctx(既定は到達圏の store から作る。編集後のフィードが違えば null) */
+function hintContext(feed: GtfsFeed): RestoreHintContext | null {
+  return providers.hintContext ? providers.hintContext(feed) : buildRestoreHintContext(useReachStore.getState(), feed)
+}
+
+/** ツールの依存(本物の store につないだもの) */
+export const chatToolDeps: ToolDeps = {
+  edit: () => useEditStore.getState(),
+  reach: useReachStore,
+  holidays: holidayList,
+  today: () => todayInJapan(new Date()),
+  policyServices,
+  hintContext,
+}
+
+/** [画面の状態] の行の材料(本物の store から作る) */
+export function currentScreenState(): ScreenState {
+  const { base } = useEditStore.getState()
+  const reach = useReachStore.getState()
+  return {
+    today: todayInJapan(new Date()),
+    gtfs: base ? { label: base.label, validity: feedValidity(base.feed), services: policyServices(null) } : null,
+    reach: base ? { date: reach.date, stepHours: reach.stepHours } : null,
+  }
+}
+
+/**
+ * アプリ内の Claude との会話。GTFS を読み込み直したら(編集の store の基準が変わったら)セッションを終えて会話を消す。
+ * ページを閉じる・読み込み直すとき(pagehide)もセッションを終える
+ */
+export const useChatStore = createChatStore({
+  fetchStatus: () => fetchClaudeStatus(),
+  api: createSessionApi(),
+  runTool: (name, input, signal) => runTool(name, input, chatToolDeps, signal),
+  screen: currentScreenState,
+  edits: () => {
+    const { history, versions } = useEditStore.getState()
+    return { history, versions }
+  },
+  takeDraftNotices: () => useEditStore.getState().takeDraftNotices(),
+  storage: sessionTokenStorage,
+  now: () => new Date(),
+  watchBase: (onChange) => {
+    useEditStore.subscribe((state, prev) => {
+      if (state.base !== prev.base) onChange()
+    })
+  },
+})
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => useChatStore.getState().endSession())
+}

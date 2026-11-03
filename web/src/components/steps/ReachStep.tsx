@@ -325,7 +325,7 @@ function CompareTable({ snapshot, selectedHour }: { snapshot: ReachSnapshot; sel
       <Table className="text-xs">
         <TableHeader>
           <TableRow>
-            <TableHead className="px-1 align-bottom whitespace-normal">時間帯</TableHead>
+            <TableHead className="px-1 align-bottom whitespace-nowrap">時間帯</TableHead>
             <TableHead className="px-1 text-right align-bottom whitespace-normal">減便前の外れる割合</TableHead>
             <TableHead className="px-1 text-right align-bottom whitespace-normal">減便後の外れる割合</TableHead>
             <TableHead className="px-1 text-right align-bottom whitespace-normal">増減(ポイント)</TableHead>
@@ -340,7 +340,7 @@ function CompareTable({ snapshot, selectedHour }: { snapshot: ReachSnapshot; sel
             const c = comparison.bands[i]
             return (
               <TableRow key={b.startHour} {...rowProps(i === selected)}>
-                <TableCell className="px-1 align-top tabular-nums whitespace-normal">{b.label}</TableCell>
+                <TableCell className="px-1 align-top tabular-nums whitespace-nowrap">{b.label}</TableCell>
                 <TableCell className={CELL_CLASS}>{formatPercent(before, denominator)}</TableCell>
                 <TableCell className={CELL_CLASS}>{formatPercent(after, denominator)}</TableCell>
                 <TableCell className={CELL_CLASS}>{formatPointChange(before, after, denominator)}</TableCell>

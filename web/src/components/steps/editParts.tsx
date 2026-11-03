@@ -3,6 +3,7 @@
  * 重さ(誤り・注意・情報)は色だけでなく、記号と文字でも分かるようにする。
  */
 import type { ReactNode } from 'react'
+import { Button } from '@/components/ui/button'
 import type { ValidationIssue } from '@/gtfs/validate/edit'
 
 const SEVERITY = {
@@ -74,5 +75,48 @@ export function FromTo({ before, after, emphasizeDecrease = false }: { before: R
         </>
       )}
     </span>
+  )
+}
+
+/**
+ * 画面の中の確認(ブラウザ標準の確認ダイアログの代わり)。押したボタンの場所に、文と「続ける」「やめる」を出す。
+ * ページを止めないので、ブラウザ操作の自動化や録画でも困らない。「やめる」に最初の焦点を置き、うっかり Enter を押しても何も変えない。
+ * onCancel では何も変えないこと、onConfirm でそれまでの動きをすることは、呼ぶ側が守る
+ */
+export function InlineConfirm({
+  label,
+  message,
+  confirmLabel,
+  cancelLabel = 'やめる',
+  onConfirm,
+  onCancel,
+}: {
+  /** 確認の名前(読み上げ・テスト用) */
+  label: string
+  message: ReactNode
+  confirmLabel: string
+  cancelLabel?: string
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="flex flex-col gap-1.5 rounded-md border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs text-amber-950"
+    >
+      <p className="break-words">
+        <span aria-hidden="true">! </span>
+        {message}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" size="sm" onClick={onConfirm}>
+          {confirmLabel}
+        </Button>
+        <Button type="button" size="sm" variant="outline" autoFocus onClick={onCancel}>
+          {cancelLabel}
+        </Button>
+      </div>
+    </div>
   )
 }

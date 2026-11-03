@@ -81,6 +81,78 @@ describe('RestoreStep', () => {
     expect(screen.getByText('手順2の方針の下書きを承認するか、やめてから足し戻してください。')).toBeTruthy()
   })
 
+  it('Claude の下書きがあるときに足し戻すと、画面の中で捨ててよいかを確かめ、「やめる」なら選んだ便も下書きも残る', () => {
+    act(() => {
+      useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '通学', schoolDaysOnly: false }] }, 'claude')
+    })
+    const draftId = useEditStore.getState().draft!.id
+    const browserConfirm = vi.spyOn(window, 'confirm')
+    render(<RestoreStep />)
+    const boxes = () => within(screen.getByRole('list', { name: '足し戻す便の候補' })).getAllByRole('checkbox') as HTMLInputElement[]
+    fireEvent.click(boxes()[1])
+    fireEvent.click(screen.getByRole('button', { name: '選んだ 1 便を足し戻す' }))
+
+    // ボタンの場所に確認が出る。まだ何も変えていない
+    const box = screen.getByRole('group', { name: 'Claude の下書きを捨てる確認' })
+    expect(box.textContent).toContain(`Claude の下書き ${draftId} を捨てて、この操作をしますか。`)
+    expect(screen.queryByRole('button', { name: '選んだ 1 便を足し戻す' })).toBeNull()
+    expect(useEditStore.getState().history).toHaveLength(1)
+
+    fireEvent.click(within(box).getByRole('button', { name: 'やめる' }))
+    expect(useEditStore.getState().draft?.id).toBe(draftId)
+    expect(useEditStore.getState().history).toHaveLength(1)
+    expect(boxes()[1].checked).toBe(true)
+    expect(screen.queryByRole('group', { name: 'Claude の下書きを捨てる確認' })).toBeNull()
+
+    // 「捨てて続ける」なら、Claude の下書きを捨てて足し戻す
+    fireEvent.click(screen.getByRole('button', { name: '選んだ 1 便を足し戻す' }))
+    fireEvent.click(within(screen.getByRole('group', { name: 'Claude の下書きを捨てる確認' })).getByRole('button', { name: '捨てて続ける' }))
+    expect(useEditStore.getState().draft).toBeNull()
+    expect(useEditStore.getState().history).toHaveLength(2)
+    expect(useEditStore.getState().versions.at(-1)?.plan.addBackTripIds).toEqual(['R2_0900_WK'])
+    expect(useEditStore.getState().draftNotices).toEqual([expect.objectContaining({ draftId, result: 'replaced' })])
+    expect(screen.getByRole('status').textContent).toContain('1 便を足し戻しました')
+    expect(boxes().every((b) => !b.checked)).toBe(true)
+    expect(browserConfirm).not.toHaveBeenCalled()
+  })
+
+  it('Claude の下書きがあるときに足し戻しを取り消すと、足し戻した便の欄で確かめ、確かめたあとで取り消す', () => {
+    act(() => {
+      useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '', schoolDaysOnly: false }] }, 'user')
+      useEditStore.getState().commit()
+      useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R2_0900_WK', reason: '', schoolDaysOnly: false }] }, 'claude')
+    })
+    render(<RestoreStep />)
+    const added = screen.getByRole('region', { name: '足し戻した便' })
+    fireEvent.click(within(added).getByRole('button', { name: 'R3_0730_WK の足し戻しを取り消す' }))
+    const box = within(added).getByRole('group', { name: 'Claude の下書きを捨てる確認' })
+    expect(useEditStore.getState().history).toHaveLength(2)
+    fireEvent.click(within(box).getByRole('button', { name: 'やめる' }))
+    expect(useEditStore.getState().history).toHaveLength(2)
+    expect(useEditStore.getState().draft).not.toBeNull()
+
+    fireEvent.click(within(added).getByRole('button', { name: 'R3_0730_WK の足し戻しを取り消す' }))
+    fireEvent.click(within(within(added).getByRole('group', { name: 'Claude の下書きを捨てる確認' })).getByRole('button', { name: '捨てて続ける' }))
+    expect(useEditStore.getState().history).toHaveLength(3)
+    expect(useEditStore.getState().draft).toBeNull()
+    expect(useEditStore.getState().versions.at(-1)?.plan.addBackTripIds).toEqual([])
+  })
+
+  it('確かめている間に Claude の下書きがなくなったら、確かめは残さず、元のボタンに戻る', () => {
+    act(() => {
+      useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '', schoolDaysOnly: false }] }, 'claude')
+    })
+    render(<RestoreStep />)
+    fireEvent.click(within(screen.getByRole('list', { name: '足し戻す便の候補' })).getAllByRole('checkbox')[1])
+    fireEvent.click(screen.getByRole('button', { name: '選んだ 1 便を足し戻す' }))
+    expect(screen.getByRole('group', { name: 'Claude の下書きを捨てる確認' })).toBeTruthy()
+    // 別の場所で Claude の下書きを承認した
+    fireEvent.click(screen.getByRole('button', { name: '承認する' }))
+    expect(screen.queryByRole('group', { name: 'Claude の下書きを捨てる確認' })).toBeNull()
+    expect(screen.getByRole('button', { name: '選んだ 1 便を足し戻す' })).toBeTruthy()
+    expect(useEditStore.getState().history).toHaveLength(2)
+  })
+
   it('Claude の足し戻しの下書きは、承認するまで履歴に入らず、承認すると足し戻した便に入る', () => {
     act(() => {
       useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '通学', schoolDaysOnly: false }] }, 'claude')

@@ -95,6 +95,12 @@ export interface EditState {
   takeDraftNotices: () => DraftNotice[]
   /** 読み込み直しで呼ぶ。履歴と下書きを捨てる */
   setBase: (base: BaseGtfs | null) => void
+  /**
+   * 下書きの検証の結果(issues)を、今の祝日一覧で作り直す。祝日一覧は下書きを作った(propose)あとに読めることがあり、
+   * 下書きの issues は propose のときに固定されるため。祝日の確かめ(holiday*)は warning・info なので、承認を止める判定は変わらない。
+   * 下書きが無い、方針を適用できない下書き、元に戻す下書きでは何もしない。祝日一覧が変わったときに、store が自分で呼ぶ(watchHolidays)
+   */
+  refreshIssues: () => void
 }
 
 export interface EditStoreDeps {
@@ -106,6 +112,11 @@ export interface EditStoreDeps {
    * 取り決めの EditStoreDeps に足したもの。省けば常に null
    */
   holidays?: () => HolidayList | null
+  /**
+   * 祝日一覧が変わったとき(あとから読めた、読み込み直した、読めなくなった)に onChange を呼ぶように、祝日の store を見張る。
+   * 下書きの issues を作り直すため(refreshIssues)。省けば見張らない
+   */
+  watchHolidays?: (onChange: () => void) => void
 }
 
 /** 日本時間(UTC+9)の年・月・日・時・分・秒(2桁に詰めた文字列) */
@@ -167,11 +178,19 @@ const NO_DRAFT = '承認する下書きがありません。'
 
 /** 編集の store を作る(テストでは時計と到達圏へのつなぎを差し替える) */
 export function createEditStore(deps: EditStoreDeps) {
-  return create<EditState>()((set, get) => {
+  const store = create<EditState>()((set, get) => {
     // 下書きの番号。読み込み直しても戻さない(Claude との会話で番号が重ならないように)
     let nextDraft = 1
     // 到達圏の store に最後に渡した値(同じものを続けて渡して、計算し直させないため)
     let published: { feed: GtfsFeed; draft: boolean } | null = null
+    // 今の下書きの issues を作ったときの祝日一覧(refreshIssues で、一覧が変わっていなければ作り直さないため)
+    let issuesBasis: HolidayList | null = null
+
+    /** 下書きの検証(validateEdit)。そのときの祝日一覧で作り、どの一覧で作ったかを覚える */
+    function issuesOf(base: BaseGtfs, result: Form2Result): ValidationIssue[] {
+      issuesBasis = deps.holidays?.() ?? null
+      return validateEdit(base.feed, result, issuesBasis)
+    }
 
     /** 今の状態の編集後のフィード。下書きがあれば下書きの結果、無ければ最後の版、履歴が空なら null */
     function editedNow(): EditedSource | null {
@@ -251,7 +270,7 @@ export function createEditStore(deps: EditStoreDeps) {
           record,
           outcome,
           diff: outcome.ok ? diffOf(base.feed, outcome.result) : null,
-          issues: outcome.ok ? validateEdit(base.feed, outcome.result, deps.holidays?.() ?? null) : [],
+          issues: outcome.ok ? issuesOf(base, outcome.result) : [],
         }
         set({ draft, draftNotices: noticesWith(previous, 'replaced') })
         publish()
@@ -335,8 +354,18 @@ export function createEditStore(deps: EditStoreDeps) {
         set({ base, history: [], versions: [], draft: null, draftNotices: [] })
         publish()
       },
+
+      refreshIssues() {
+        const { base, draft } = get()
+        if (!base || draft?.kind !== 'op' || !draft.outcome.ok) return
+        // 祝日の store の状態が変わっても、祝日一覧そのものが同じなら(読み込み中になっただけなど)作り直さない
+        if ((deps.holidays?.() ?? null) === issuesBasis) return
+        set({ draft: { ...draft, issues: issuesOf(base, draft.outcome.result) } })
+      },
     }
   })
+  deps.watchHolidays?.(() => store.getState().refreshIssues())
+  return store
 }
 
 /**
@@ -349,5 +378,11 @@ export const useEditStore = createEditStore({
   holidays: () => {
     const h = useHolidayStore.getState().holidays
     return h.status === 'ready' ? h.list : null
+  },
+  // 祝日一覧があとから読めたとき、方針の確かめ(下書き)の祝日の issue を今の一覧で作り直す
+  watchHolidays: (onChange) => {
+    useHolidayStore.subscribe((state, prev) => {
+      if (state.holidays !== prev.holidays) onChange()
+    })
   },
 })

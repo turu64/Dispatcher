@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { basePlan, smallFeed } from '../gtfs/edit/form2.fixture'
 import type { EditOp, PolicySettings } from '../gtfs/edit/ops'
+import type { HolidayList } from '../gtfs/holidays'
 import type { EditedSource } from './reach'
 import { blockingIssues, createEditStore, generatedAtOf, japanIso, lastVersion, type BaseGtfs } from './edit'
 
@@ -18,6 +19,17 @@ function policy(overrides: Partial<PolicySettings> = {}): EditOp {
 
 function addBack(...ids: string[]): EditOp {
   return { type: 'addBack', items: ids.map((tripId) => ({ tripId, reason: '通学', schoolDaysOnly: false })) }
+}
+
+/** 11/3 は平日の例外(WK,2)あり、11/23(月)は例外なし。小さなフィードの期間(〜11/30)を覆う */
+const HOLIDAYS: HolidayList = {
+  names: new Map([
+    ['20261103', '文化の日'],
+    ['20261123', '勤労感謝の日'],
+  ]),
+  first: '19550101',
+  coveredUntil: '20271231',
+  source: '内閣府「国民の祝日について」の祝日一覧(syukujitsu.csv)を加工して作成',
 }
 
 function setup() {
@@ -189,6 +201,89 @@ describe('useEditStore(createEditStore)', () => {
     expect([s.base, s.history, s.versions, s.draft, s.draftNotices]).toEqual([null, [], [], null, []])
     expect(onEdited).toHaveBeenLastCalledWith(null)
     expect(store.getState().propose(policy(), 'user')).toEqual({ ok: false, message: 'GTFS を読み込んでから編集してください。' })
+  })
+
+  describe('祝日一覧があとから読めたとき(下書きの確かめを作り直す)', () => {
+    /** 祝日一覧は変数で差し替える。祝日の store の代わりに、変わったことを知らせる関数を取り出す */
+    function setupWithHolidays() {
+      let current: HolidayList | null = null
+      let notify: () => void = () => {}
+      const store = createEditStore({
+        now: () => NOW,
+        onEdited: vi.fn(),
+        holidays: () => current,
+        watchHolidays: (onChange) => {
+          notify = onChange
+        },
+      })
+      store.getState().setBase({ feed: smallFeed(), zip: new ArrayBuffer(0), label: 'test.zip', sample: null })
+      const issues = () => {
+        const d = store.getState().draft
+        return d?.kind === 'op' ? d.issues : []
+      }
+      return {
+        store,
+        issues,
+        codes: () => issues().map((i) => i.code),
+        setHolidays(list: HolidayList | null) {
+          current = list
+          notify()
+        },
+      }
+    }
+
+    it('祝日一覧が無いまま作った下書きに、あとから読めた祝日の確かめが加わり、「読めない」は消える', () => {
+      const { store, codes, issues, setHolidays } = setupWithHolidays()
+      store.getState().propose(policy(), 'user')
+      expect(codes()).toContain('holidayListMissing')
+      expect(codes()).not.toContain('holidayWithoutException')
+      const before = store.getState().draft
+      const blockingBefore = blockingIssues(issues())
+
+      setHolidays(HOLIDAYS)
+      expect(codes()).not.toContain('holidayListMissing')
+      // 11/23(月)は祝日で、減便後の平日ダイヤが走る(例外なし)
+      expect(issues().find((i) => i.code === 'holidayWithoutException')?.examples.join()).toContain('20261123')
+      // 下書きそのもの(id・適用の結果・差)は変えない
+      const after = store.getState().draft
+      expect(after?.kind === 'op' && before?.kind === 'op' && after.id === before.id && after.outcome === before.outcome && after.diff === before.diff).toBe(true)
+      // 祝日の確かめは warning・info なので、承認を止める判定は変わらず、承認できる
+      expect(blockingIssues(issues())).toEqual(blockingBefore)
+      expect(store.getState().commit()).toEqual({ ok: true })
+    })
+
+    it('祝日一覧が読めなくなったら、また「読めない」に戻る。作り直した結果は propose のときと同じ', () => {
+      const { store, codes, issues, setHolidays } = setupWithHolidays()
+      setHolidays(HOLIDAYS)
+      store.getState().propose(policy(), 'user')
+      const withList = issues()
+      expect(codes()).toContain('holidayWithoutException')
+
+      setHolidays(null)
+      expect(codes()).toContain('holidayListMissing')
+      expect(codes()).not.toContain('holidayWithoutException')
+      setHolidays(HOLIDAYS)
+      expect(issues()).toEqual(withList)
+    })
+
+    it('祝日一覧そのものが同じなら(読み込み中の表示に変わっただけなど)、下書きを作り直さない', () => {
+      const { store, setHolidays } = setupWithHolidays()
+      setHolidays(HOLIDAYS)
+      store.getState().propose(policy(), 'user')
+      const draft = store.getState().draft
+      setHolidays(HOLIDAYS)
+      expect(store.getState().draft).toBe(draft)
+    })
+
+    it('下書きが無い、または適用できない方針の下書きでは、何も変えない', () => {
+      const { store, setHolidays } = setupWithHolidays()
+      setHolidays(HOLIDAYS)
+      expect(store.getState().draft).toBeNull()
+      store.getState().propose(policy({ replacementService: 'WK' }), 'user')
+      const failed = store.getState().draft
+      setHolidays(null)
+      expect(store.getState().draft).toBe(failed)
+    })
   })
 
   it('同じ編集後のフィードを続けて渡さない(到達圏を計算し直させない)', () => {

@@ -12,6 +12,7 @@ import {
   checkPolicy,
   planOf,
   policyReasonOf,
+  type EditRecord,
   type Form2Plan,
   type PolicyKind,
   type PolicyReason,
@@ -33,8 +34,8 @@ import { form2Texts, timingNotices, type ValidationIssue } from '@/gtfs/validate
 import { formatDateJa, fromInputDate, toInputDate, todayInJapan } from '@/lib/dates'
 import { blockingIssues, diffOf, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
-import { confirmReplaceClaudeDraft, draftActor, proposeAsUser } from './editActions'
-import { FromTo, IssueList, NoteList } from './editParts'
+import { draftActor, proposeAsUser, replaceClaudeDraftMessage } from './editActions'
+import { FromTo, InlineConfirm, IssueList, NoteList } from './editParts'
 import {
   ACTOR_LABELS,
   addBackRejections,
@@ -158,6 +159,10 @@ function PolicyForm({
   const [category, setCategory] = useState<PolicyReason['category']>(initialReason?.category ?? null)
   const [note, setNote] = useState(initialReason?.note ?? '')
   const [message, setMessage] = useState<string | null>(null)
+  // Claude の下書きを捨ててよいかを確かめている間の、その下書きの番号
+  const [confirmDraftId, setConfirmDraftId] = useState<string | null>(null)
+  const draft = useEditStore((s) => s.draft)
+  const confirmingReplace = confirmDraftId !== null && draft !== null && draftActor(draft) === 'claude' && draft.id === confirmDraftId
 
   const start = fromInputDate(startText)
   const end = indefinite ? null : fromInputDate(endText)
@@ -195,11 +200,17 @@ function PolicyForm({
   const hasError = problems.some((p) => p.severity === 'error')
   const periodMessage = !start ? '開始日を選んでください。' : !indefinite && !end ? '終了日を選んでください。' : null
 
-  function submit() {
+  function submit(replaceClaudeDraft = false) {
     if (!settings) return
     setMessage(null)
-    const r = proposeAsUser({ type: 'applyPolicy', settings, reason: { category, note: note.trim() } })
-    if (r !== null && r !== 'cancelled') setMessage(r)
+    const r = proposeAsUser({ type: 'applyPolicy', settings, reason: { category, note: note.trim() } }, { replaceClaudeDraft })
+    if (r.status === 'needsConfirm') {
+      // Claude の下書きを捨てることになる。画面の中で確かめてから進める
+      setConfirmDraftId(r.draft.id)
+      return
+    }
+    setConfirmDraftId(null)
+    if (r.status === 'failed') setMessage(r.message)
   }
 
   if (!input) {
@@ -216,6 +227,9 @@ function PolicyForm({
     <form
       className="flex flex-col gap-3"
       aria-label="減便の方針"
+      // ブラウザ標準の範囲検証(日付の min・max)で送信を止めない。範囲の外の日付は、checkPolicy の警告
+      // (periodStartClamped・periodEndClamped。入力の端にそろえる)でアプリ側が知らせる。min・max はカレンダーの案内として残す
+      noValidate
       onSubmit={(e) => {
         e.preventDefault()
         submit()
@@ -332,16 +346,26 @@ function PolicyForm({
           <AlertDescription>{message}</AlertDescription>
         </Alert>
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={!settings || hasError}>
-          対象便を確かめる
-        </Button>
-        {onCancel && (
-          <Button type="button" variant="outline" onClick={onCancel}>
-            変えずに戻る
+      {confirmingReplace && draft ? (
+        <InlineConfirm
+          label="Claude の下書きを捨てる確認"
+          message={replaceClaudeDraftMessage(draft)}
+          confirmLabel="捨てて続ける"
+          onConfirm={() => submit(true)}
+          onCancel={() => setConfirmDraftId(null)}
+        />
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" disabled={!settings || hasError}>
+            対象便を確かめる
           </Button>
-        )}
-      </div>
+          {onCancel && (
+            <Button type="button" variant="outline" onClick={onCancel}>
+              変えずに戻る
+            </Button>
+          )}
+        </div>
+      )}
     </form>
   )
 }
@@ -750,14 +774,23 @@ function RouteDiffRow({ route: r, diff }: { route: RouteDiff; diff: WeekdayDiff 
     <li className="border-b py-0.5" data-route={r.routeId}>
       <details>
         <summary className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto_auto_auto] items-baseline gap-x-2">
-          <span className="min-w-0 break-words">
-            {r.excluded && <Badge variant="outline" className="mr-1 px-1 py-0 text-[10px]">除</Badge>}
-            {r.vanishes && (
-              <Badge variant="destructive" className="mr-1 px-1 py-0 text-[10px]">
-                ⚠ 全曜日で便なし
-              </Badge>
+          {/* 印は系統名の下の行に置く(380px の幅で系統名が3行に折れないように) */}
+          <span className="min-w-0">
+            <span className="block break-words">{r.routeName}</span>
+            {(r.excluded || r.vanishes) && (
+              <span className="mt-0.5 flex flex-wrap gap-1">
+                {r.excluded && (
+                  <Badge variant="outline" className="px-1 py-0 text-[10px]">
+                    除
+                  </Badge>
+                )}
+                {r.vanishes && (
+                  <Badge variant="destructive" className="px-1 py-0 text-[10px]">
+                    ⚠ 全曜日で便なし
+                  </Badge>
+                )}
+              </span>
             )}
-            {r.routeName}
           </span>
           <FromTo before={r.before} after={r.after} emphasizeDecrease={r.after < r.before} />
           <span className="text-right tabular-nums">
@@ -998,17 +1031,35 @@ function PolicySummary({
 function EditHistoryPanel() {
   const history = useEditStore((s) => s.history)
   const draft = useEditStore((s) => s.draft)
+  const draftId = draft?.id ?? null
+  // 押したボタンの場所に出す確認(ブラウザ標準の確認ダイアログは使わない)。
+  // 押したときの履歴(store は変えるたびに新しい配列にする)と下書きの id を覚え、どちらかが変わったら確認を消す。
+  // 隠すだけにすると、件数が同じに戻ったときや下書きが無くなったときに、押していない確認がまた出てしまう
+  const [pending, setPending] = useState<{ kind: 'undo' | 'undoAll'; history: EditRecord[]; draftId: string | null } | null>(null)
+  if (pending && (pending.history !== history || pending.draftId !== draftId)) setPending(null)
   const undoDraft = draft?.kind === 'undo' ? draft : null
   if (history.length === 0 && !undoDraft) return null
 
+  // Claude の下書きがあれば、元に戻す操作はそれを捨てる(確かめてから)
+  const claudeDraft = draft && draftActor(draft) === 'claude' ? draft : null
+  const confirming =
+    pending &&
+    pending.history === history &&
+    pending.draftId === draftId &&
+    history.length > 0 &&
+    (pending.kind === 'undoAll' || claudeDraft !== null)
+      ? pending.kind
+      : null
   const undo = () => {
-    if (!confirmReplaceClaudeDraft()) return
-    useEditStore.getState().undo()
+    if (claudeDraft) setPending({ kind: 'undo', history, draftId })
+    else useEditStore.getState().undo()
   }
-  const undoAll = () => {
-    if (!confirmReplaceClaudeDraft()) return
-    if (!window.confirm('すべての編集を戻して、読み込んだ GTFS のままにしますか。')) return
-    useEditStore.getState().undoAll()
+  const undoAll = () => setPending({ kind: 'undoAll', history, draftId })
+  const cancel = () => setPending(null)
+  const confirm = () => {
+    setPending(null)
+    if (confirming === 'undoAll') useEditStore.getState().undoAll()
+    else useEditStore.getState().undo()
   }
 
   return (
@@ -1036,14 +1087,37 @@ function EditHistoryPanel() {
           </div>
         </div>
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" size="sm" disabled={history.length === 0} onClick={undo}>
-          元に戻す
-        </Button>
-        <Button type="button" variant="outline" size="sm" disabled={history.length === 0} onClick={undoAll}>
-          すべて戻す
-        </Button>
-      </div>
+      {confirming === 'undoAll' ? (
+        <InlineConfirm
+          label="すべて戻す確認"
+          message={
+            <>
+              本当にすべて戻しますか。すべての編集({history.length} 件)を戻して、読み込んだ GTFS のままにします。
+              {claudeDraft && <>Claude の下書き {claudeDraft.id} も捨てます。</>}
+            </>
+          }
+          confirmLabel="すべて戻す"
+          onConfirm={confirm}
+          onCancel={cancel}
+        />
+      ) : confirming === 'undo' && claudeDraft ? (
+        <InlineConfirm
+          label="Claude の下書きを捨てる確認"
+          message={replaceClaudeDraftMessage(claudeDraft)}
+          confirmLabel="捨てて続ける"
+          onConfirm={confirm}
+          onCancel={cancel}
+        />
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" disabled={history.length === 0} onClick={undo}>
+            元に戻す
+          </Button>
+          <Button type="button" variant="outline" size="sm" disabled={history.length === 0} onClick={undoAll}>
+            すべて戻す
+          </Button>
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">{UNDO_NOTE}</p>
     </section>
   )

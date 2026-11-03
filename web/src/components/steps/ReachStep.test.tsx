@@ -201,6 +201,21 @@ describe('減便の前後の比較', () => {
     expect(text).not.toContain('下書き')
   })
 
+  it('時間帯の列は折り返さない(380px の幅で「6〜9時」が「6〜9 / 時」に折れないように)', () => {
+    const whole = renderToString(<ReachSummaryTable snapshot={compared(false)} selectedHour={6} invalidStops={0} />).replace(/<!-- -->/g, '')
+    // 前後の比較の表(見出し「減便の前後」から後ろ)だけを見る
+    const html = whole.slice(whole.indexOf('減便の前後'))
+    expect(html.length).toBeLessThan(whole.length)
+    const label = html.match(/<(th|td)[^>]*class="([^"]*)"[^>]*>(6〜9時)<\/\1>/)
+    expect(label).not.toBeNull()
+    expect(label![2]).toContain('whitespace-nowrap')
+    expect(label![2]).not.toContain('whitespace-normal')
+    // 見出しの「時間帯」も同じ
+    const head = html.match(/<th[^>]*class="([^"]*)"[^>]*>時間帯<\/th>/)
+    expect(head![1]).toContain('whitespace-nowrap')
+    expect(head![1]).not.toContain('whitespace-normal')
+  })
+
   it('下書きのときは、表の見出しに「下書き」と出す', () => {
     const text = textOf(renderToString(<ReachSummaryTable snapshot={compared(true)} selectedHour={6} invalidStops={0} />))
     expect(text).toContain('減便の前後|下書き|')

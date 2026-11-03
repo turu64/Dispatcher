@@ -88,7 +88,6 @@ beforeEach(() => {
   URL.createObjectURL = vi.fn(() => 'blob:dispatcher-test')
   URL.revokeObjectURL = vi.fn()
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
-  vi.spyOn(window, 'confirm').mockImplementation(() => true)
   writeGtfsZip.mockClear()
 })
 

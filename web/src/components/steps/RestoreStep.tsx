@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import StepSection from '@/components/StepSection'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createTripBriefer, restoreTotals, type TripBrief } from '@/gtfs/edit/diff'
 import type { Form2Result } from '@/gtfs/edit/form2'
-import { addBackReasons, planOf, type Form2Plan } from '@/gtfs/edit/ops'
+import { addBackReasons, planOf, type EditOp, type Form2Plan } from '@/gtfs/edit/ops'
 import {
   compareByHints,
   createRestoreHinter,
@@ -16,8 +16,8 @@ import {
   type RestoreHintDetail,
 } from '@/gtfs/edit/restore'
 import { diffOf, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
-import { draftActor, proposeAndCommit } from './editActions'
-import { NoteList } from './editParts'
+import { draftActor, proposeAndCommit, replaceClaudeDraftMessage } from './editActions'
+import { InlineConfirm, NoteList } from './editParts'
 import { ACTOR_LABELS, addBackRejections, RESTORE_DUTY_NOTE, restoreTotalsText, SCHOOL_HOLIDAY_NOTE, shortDateTime } from './editText'
 
 /** 一度に並べる候補の数(「さらに表示」で増やす) */
@@ -82,6 +82,8 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   const [reason, setReason] = useState('')
   const [limit, setLimit] = useState(PAGE)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
+  // Claude の下書きを捨ててよいかを確かめている操作(画面の中で確かめる。ブラウザ標準の確認ダイアログは使わない)
+  const [pending, setPending] = useState<{ op: EditOp; done: string; draftId: string; from: 'add' | 'withdraw' } | null>(null)
 
   const routes = useMemo(() => {
     const m = new Map<string, string>()
@@ -113,21 +115,44 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   const policyDraft = draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draftActor(draft) === 'user'
   const claudeDraft = draft && draftActor(draft) === 'claude' && draft.kind === 'op' && draft.record.op.type !== 'applyPolicy' ? draft : null
 
-  function run(op: Parameters<typeof proposeAndCommit>[0], done: string) {
+  function run(op: EditOp, done: string, from: 'add' | 'withdraw', replaceClaudeDraft = false): boolean {
     setMessage(null)
-    const r = proposeAndCommit(op)
-    if (r === 'cancelled') return
-    if (r !== null) setMessage({ ok: false, text: r })
+    setPending(null)
+    const r = proposeAndCommit(op, { replaceClaudeDraft })
+    if (r.status === 'needsConfirm') {
+      setPending({ op, done, draftId: r.draft.id, from })
+      return false
+    }
+    if (r.status === 'failed') setMessage({ ok: false, text: r.message })
     else setMessage({ ok: true, text: done })
+    return true
   }
+
+  // 確かめている間に Claude の下書きが無くなった(承認・やめるなど)ら、確かめは引き継がない
+  // (足し戻し以外の Claude の下書き、方針の提案や元に戻す提案も、足し戻しで捨てることになる)
+  const confirming = pending && draft && draftActor(draft) === 'claude' && draft.id === pending.draftId ? pending : null
+  const confirmBox = (from: 'add' | 'withdraw') =>
+    confirming && confirming.from === from ? (
+      <InlineConfirm
+        label="Claude の下書きを捨てる確認"
+        message={replaceClaudeDraftMessage({ id: confirming.draftId })}
+        confirmLabel="捨てて続ける"
+        onConfirm={() => {
+          if (run(confirming.op, confirming.done, from, true) && from === 'add') setSelected([])
+        }}
+        onCancel={() => setPending(null)}
+      />
+    ) : null
 
   function addBack() {
     if (selectedNow.length === 0) return
-    run(
+    const done = run(
       { type: 'addBack', items: selectedNow.map((tripId) => ({ tripId, reason: reason.trim(), schoolDaysOnly: false })) },
       `${selectedNow.length} 便を足し戻しました。`,
+      'add',
     )
-    setSelected([])
+    // 確かめの途中(まだ足し戻していない)なら、選んだ便は残す
+    if (done) setSelected([])
   }
 
   return (
@@ -224,9 +249,11 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         <Input id="restore-reason" placeholder="例:高校の通学" value={reason} onChange={(e) => setReason(e.target.value)} />
       </div>
       {policyDraft && <p className="text-sm text-destructive">手順2の方針の下書きを承認するか、やめてから足し戻してください。</p>}
-      <Button type="button" className="self-start" disabled={selectedNow.length === 0 || policyDraft} onClick={addBack}>
-        選んだ {selectedNow.length} 便を足し戻す
-      </Button>
+      {confirmBox('add') ?? (
+        <Button type="button" className="self-start" disabled={selectedNow.length === 0 || policyDraft} onClick={addBack}>
+          選んだ {selectedNow.length} 便を足し戻す
+        </Button>
+      )}
       {message && (
         <Alert variant={message.ok ? 'default' : 'destructive'} role={message.ok ? 'status' : 'alert'}>
           <AlertDescription>{message.text}</AlertDescription>
@@ -238,7 +265,8 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         version={version}
         reasons={addBackReasons(history)}
         disabled={policyDraft}
-        onWithdraw={(tripId) => run({ type: 'withdrawAddBack', tripIds: [tripId] }, '足し戻しを取り消しました。')}
+        confirm={confirmBox('withdraw')}
+        onWithdraw={(tripId) => run({ type: 'withdrawAddBack', tripIds: [tripId] }, '足し戻しを取り消しました。', 'withdraw')}
       />
       <NoteList items={[SCHOOL_HOLIDAY_NOTE, RESTORE_DUTY_NOTE]} label="足し戻しの注意" />
     </div>
@@ -277,12 +305,15 @@ function AddedBackList({
   version,
   reasons,
   disabled,
+  confirm,
   onWithdraw,
 }: {
   base: BaseGtfs
   version: Form2Result
   reasons: ReturnType<typeof addBackReasons>
   disabled: boolean
+  /** Claude の下書きを捨ててよいかの確かめ(取り消すボタンを押したとき) */
+  confirm: ReactNode
   onWithdraw: (tripId: string) => void
 }) {
   const report = version.report.addBack
@@ -302,6 +333,7 @@ function AddedBackList({
   return (
     <section className="flex flex-col gap-2 border-t pt-2" aria-label="足し戻した便">
       <h3 className="text-sm font-medium">足し戻した便({report.accepted.length} 便)</h3>
+      {confirm}
       <p className="text-xs">{restoreTotalsText(totals)}</p>
       <ul className="flex flex-col divide-y rounded-md border text-xs">
         {report.accepted.map((id) => {

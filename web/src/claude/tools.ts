@@ -29,7 +29,7 @@ import type { HolidayList } from '@/gtfs/holidays'
 import type { GtfsFeed } from '@/gtfs/load'
 import { timingNotices, validateEdit, type ValidationIssue } from '@/gtfs/validate/edit'
 import { formatPercent } from '@/reach/summary'
-import { blockingIssues, diffOf, lastVersion, type Draft, type EditState } from '@/store/edit'
+import { blockingIssues, diffOf, draftName, lastVersion, type Draft, type EditState } from '@/store/edit'
 import type { ReachSnapshot, StepHours } from '@/store/reach'
 
 // ---- ツールの名前と項目(claude_tools.json と同じ) ----
@@ -91,8 +91,8 @@ export const INPUT_LIMITS = {
 
 /** ツールの動きとして画面に出す文(docs/interfaces-1105.md §6.4) */
 export const TOOL_LABELS: Record<ToolName, string> = {
-  apply_policy: '方針の下書きを作っています…',
-  add_back_trips: '足し戻しの下書きを作っています…',
+  apply_policy: '減便の方針の下書きを作っています…',
+  add_back_trips: '便を平日に戻す下書きを作っています…',
   undo_edit: '元に戻す下書きを作っています…',
   summarize_impact: '影響を計算しています…',
   search_trips: '便を探しています…',
@@ -181,19 +181,21 @@ export interface ToolOutcome {
 export const MAX_RESULT_BYTES = 20 * 1024
 
 const DRAFT_NOTE = '利用者の承認待ちです。承認されるまで GTFS は変わりません。'
-const NO_BASE = 'GTFS が読み込まれていません。利用者に、手順1で GTFS を読み込むよう伝えてください。'
-const NO_SERVICES = '画面の方針の欄で、平日と土曜(日祝)の service を選んでください'
-const NO_POLICY = '減便の方針が承認されていないので、使えません。先に apply_policy の下書きを作り、利用者に承認してもらってください。'
-const NO_EDIT = '方針の下書きも承認済みの方針も無いので、比べる編集後の GTFS がありません。先に apply_policy を使ってください。'
-const NO_REACH_HINTS = '到達圏の比較がまだ無いので、到達圏を使う手がかりは出していません'
-const REACH_BUSY_HINTS = '到達圏の計算が終わらなかったので、到達圏を使う手がかりは出していません。しばらくしてから探し直してください'
+const NO_BASE = 'GTFS が読み込まれていません。利用者に、手順1「読み込み」で GTFS を読み込むよう伝えてください。'
+const NO_SERVICES =
+  '手順3「減便の方針」で、入れ替え元のダイヤ(平日)と入れ替えに使うダイヤ(土曜/日祝)の service を選んでください。'
+const NO_POLICY = '減便の方針が承認されていないため、使えません。先に apply_policy の下書きを作り、利用者に承認してもらってください。'
+const NO_EDIT =
+  '減便の方針の下書きも承認済みの減便の方針もないため、比較する減便後の GTFS がありません。先に apply_policy を使ってください。'
+const NO_REACH_HINTS = '到達圏の比較がまだないため、到達圏を使う判断材料は出していません。'
+const REACH_BUSY_HINTS = '到達圏の計算が終わらなかったため、到達圏を使う判断材料は出していません。しばらくしてから探し直してください。'
 
 const NO_FACILITY_HINTS_WITHOUT_REACH =
-  '学校・病院の手がかり(nearFacility・nearby_facilities)も、到達圏の比較ができてから出します(徒歩圏の距離に到達圏の条件を使うため)'
+  '学校・病院の判断材料(nearFacility・nearby_facilities)も、到達圏の比較ができてから出します(徒歩圏の距離に到達圏の条件を使うため)。'
 const NO_FACILITY_DATA =
-  '前提情報の学校・病院の参照データを読めていないので、学校・病院の手がかり(nearFacility・nearby_facilities)は出していません(該当が無いという意味ではありません)'
+  '手順2「前提情報」の学校・病院の参照データを読み込めていないため、学校・病院の判断材料(nearFacility・nearby_facilities)は出していません(該当がないという意味ではありません)。'
 const FACILITY_NOTE =
-  'nearby_facilities は、便の停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)の学校と入院設備のある病院(国土数値情報。距離はコードが出したもの)のうち、施設ごとの時間帯の窓に当たるもので、便ごとに3件まで(省いた数は nearby_facilities_omitted)。窓に当たらず徒歩圏にあるだけの施設は、数だけを nearby_without_match に書く。matches は窓に当たる停留所と時刻(「07:40着 学校前」の形。着・発は窓の向き)。時間帯の窓は、前提情報で調べた外来の受付時間・始業・終業の時刻をコードが読めた施設ではその時刻から決め(病院は受付開始の30分前〜午前の受付終了に着く・午前の受付終了〜最後の受付終了の2時間後に出る、学校は始業の1時間前〜始業に着く・終業〜終業の2時間後に出る)、窓と根拠の時刻を window に書く(「着 7:30〜11:30・発 11:30〜17:15(調べた外来の受付 8:00〜11:30・13:00〜15:15)」の形)。window の無い施設と、window で既定と書いた向きは既定の窓(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)。並びは priority_rank(重要拠点の優先順位。1 が最も高い)、距離の順。facility_research は、返した便の近くの施設のうち調べたもの(10 件まで。出典 URL と確認日時つきで、その後に変わっていることがある)'
+  'nearby_facilities は、便の停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)の学校と入院設備のある病院(国土数値情報。距離はコードが出したもの)のうち、施設ごとの時間帯の窓に当たるもので、便ごとに3件まで(省いた数は nearby_facilities_omitted)。窓に当たらず徒歩圏にあるだけの施設は、数だけを nearby_without_match に書く。matches は窓に当たる停留所と時刻(「07:40着 学校前」の形。着・発は窓の向き)。時間帯の窓は、前提情報の調査で調べた外来の受付時間・始業・終業の時刻をコードが読めた施設ではその時刻から決め(病院は受付開始の30分前〜午前の受付終了に着く・午前の受付終了〜最後の受付終了の2時間後に出る、学校は始業の1時間前〜始業に着く・終業〜終業の2時間後に出る)、窓と根拠の時刻を window に書く(「着 7:30〜11:30・発 11:30〜17:15(調べた外来の受付 8:00〜11:30・13:00〜15:15)」の形)。window のない施設と、window で既定と書いた向きは既定の窓(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)。並びは priority_rank(重要拠点の優先順位。1 が最も高い)、距離の順。facility_research は、返した便の近くの施設のうち調べたもの(10 件まで。出典 URL と確認日時つきで、その後に変わっていることがある)。'
 
 /** search_trips の便ごとに出す施設の数の上限(結果の大きさを抑える) */
 const MAX_FACILITIES_PER_TRIP = 3
@@ -258,12 +260,12 @@ function slashDate(date: string): string {
 
 /** 到達圏を使う手がかりを、どの日付の比較から出したか */
 function reachDateNote(date: string): string {
-  return `到達圏を使う手がかり(onlyServiceAtStop・restoresLostCells)は、比較の日付 ${slashDate(date)} の到達圏の前後の比較から出しています`
+  return `到達圏を使う判断材料(onlyServiceAtStop・restoresLostCells)は、比較する日付 ${slashDate(date)} の減便前後の到達圏の比較から出しています。`
 }
 
 /** 比較の日付に平日の service が走らないので、どの便にも到達圏を使う手がかりが出ない(「該当なし」ではない) */
 function reachNotRunningNote(date: string): string {
-  return `比較の日付 ${slashDate(date)} は平日ダイヤの運行日ではないので、到達圏を使う手がかり(onlyServiceAtStop・restoresLostCells)は出していません(該当が無いという意味ではありません)。利用者に、到達圏を比べる日を平日にするよう伝えてください`
+  return `比較する日付 ${slashDate(date)} は平日ダイヤの運行日ではないため、到達圏を使う判断材料(onlyServiceAtStop・restoresLostCells)は出していません(該当がないという意味ではありません)。利用者に、比較する日付を平日にするよう伝えてください。`
 }
 
 export function byteLength(text: string): number {
@@ -293,7 +295,7 @@ export function fitResult(result: Record<string, unknown>, lists: readonly strin
       cut++
       copy[key] = list
       copy.truncated = cut
-      copy.truncated_note = `結果が 20KB を超えたので、一覧の後ろから ${cut} 件を省きました。条件を絞って探し直してください。`
+      copy.truncated_note = `結果が 20KB を超えたため、一覧の後ろから ${cut} 件を省きました。条件を絞って探し直してください。`
       text = JSON.stringify(copy)
       if (byteLength(text) <= MAX_RESULT_BYTES) return text
     }
@@ -316,7 +318,7 @@ export function errorOutcome(message: string): ToolOutcome {
 
 /** 下書きが承認待ちのときの文(docs/interfaces-1104.md §10) */
 export function pendingDraftMessage(id: string): string {
-  return `下書き ${id} が承認待ちです。利用者が承認するか、やめるまで、次の編集はできません`
+  return `${draftName(id)} が承認待ちです。利用者が「承認する」か「やめる」を押すまで、次の編集はできません。`
 }
 
 // ---- 入力の確かめ(strict が無いので、すべてここで行う。§6.3) ----
@@ -328,7 +330,7 @@ function objectOf(input: unknown, keys: readonly string[], name = '入力'): Rec
   if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new InputError(`${name}がオブジェクトではありません。`)
   const o = input as Record<string, unknown>
   const missing = keys.filter((k) => !Object.hasOwn(o, k))
-  if (missing.length > 0) throw new InputError(`${name}に ${missing.join('・')} がありません(使わない項目も null か空の値で入れてください)。`)
+  if (missing.length > 0) throw new InputError(`${name}に ${missing.join('・')} がありません。使わない項目も null か空の値で入れてください。`)
   const unknown = Object.keys(o).filter((k) => !keys.includes(k))
   if (unknown.length > 0) {
     const allowed = keys.length > 0 ? `使える項目は ${keys.join('・')} だけです` : '項目は入れないでください(空のオブジェクト)'
@@ -355,7 +357,7 @@ function nullableStringOf(value: unknown, name: string, maxChars?: number): stri
 function stringArrayOf(value: unknown, name: string, maxItems: number, nullable: boolean): string[] | null {
   if (value === null && nullable) return null
   if (!Array.isArray(value) || value.some((r) => typeof r !== 'string')) {
-    throw new InputError(nullable ? `${name} は文字列の配列か null にしてください。` : `${name} は文字列の配列にしてください(無ければ空の配列)。`)
+    throw new InputError(nullable ? `${name} は文字列の配列か null にしてください。` : `${name} は文字列の配列にしてください(なければ空の配列)。`)
   }
   if (value.length > maxItems) throw new InputError(`${name} は ${maxItems} 件までにしてください(${value.length} 件でした)。`)
   return value as string[]
@@ -483,7 +485,7 @@ function draftSummary(diff: WeekdayDiff, result: Form2Result, issues: readonly V
 function draftNote(issues: readonly ValidationIssue[]): string {
   const blocking = blockingIssues(issues)
   if (blocking.length === 0) return DRAFT_NOTE
-  return `${DRAFT_NOTE} ただし、検証でエラーがあるため、このままでは承認できません。利用者に、画面で下書きを「やめる」よう伝えてください。`
+  return `${DRAFT_NOTE} ただし、検証でエラーがあるため、このままでは承認できません。利用者に、画面で下書きの「やめる」を押すよう伝えてください。`
 }
 
 /** 便の要約(始発の時刻・系統・始発 → 終着)。足し戻しの結果で、Claude が思っていた便か確かめるため */
@@ -621,7 +623,7 @@ function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
   const problems = checkPolicy(base.feed, settings)
   const errors = problems.filter((p) => p.severity === 'error')
   if (errors.length > 0) {
-    return fail(`この方針は適用できません。${errors.map((p) => p.message).join(' ')}`, {
+    return fail(`この減便の方針は適用できません。${errors.map((p) => p.message).join(' ')}`, {
       services: { weekday, replacement },
     })
   }
@@ -642,7 +644,7 @@ function draftResult(baseFeed: GtfsFeed, draft: Draft, extra: Record<string, unk
   if (draft.kind !== 'op') throw new Error('編集の下書きではありません。')
   if (!draft.outcome.ok) {
     return fail(
-      `下書き ${draft.id} を作りましたが、適用できませんでした(${draft.outcome.message})。この下書きは承認できないので、利用者に、画面で下書きを「やめる」よう伝えてください。`,
+      `${draftName(draft.id)} を作りましたが、適用できませんでした(${draft.outcome.message})。この下書きは承認できないため、利用者に、画面で下書きの「やめる」を押すよう伝えてください。`,
       { draft_id: draft.id },
       info,
     )
@@ -699,7 +701,7 @@ function addBackTrips(input: unknown, deps: ToolDeps): ToolOutcome {
   const invalid = items.filter((i) => !weekdayIds.has(i.tripId)).map((i) => i.tripId)
   if (invalid.length > 0) {
     return fail(
-      `基準の GTFS の平日の便(feed が base)ではない trip_id があります(${invalid.join('、')})。search_trips の scope removed か base_weekday で、feed が base の便の trip_id を使ってください。下書きは作っていません。`,
+      `減便前の GTFS(feed が base)の平日の便ではない trip_id があります(${invalid.join('、')})。search_trips の scope removed か base_weekday で、feed が base の便の trip_id を使ってください。下書きは作っていません。`,
     )
   }
 
@@ -803,7 +805,7 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
   if (date !== null && date !== now.date) {
     const err = now.setDate(date)
     if (err) return fail(err)
-    notes.push(`画面の比べる日を ${date} にしました。`)
+    notes.push(`画面の比較する日付を ${date} にしました。`)
   }
   if (step !== null && step !== reach.getState().stepHours) {
     reach.getState().setStepHours(step)
@@ -819,7 +821,9 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
   const s = reach.getState()
   if (s.error) return fail(`到達圏を計算できませんでした(${s.error})。`)
   const snap = s.snapshot
-  if (!snap || !snap.baseline || !snap.comparison) return fail('到達圏の前後の比較がまだできていません。利用者に、到達圏の手順で減便の前後を確かめるよう伝えてください。')
+  if (!snap || !snap.baseline || !snap.comparison) {
+    return fail('到達圏の減便前後の比較がまだできていません。利用者に、手順4「影響(到達圏)」で減便の前後を確かめるよう伝えてください。')
+  }
 
   const total = snap.baseline.summary.coverableCells
   const totalPop = snap.baseline.summary.coverablePopulation
@@ -867,9 +871,9 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
       add_back: result && result.report.addBack.accepted.length > 0 ? totalsJson(state.base.feed, result.report.addBack.accepted) : null,
       notes: [
         ...notes,
-        'セルは 125m 四方。外れる割合の分母は、基準の GTFS で到達できる見込みのあるセル(coverable_cells)です。',
+        '区画(セル)は 125m 四方です。到達圏から外れる割合の分母は、減便前の GTFS で徒歩圏に停留所・駅がある区画(coverable_cells)です。',
         '推計人口は令和2年国勢調査のメッシュ人口から推計した値です。',
-        'scope が feed の停留所・系統は、出力のどの日にも便が来ません。day はこの日だけ便が無くなります。',
+        'scope が feed の停留所・系統は、出力のどの日にも便が来ません。day はこの日だけ便がなくなります。',
       ],
     },
     ['zero_service_routes'],
@@ -938,7 +942,7 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
   }
   const basis = basisOf(state)
   const result = basis.result
-  if (!result && scope !== 'base_weekday') return fail(`${NO_EDIT}(scope base_weekday なら、基準の平日の便を探せます)`)
+  if (!result && scope !== 'base_weekday') return fail(`${NO_EDIT} scope が base_weekday なら、減便前の平日の便を探せます。`)
 
   const plan = result?.plan ?? null
   const diff = result ? diffOf(base.feed, result) : null
@@ -1039,9 +1043,9 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
     }
   })
   if (scope === 'removed' || scope === 'base_weekday') {
-    notes.push('lost_cells は、この便だけを足し戻したときに戻るセルの数と推計人口です(ほかの便の足し戻しとの重なりは考えていません)。')
+    notes.push('lost_cells は、この便だけを平日に戻したときに到達圏に戻る区画(セル)の数と推計人口です(ほかの便を平日に戻したときとの重なりは考えていません)。')
   }
-  notes.push('trip_id は feed とあわせて読んでください(写した便は、消える基準の便と同じ trip_id のことがあります)。')
+  notes.push('trip_id は feed とあわせて読んでください。加わる便(feed が edited)は、なくなる減便前の便(feed が base)と同じ trip_id のことがあります。')
   const body: Record<string, unknown> = {
     status: 'ok',
     scope,
@@ -1065,7 +1069,7 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
     body.facility_research = kept
     body.facility_research_omitted = research.length - kept.length
     notes.push(
-      `結果が 20KB を超えたので、facility_research(調べた施設の結果)の後ろから ${research.length - kept.length} 件を省きました。nearby_facilities の target_id の結果は get_research_results で読めます。`,
+      `結果が 20KB を超えたため、facility_research(調べた施設の結果)の後ろから ${research.length - kept.length} 件を省きました。nearby_facilities の target_id の結果は get_research_results で読めます。`,
     )
   }
   return ok(body, ['trips'])
@@ -1089,7 +1093,7 @@ function runValidation(input: unknown, deps: ToolDeps): ToolOutcome {
   const base = state.base
   if (!base) return fail(NO_BASE)
   const basis = basisOf(state)
-  if (!basis.result) return fail(basis.kind === 'draft' ? '元に戻す下書きを承認すると編集が無くなるので、検証するものがありません。' : NO_EDIT)
+  if (!basis.result) return fail(basis.kind === 'draft' ? '元に戻す下書きを承認すると編集がなくなるため、検証するものがありません。' : NO_EDIT)
   const draft = state.draft
   const issues =
     draft?.kind === 'op' && draft.outcome.ok && draft.outcome.result === basis.result
@@ -1098,7 +1102,7 @@ function runValidation(input: unknown, deps: ToolDeps): ToolOutcome {
   const timing = timingNotices(basis.result, deps.today())
   const errors = issues.filter((i) => i.severity === 'error')
   const notes: string[] = []
-  if (basis.kind === 'draft') notes.push(`下書き ${basis.draftId} を検証しました。下書きがある間は出力できません。利用者が承認してから出力します。`)
+  if (basis.kind === 'draft') notes.push(`${draftName(basis.draftId ?? '')} を検証しました。承認待ちの下書きがある間は出力できません。利用者が承認してから出力します。`)
   return ok(
     {
       status: 'ok',

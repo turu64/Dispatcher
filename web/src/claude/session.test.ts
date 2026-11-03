@@ -143,10 +143,10 @@ describe('同じ id のイベントを2回受け取っても1回だけ扱い、�
   it('取っ手が使えない(404・410)なら、つなぎ直さずに取っ手を捨てて知らせる', async () => {
     const t = setup()
     await t.session.start()
-    t.openFailures.push(new ClaudeRequestError(410, 'AI との会話は終わっています。新しく始めます'))
+    t.openFailures.push(new ClaudeRequestError(410, 'AI との会話は終わっています。新しく始めます。'))
     t.last().end()
     await vi.waitFor(() => expect(t.of('lost')).toHaveLength(1))
-    expect(t.of('lost')[0].message).toBe('AI との会話は終わっています。新しく始めます')
+    expect(t.of('lost')[0].message).toBe('AI との会話は終わっています。新しく始めます。')
     expect(t.session.handle).toBeNull()
     expect(t.streams).toHaveLength(1)
     // 次は新しいセッション
@@ -225,7 +225,7 @@ describe('tool_call を順に実行し、まとめて tool_results で送る', (
 
   it('1回の返答の2つ目の編集のツールは実行せず、下書きが承認待ちと答える', async () => {
     const runTool = vi.fn(async (name: string): Promise<ToolOutcome> => {
-      if (name === 'apply_policy') return { content: '{"status":"draft","draft_id":"d1"}', isError: false, draft: { id: 'd1', kind: 'op' } }
+      if (name === 'apply_policy') return { content: '{"status":"draft","draft_id":"1"}', isError: false, draft: { id: '1', kind: 'op' } }
       return { content: '{"status":"ok"}', isError: false }
     })
     const t = setup({ runTool })
@@ -235,7 +235,7 @@ describe('tool_call を順に実行し、まとめて tool_results で送る', (
     expect(runTool.mock.calls.map((c) => c[0])).toEqual(['apply_policy', 'run_validation'])
     const results = (t.posts[0].body as { results: { text: string; is_error: boolean }[] }).results
     expect(results[1].is_error).toBe(true)
-    expect(results[1].text).toContain('下書き d1 が承認待ちです')
+    expect(results[1].text).toContain('下書き #1 が承認待ちです')
     // 次の返答では、また1つ目の編集のツールを実行する
     t.last().push(call('c4', 'undo_edit'))
     await vi.waitFor(() => expect(t.posts).toHaveLength(2))
@@ -408,7 +408,7 @@ describe('終える', () => {
   it('401 なら合言葉が違うと知らせる', async () => {
     const t = setup()
     await t.session.start()
-    t.postFailures.push(new ClaudeRequestError(401, '合言葉が違います。'))
+    t.postFailures.push(new ClaudeRequestError(401, '認証コードが違います。'))
     await expect(t.session.sendMessage([{ type: 'text', text: 'x' }])).rejects.toMatchObject({ status: 401 })
     expect(t.of('unauthorized')).toHaveLength(1)
     expect(t.session.handle).toBe('h1')

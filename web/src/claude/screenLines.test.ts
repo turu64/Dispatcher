@@ -52,13 +52,13 @@ describe('[画面の状態] はセッションの最初の発言と、変わっ�
     expect(send()).toEqual([
       '[画面の状態] 今日は 2026年11月4日(水)です(日本時間)。',
       '[画面の状態] 読み込んだ GTFS:道北バス(有効期間 2026年10月1日〜2027年3月31日)。平日の service:WK、土曜:SA、日祝:未選択。',
-      '[画面の状態] 到達圏を比べる日:2026年11月10日(火)、時間帯の幅:3時間。',
+      '[画面の状態] 比較する日付:2026年11月10日(火)、時間帯の幅:3時間。',
     ])
     expect(send()).toEqual([])
     screen = { ...screen, reach: { date: '20261111', stepHours: 1 } }
     // 送れなかった(commit しない)
-    expect(tracker.prepare().lines).toEqual(['[画面の状態] 到達圏を比べる日:2026年11月11日(水)、時間帯の幅:1時間。'])
-    expect(send()).toEqual(['[画面の状態] 到達圏を比べる日:2026年11月11日(水)、時間帯の幅:1時間。'])
+    expect(tracker.prepare().lines).toEqual(['[画面の状態] 比較する日付:2026年11月11日(水)、時間帯の幅:1時間。'])
+    expect(send()).toEqual(['[画面の状態] 比較する日付:2026年11月11日(水)、時間帯の幅:1時間。'])
     expect(send()).toEqual([])
   })
 
@@ -87,9 +87,9 @@ describe('新しいセッションの最初の発言に、承認済みの編集�
     const lines = send()
     expect(lines).toEqual([
       '[画面の状態] 今日は 2026年11月4日(水)です(日本時間)。',
-      '[画面の操作] これまでに承認された編集:方針の適用(平日を土曜ダイヤに、2026年11月9日〜当面の間、除外した系統 1)、足し戻し 2 本。',
+      '[画面の操作] これまでに承認された編集:減便の方針の承認(平日を土曜ダイヤに、2026年11月9日〜当面の間、除外した系統 1)、平日に戻した便 2 便。',
     ])
-    expect(lines.join('\n')).not.toContain('下書き d1')
+    expect(lines.join('\n')).not.toContain('下書き #1')
     expect(s().draftNotices).toEqual([])
     // その後は差分だけ
     expect(send()).toEqual([])
@@ -101,7 +101,7 @@ describe('新しいセッションの最初の発言に、承認済みの編集�
     expect(approvedSummaryLine(s())).toBeNull()
     commit(policy({ kind: 'weekdayToSundayHoliday', replacementService: 'SU', period: { start: '20261101', end: '20261120' } }))
     expect(approvedSummaryLine(s())).toBe(
-      '[画面の操作] これまでに承認された編集:方針の適用(平日を日祝ダイヤに、2026年11月1日〜2026年11月20日)、足し戻し 0 本。',
+      '[画面の操作] これまでに承認された編集:減便の方針の承認(平日を日祝ダイヤに、2026年11月1日〜2026年11月20日)、平日に戻した便 0 便。',
     )
   })
 })
@@ -111,12 +111,12 @@ describe('利用者がボタンで足し戻した便の数を [画面の操作] 
     const { s, commit, send } = setup()
     send()
     commit(policy({ excludedRoutes: ['R2'] }))
-    expect(send()).toContain('[画面の操作] 利用者が方針を適用しました(平日を土曜ダイヤに、2026年11月9日〜当面の間、除外した系統 1)。')
+    expect(send()).toContain('[画面の操作] 利用者が減便の方針を承認しました(平日を土曜ダイヤに、2026年11月9日〜当面の間、除外した系統 1)。')
 
     // R1_0700_WK は土曜便と同じ時刻なので受け付けられない。受け付けた 2 本を数える
     commit({ type: 'addBack', items: items('R3_0730_WK', 'R1_0800_WK', 'R1_0700_WK') })
     commit({ type: 'withdrawAddBack', tripIds: ['R1_0800_WK'] })
-    expect(send()).toEqual(['[画面の操作] 利用者が便を 2 本足し戻しました。', '[画面の操作] 利用者が足し戻しを 1 本取り消しました。'])
+    expect(send()).toEqual(['[画面の操作] 利用者が便を 2 便、平日に戻しました。', '[画面の操作] 利用者が 1 便を平日に戻す操作を取り消しました。'])
 
     s().undo()
     expect(send()).toEqual(['[画面の操作] 利用者が最後の編集を元に戻しました。'])
@@ -130,19 +130,19 @@ describe('利用者がボタンで足し戻した便の数を [画面の操作] 
     send()
     expect(s().propose(policy(), 'claude').ok).toBe(true)
     s().commit()
-    expect(send()).toEqual(['[画面の操作] 下書き d1 を利用者が承認しました。'])
+    expect(send()).toEqual(['[画面の操作] 利用者が下書き #1 を承認しました。'])
     const undo = s().proposeUndo('claude')
     expect(undo.ok).toBe(true)
-    tracker.noteUndoDraft('d2')
+    tracker.noteUndoDraft('2')
     s().commit()
-    expect(send()).toEqual(['[画面の操作] 下書き d2 を利用者が承認しました。'])
+    expect(send()).toEqual(['[画面の操作] 利用者が下書き #2 を承認しました。'])
     // 取り消し・置き換え
     s().propose(policy(), 'claude')
     s().discard()
     s().propose(policy(), 'claude')
     s().propose(policy({ excludedRoutes: ['R1'] }), 'user')
     s().discard()
-    expect(send()).toEqual(['[画面の操作] 下書き d3 を利用者が取り消しました。', '[画面の操作] 下書き d4 は、利用者の操作で置き換えられました。'])
+    expect(send()).toEqual(['[画面の操作] 利用者が下書き #3 を破棄しました。', '[画面の操作] 下書き #4 は利用者の操作で置き換えられました。'])
   })
 
   it('送れなかった発言の下書きの行方は、次の発言でもう一度入れる', () => {
@@ -150,10 +150,10 @@ describe('利用者がボタンで足し戻した便の数を [画面の操作] 
     send()
     s().propose(policy(), 'claude')
     s().commit()
-    expect(tracker.prepare().lines).toEqual(['[画面の操作] 下書き d1 を利用者が承認しました。'])
+    expect(tracker.prepare().lines).toEqual(['[画面の操作] 利用者が下書き #1 を承認しました。'])
     // store からは取り出し済み
     expect(s().draftNotices).toEqual([])
-    expect(send()).toEqual(['[画面の操作] 下書き d1 を利用者が承認しました。'])
+    expect(send()).toEqual(['[画面の操作] 利用者が下書き #1 を承認しました。'])
     expect(send()).toEqual([])
   })
 
@@ -165,7 +165,7 @@ describe('利用者がボタンで足し戻した便の数を [画面の操作] 
     commit(policy({ kind: 'weekdayToSundayHoliday', replacementService: 'SU', period: { start: '20261101', end: '20261120' } }))
     expect(userEditLines(prev, s())).toEqual([
       '[画面の操作] 利用者が最後の編集を元に戻しました。',
-      '[画面の操作] 利用者が方針を適用しました(平日を日祝ダイヤに、2026年11月1日〜2026年11月20日、除外した系統 0)。',
+      '[画面の操作] 利用者が減便の方針を承認しました(平日を日祝ダイヤに、2026年11月1日〜2026年11月20日、除外した系統 0)。',
     ])
   })
 

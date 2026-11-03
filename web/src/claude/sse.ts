@@ -225,7 +225,7 @@ export function toSessionEvent(message: SseMessage): SessionStreamEvent | null {
       return { type: 'usage', id, costCents, budgetCents }
     }
     default:
-      return { type: 'error', id, message: str(d.message) || 'AI の処理でエラーが起きました', code: str(d.code) }
+      return { type: 'error', id, message: str(d.message) || 'AI の処理でエラーが起きました。', code: str(d.code) }
   }
 }
 
@@ -242,18 +242,18 @@ export class ClaudeRequestError extends Error {
 }
 
 export const NOT_CONNECTED = 'AI の中継につながりませんでした。サーバーが動いているか確かめてください。'
-export const TOKEN_CHARS_ERROR = '合言葉に使えない文字があります。半角の英数字と記号で入れてください。'
+export const TOKEN_CHARS_ERROR = '認証コードに使えない文字があります。半角の英数字と記号で入れてください。'
 
 /** HTTP の状態ごとの、サーバーが文を返さなかったときの文 */
 export function defaultMessage(status: number): string {
-  if (status === 401) return '合言葉が違います。'
-  if (status === 404) return 'AI との会話が見つかりません。新しく始めます'
-  if (status === 409) return 'AI がツールの結果を待っています。少し待ってから送ってください'
-  if (status === 410) return 'AI との会話は終わっています。新しく始めます'
+  if (status === 401) return '認証コードが違います。'
+  if (status === 404) return 'AI との会話が見つかりません。新しく始めます。'
+  if (status === 409) return 'AI がツールの結果を待っています。少し待ってから送ってください。'
+  if (status === 410) return 'AI との会話は終わっています。新しく始めます。'
   if (status === 413) return '送る内容が大きすぎます。'
   if (status === 429) return 'AI の利用回数の上限に達しました。しばらくしてから使ってください。'
-  if (status === 503) return 'AI は使えません(API キーが設定されていません)。'
-  return `AI に送れませんでした(${status})。もう一度送ってください`
+  if (status === 503) return 'API キーが設定されていないため、AI は使えません。'
+  return `AI に送れませんでした(${status})。もう一度送ってください。`
 }
 
 /** 失敗の返答(JSON の detail)を ClaudeRequestError にする */

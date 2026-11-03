@@ -109,9 +109,9 @@ export function createSessionApi(fetchImpl?: typeof fetch, base = '/api/claude')
 
 /** 「止める」で、実行しなかった呼び出しに返す文(§6.3) */
 export const STOPPED_BY_USER = '利用者が止めました'
-const ONE_EDIT_PER_RESPONSE = '編集のツール(apply_policy・add_back_trips・undo_edit)は、1回の返答で1つだけ使えます。次の返答で使ってください'
+const ONE_EDIT_PER_RESPONSE = '編集のツール(apply_policy・add_back_trips・undo_edit)は、1回の返答で1つだけ使えます。次の返答で使ってください。'
 const TOOL_FAILED = 'ツールを実行できませんでした。'
-const RESULT_TOO_LARGE = '結果が 20KB を超えたので送れませんでした。条件を絞って、もう一度使ってください。'
+const RESULT_TOO_LARGE = '結果が 20KB を超えたため、送れませんでした。条件を絞って、もう一度使ってください。'
 export const SEND_RESULTS_FAILED = 'ツールの結果を AI に送れませんでした。つながり直したときに、もう一度送ります。'
 const CLOSED = 'AI との会話を終えました。'
 
@@ -320,7 +320,7 @@ export class ClaudeSession {
    */
   async sendMessage(content: TextBlock[]): Promise<void> {
     const handle = this.handleValue
-    if (!handle) throw new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます')
+    if (!handle) throw new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます。')
     if ([...this.calls.values()].some((c) => c.status === 'failed')) {
       for (const c of this.calls.values()) if (c.status === 'failed') c.status = 'ready'
       this.emitPending()

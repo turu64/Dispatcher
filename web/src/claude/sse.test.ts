@@ -204,7 +204,7 @@ describe('ストリームを開く', () => {
     expect(e404.message).toBe('AI との会話が見つかりません。新しく始めます')
     const e401 = await fail(401, 'not json')
     expect(e401.status).toBe(401)
-    expect(e401.message).toBe('合言葉が違います。')
+    expect(e401.message).toBe('認証コードが違います。')
     // つながらなかった
     const down = await errorOf(
       openSessionStream({

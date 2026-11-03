@@ -13,7 +13,7 @@ import { POLICY_KIND_LABELS } from '@/components/steps/editText'
 import type { Form2Result } from '@/gtfs/edit/form2'
 import { formatDate, planOf, type EditRecord } from '@/gtfs/edit/ops'
 import { formatDateJa } from '@/lib/dates'
-import type { DraftNotice } from '@/store/edit'
+import { draftName, type DraftNotice } from '@/store/edit'
 import type { PolicyServices } from './tools'
 
 /** [画面の状態] の行の材料 */
@@ -47,7 +47,7 @@ export function stateLines(s: ScreenState): { key: string; line: string }[] {
   if (s.reach) {
     lines.push({
       key: 'reach',
-      line: `[画面の状態] 到達圏を比べる日:${s.reach.date ? formatDateJa(s.reach.date) : '未選択'}、時間帯の幅:${s.reach.stepHours}時間。`,
+      line: `[画面の状態] 比較する日付:${s.reach.date ? formatDateJa(s.reach.date) : '未選択'}、時間帯の幅:${s.reach.stepHours}時間。`,
     })
   }
   return lines
@@ -55,9 +55,9 @@ export function stateLines(s: ScreenState): { key: string; line: string }[] {
 
 /** Claude の下書きの行方の行(docs/interfaces-1104.md §10 の3つの文) */
 export function draftNoticeLine(n: DraftNotice): string {
-  if (n.result === 'committed') return `[画面の操作] 下書き ${n.draftId} を利用者が承認しました。`
-  if (n.result === 'discarded') return `[画面の操作] 下書き ${n.draftId} を利用者が取り消しました。`
-  return `[画面の操作] 下書き ${n.draftId} は、利用者の操作で置き換えられました。`
+  if (n.result === 'committed') return `[画面の操作] 利用者が${draftName(n.draftId)} を承認しました。`
+  if (n.result === 'discarded') return `[画面の操作] 利用者が${draftName(n.draftId)} を破棄しました。`
+  return `[画面の操作] ${draftName(n.draftId)} は利用者の操作で置き換えられました。`
 }
 
 /** 利用者が前提情報の調査を始めたときの行(11/6) */
@@ -79,7 +79,7 @@ export function approvedSummaryLine(edits: EditSnapshot): string | null {
   const last = edits.versions.length > 0 ? edits.versions[edits.versions.length - 1] : null
   const addedBack = last ? last.report.addBack.accepted.length : 0
   const excluded = plan.excludedRoutes.length > 0 ? `、除外した系統 ${plan.excludedRoutes.length}` : ''
-  return `[画面の操作] これまでに承認された編集:方針の適用(${POLICY_KIND_LABELS[plan.kind]}、${periodLabel(plan.period.start, plan.period.end)}${excluded})、足し戻し ${addedBack} 本。`
+  return `[画面の操作] これまでに承認された編集:減便の方針の承認(${POLICY_KIND_LABELS[plan.kind]}、${periodLabel(plan.period.start, plan.period.end)}${excluded})、平日に戻した便 ${addedBack} 便。`
 }
 
 function acceptedOf(versions: readonly Form2Result[], i: number): Set<string> {
@@ -107,7 +107,7 @@ export function userEditLines(prev: EditSnapshot, now: EditSnapshot, claudeUndos
     if (op.type === 'applyPolicy') {
       const s = op.settings
       lines.push(
-        `[画面の操作] 利用者が方針を適用しました(${POLICY_KIND_LABELS[s.kind]}、${periodLabel(s.period.start, s.period.end)}、除外した系統 ${s.excludedRoutes.length})。`,
+        `[画面の操作] 利用者が減便の方針を承認しました(${POLICY_KIND_LABELS[s.kind]}、${periodLabel(s.period.start, s.period.end)}、除外した系統 ${s.excludedRoutes.length})。`,
       )
     } else if (op.type === 'addBack') {
       // 版があれば、受け付けた便(既に足し戻してあった便・受け付けなかった便を除く)の数
@@ -119,7 +119,7 @@ export function userEditLines(prev: EditSnapshot, now: EditSnapshot, claudeUndos
               return op.items.filter((it) => after.has(it.tripId.trim()) && !before.has(it.tripId.trim())).length
             })()
           : op.items.length
-      lines.push(`[画面の操作] 利用者が便を ${n} 本足し戻しました。`)
+      lines.push(`[画面の操作] 利用者が便を ${n} 便、平日に戻しました。`)
     } else {
       const n =
         i < now.versions.length
@@ -129,7 +129,7 @@ export function userEditLines(prev: EditSnapshot, now: EditSnapshot, claudeUndos
               return [...new Set(op.tripIds.map((t) => t.trim()))].filter((t) => before.has(t) && !after.has(t)).length
             })()
           : op.tripIds.length
-      lines.push(`[画面の操作] 利用者が足し戻しを ${n} 本取り消しました。`)
+      lines.push(`[画面の操作] 利用者が ${n} 便を平日に戻す操作を取り消しました。`)
     }
   }
   return lines

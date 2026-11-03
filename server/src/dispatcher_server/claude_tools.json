@@ -1,7 +1,7 @@
 [
   {
     "name": "apply_policy",
-    "description": "減便の方針を下書きにする。方針は「平日のダイヤに入る便を、土曜(または日祝)のダイヤの便に入れ替える」もので、期間の平日は土曜(日祝)と同じ便が走る。GTFS はすぐには変わらず、利用者が画面で承認したときに反映される。結果の summary の数(平日の便数の前後、消える便・入る便・同じ便、出力の有効期間、警告)はコードが数えたもので、説明にはこの数をそのまま使う。平日・土曜・日祝の service_id は画面で決めたものを使い、決まっていなければエラーになる。下書きが承認待ちの間は、次の編集(apply_policy・add_back_trips・undo_edit)はできない。1回の返答で編集のツールを2つ以上呼ばない。日付は YYYYMMDD(例 20261109)。reason_category は、利用者が理由をはっきり言ったときだけ入れ、言っていなければ null にする(推定しない)。",
+    "description": "減便の方針を下書きにする。減便の方針は「入れ替え元のダイヤ(平日)の便を、入れ替えに使うダイヤ(土曜または日祝)の便に入れ替える」もので、減便の期間の平日は土曜(日祝)と同じ便が走る。GTFS はすぐには変わらず、利用者が画面で承認したときに反映される。結果の summary の数(平日の便数の前後、なくなる便・加わる便・同じ便、出力の有効期間、警告)はコードが数えたもので、説明にはこの数をそのまま使う。入れ替え元のダイヤ(平日)と入れ替えに使うダイヤ(土曜・日祝)の service_id は画面で決めたものを使い、決まっていなければエラーになる。下書きが承認待ちの間は、次の編集(apply_policy・add_back_trips・undo_edit)はできない。1回の返答で編集のツールを2つ以上呼ばない。日付は YYYYMMDD(例 20261109)。reason_category は、利用者が理由をはっきり言ったときだけ入れ、言っていなければ null にする(推定しない)。",
     "strict": true,
     "input_schema": {
       "type": "object",
@@ -14,16 +14,16 @@
         },
         "start_date": {
           "type": "string",
-          "description": "期間の開始日。YYYYMMDD。入力の GTFS の有効期間の中の日"
+          "description": "減便の期間の開始日。YYYYMMDD。読み込んだ GTFS の有効期間の中の日"
         },
         "end_date": {
           "anyOf": [{ "type": "string" }, { "type": "null" }],
-          "description": "期間の終了日(この日を含む)。YYYYMMDD。終わりを決めない(当面の間)なら null。null なら出力の有効期間は入力の末日まで"
+          "description": "減便の期間の終了日(この日を含む)。YYYYMMDD。終わりを決めない(当面の間)なら null。null なら出力の有効期間は読み込んだ GTFS の有効期間の末日まで"
         },
         "excluded_route_ids": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "入れ替えから外す系統の route_id。外した系統は平日の便がそのまま残る。利用者が外すと言った系統だけを入れ、推定で足さない。無ければ空の配列"
+          "description": "入れ替えから外す系統の route_id。外した系統は平日の便がそのまま残る。利用者が外すと言った系統だけを入れ、推定で足さない。なければ空の配列"
         },
         "reason_category": {
           "anyOf": [
@@ -34,7 +34,7 @@
         },
         "reason_note": {
           "type": "string",
-          "description": "理由の補足(利用者の言葉をもとに1文)。無ければ空の文字列"
+          "description": "理由の補足(利用者の言葉をもとに1文)。なければ空の文字列"
         }
       },
       "required": ["kind", "start_date", "end_date", "excluded_route_ids", "reason_category", "reason_note"]
@@ -42,7 +42,7 @@
   },
   {
     "name": "add_back_trips",
-    "description": "方針で消える平日の便のうち、残したい便を平日のダイヤに足し戻す下書きを作る。足し戻した便は、元の平日の時刻・trip_id のまま戻る。trip_id は search_trips の scope が removed(または base_weekday)で、feed が base の便のものだけを受け付ける(同じ trip_id が feed の違う別の便として出ることがあるので、trip_id は feed とあわせて読む)。items は 1〜50 件。reason には、なぜこの便を残すのかを、手がかり(hints)と停留所名から1文で書く(例:「旭川東高校前を 7 時台に通る通学の便で、この時間帯に代わりの便がありません」)。施設の種類を停留所名から推定したときは「推定」と書く。school_days_only は、利用者が学校の休業日は運休と言った便だけ true にする(GTFS には入らず、変更指示書と周知文に使う)。方針が承認される前は使えない。下書きが承認待ちの間は使えない。結果に、受け付けた便ごとの始発時刻・系統・始発 → 終着が返るので、思っていた便か確かめる。",
+    "description": "減便の方針でなくなる平日の便のうち、残したい便を平日に戻す下書きを作る。平日に戻した便は、元の平日の時刻・trip_id のまま戻る。trip_id は search_trips の scope が removed(または base_weekday)で、feed が base(減便前の GTFS)の便のものだけを受け付ける(同じ trip_id が feed の違う別の便として出ることがあるため、trip_id は feed とあわせて読む)。items は 1〜50 件。reason には、なぜこの便を平日に戻すのかを、判断材料(hints)と停留所名から1文で書く(例:「旭川東高校前を 7 時台に通る通学の便で、この時間帯に代わりの便がありません」)。施設の種類を停留所名から推定したときは「推定」と書く。school_days_only は、利用者が学校の休業日は運休と言った便だけ true にする(GTFS には入らず、変更指示書と周知文に使う)。減便の方針が承認される前は使えない。下書きが承認待ちの間は使えない。結果に、受け付けた便ごとの始発時刻・系統・始発 → 終着が返るため、思っていた便か確かめる。",
     "strict": true,
     "input_schema": {
       "type": "object",
@@ -50,13 +50,13 @@
       "properties": {
         "items": {
           "type": "array",
-          "description": "足し戻す便(1〜50 件)",
+          "description": "平日に戻す便(1〜50 件)",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "trip_id": { "type": "string", "description": "基準の GTFS(feed が base)の平日の便の trip_id" },
-              "reason": { "type": "string", "description": "足し戻す理由(1文)" },
+              "trip_id": { "type": "string", "description": "減便前の GTFS(feed が base)の平日の便の trip_id" },
+              "reason": { "type": "string", "description": "平日に戻す理由(1文)" },
               "school_days_only": { "type": "boolean", "description": "学校の休業日は運休の便なら true(利用者が言ったときだけ)" }
             },
             "required": ["trip_id", "reason", "school_days_only"]
@@ -68,7 +68,7 @@
   },
   {
     "name": "undo_edit",
-    "description": "最後に承認された編集を1つ取り消す下書きを作る。利用者が画面で承認すると取り消される。承認済みの編集が無いとき、下書きが承認待ちのときは使えない。",
+    "description": "最後に承認された編集を1つ取り消す下書きを作る。利用者が画面で承認すると取り消される。承認済みの編集がないとき、下書きが承認待ちのときは使えない。",
     "strict": true,
     "input_schema": {
       "type": "object",
@@ -79,7 +79,7 @@
   },
   {
     "name": "summarize_impact",
-    "description": "減便の前後の到達圏(停留所・駅から歩いて行ける範囲)を、時間帯ごとに比べた数を返す。数は 125m 四方のセルと推計人口(令和2年国勢調査のメッシュ人口)で、コードが計算したもの。外れるセル・外れる割合・推計人口、運行がゼロになる停留所と系統、足し戻しの集計を返す。比べるのは承認済みの編集と、承認待ちの下書きがあれば下書き。date は比べる日(YYYYMMDD。null なら画面で選んでいる日)、step_hours は時間帯の幅(1 か 3。null なら画面の設定)。",
+    "description": "減便の前後の到達圏(停留所・駅から歩いて行ける範囲)を、時間帯ごとに比べた数を返す。数は 125m 四方の区画(セル)と推計人口(令和2年国勢調査のメッシュ人口)で、コードが計算したもの。到達圏から外れる区画の数・外れる割合・推計人口、発車がなくなる停留所と便がなくなる系統、平日に戻した便の集計を返す。比べるのは承認済みの編集と、承認待ちの下書きがあれば下書き。date は比較する日付(YYYYMMDD。null なら画面で選んでいる日付)、step_hours は時間帯の幅(1 か 3。null なら画面の設定)。",
     "strict": true,
     "input_schema": {
       "type": "object",
@@ -87,7 +87,7 @@
       "properties": {
         "date": {
           "anyOf": [{ "type": "string" }, { "type": "null" }],
-          "description": "比べる日。YYYYMMDD。null なら画面で選んでいる日"
+          "description": "比較する日付。YYYYMMDD。null なら画面で選んでいる日付"
         },
         "step_hours": {
           "anyOf": [{ "type": "integer", "enum": [1, 3] }, { "type": "null" }],
@@ -99,7 +99,7 @@
   },
   {
     "name": "search_trips",
-    "description": "便を探す。scope は removed(方針で消える基準の平日の便。足し戻しの候補)、added(写して入る便)、same(前後で同じ便)、added_back(足し戻した便)、base_weekday(基準の平日の便すべて)。便ごとに feed(base か edited)・trip_id・系統・行き先・始発と終着の停留所と時刻・通る停留所の名前・手がかり(hints)を返す。hints はコードが出した足し戻しの手がかりで、weekdayOnlyRoute(平日だけの系統)、routeWouldVanish(足し戻さないと系統が全曜日で無くなる)、firstTripOfRoute・lastTripOfRoute(その系統の平日の始発・終発)、onlyTripInBand(その系統のその時間帯の唯一の便)、morning(始発が 6〜9時)、evening(始発が 15〜19時)、onlyServiceAtStop(足し戻さないと、ある停留所でその時間帯の出発が 0)、restoresLostCells(足し戻すと、減便で外れたセルが戻る。lost_cells に戻るセルの数と推計人口)、nearFacility(便の停留所の徒歩圏に学校・病院があり、学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発に当たる)。nearby_facilities は、便の停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)にある学校(中学校・高校・大学など)と入院設備のある病院(国土数値情報)のうち時間帯の窓に当たるもので、名前・種類・重要拠点の優先順位(priority_rank)・最寄りの停留所と距離(m)・窓に当たる停留所と時刻(matches)を、優先順位・距離の順に便ごとに3件まで返す(省いた数は nearby_facilities_omitted。徒歩圏にあるだけで窓に当たらない施設は数だけを nearby_without_match に書く)。前提情報の調査の結果があれば facility_research に出典 URL と確認日時つきの要点がある。施設を読めていないときと到達圏の比較が無いときは null で、施設が無いという意味ではない(notes に理由がある)。trip_id は feed とあわせて読む。route_ids・stop_name(部分一致)・depart_from・depart_to(始発の時刻の範囲。HH:MM。depart_from を含み depart_to を含まない)で絞れる。使わない条件は null。limit は 1〜50。",
+    "description": "便を探す。scope は removed(減便の方針でなくなる、減便前の平日の便。平日に戻す候補)、added(入れ替えに使うダイヤから加わる便)、same(減便の前後で同じ便)、added_back(平日に戻した便)、base_weekday(減便前の平日の便すべて)。便ごとに feed(base は減便前の GTFS、edited は減便後の GTFS)・trip_id・系統・行き先・始発と終着の停留所と時刻・通る停留所の名前・判断材料(hints)を返す。hints はコードが出した、便を平日に戻す判断材料で、weekdayOnlyRoute(平日だけの系統)、routeWouldVanish(平日に戻さないと、系統が全曜日で便がなくなる)、firstTripOfRoute・lastTripOfRoute(その系統の平日の始発・終発)、onlyTripInBand(その系統のその時間帯の唯一の便)、morning(始発が 6〜9時)、evening(始発が 15〜19時)、onlyServiceAtStop(平日に戻さないと、ある停留所でその時間帯の発車が 0)、restoresLostCells(平日に戻すと、減便で到達圏から外れた区画が戻る。lost_cells に戻る区画の数と推計人口)、nearFacility(便の停留所の徒歩圏に学校・病院があり、施設ごとの時間帯の窓に当たる)。時間帯の窓は、前提情報の調査で調べた始業・終業の時刻や外来の受付時間をコードが読めた施設ではその時刻から決める(学校は始業の1時間前〜始業に着く・終業〜終業の2時間後に出る、病院は受付開始の30分前〜午前の受付終了に着く・午前の受付終了〜最後の受付終了の2時間後に出る)。読めない施設と向きは既定の窓(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)。nearby_facilities は、便の停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)にある学校(中学校・高校・大学など)と入院設備のある病院(国土数値情報)のうち時間帯の窓に当たるもので、名前・種類・重要拠点の優先順位(priority_rank)・最寄りの停留所と距離(m)・窓に当たる停留所と時刻(matches)を、優先順位・距離の順に便ごとに3件まで返す(省いた数は nearby_facilities_omitted。徒歩圏にあるだけで窓に当たらない施設は数だけを nearby_without_match に書く)。調べた結果から窓を決めた施設には、window に窓と根拠の時刻がある(window がない施設と、window で既定と書いた向きは既定の窓)。前提情報の調査の結果があれば facility_research に出典 URL と確認日時つきの要点がある。施設を読めていないときと到達圏の比較がないときは null で、施設がないという意味ではない(notes に理由がある)。trip_id は feed とあわせて読む。route_ids・stop_name(部分一致)・depart_from・depart_to(始発の時刻の範囲。HH:MM。depart_from を含み depart_to を含まない)で絞れる。使わない条件は null。limit は 1〜50。",
     "strict": true,
     "input_schema": {
       "type": "object",
@@ -135,7 +135,7 @@
   },
   {
     "name": "run_validation",
-    "description": "今の編集後の GTFS(承認待ちの下書きがあれば下書き)を検証し、エラー・警告・お知らせの一覧と、公開の時期についての注意を返す。出力できるかどうかはエラーの有無で決まる。",
+    "description": "今の減便後の GTFS(承認待ちの下書きがあれば下書き)を検証し、エラー・警告・お知らせの一覧と、公開の時期についての注意を返す。出力できるかどうかはエラーの有無で決まる。",
     "strict": true,
     "input_schema": {
       "type": "object",

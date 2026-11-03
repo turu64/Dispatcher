@@ -156,10 +156,10 @@ describe('apply_policy は下書きを作り status: draft と draft_id を返�
     const { store, deps } = setup()
     const r = await runTool('apply_policy', POLICY_INPUT, deps)
     expect(r.isError).toBe(false)
-    expect(r.draft).toEqual({ id: 'd1', kind: 'op' })
+    expect(r.draft).toEqual({ id: '1', kind: 'op' })
     const body = parse(r.content)
     expect(body.status).toBe('draft')
-    expect(body.draft_id).toBe('d1')
+    expect(body.draft_id).toBe('1')
     expect(body.note).toBe('利用者の承認待ちです。承認されるまで GTFS は変わりません。')
     // 小さなフィード:平日 4 便のうち R1_0700_WK だけが土曜便と同じ。消える 3、入る 3(R1_0800_SA・R1_0805_SA・R2_1000_SA)
     expect(body.summary).toMatchObject({
@@ -187,7 +187,7 @@ describe('apply_policy は下書きを作り status: draft と draft_id を返�
     const { store, deps } = setup({ policyServices: () => ({ weekday: 'WK', saturday: null, sundayHoliday: 'SU' }) })
     const r = await runTool('apply_policy', POLICY_INPUT, deps)
     expect(r.isError).toBe(true)
-    expect(parse(r.content)).toEqual({ status: 'error', message: '画面の方針の欄で、平日と土曜(日祝)の service を選んでください' })
+    expect(parse(r.content)).toEqual({ status: 'error', message: '手順3「減便の方針」で、入れ替え元のダイヤ(平日)と入れ替えに使うダイヤ(土曜/日祝)の service を選んでください。' })
     expect(store.getState().draft).toBeNull()
     // 日祝ダイヤなら日祝の service を使う
     const sunday = await runTool('apply_policy', { ...POLICY_INPUT, kind: 'weekday_to_sunday_holiday' }, deps)
@@ -251,7 +251,7 @@ describe('型の確かめ(strict が無いので、すべてブラウザで確�
     ['run_validation', undefined, 'オブジェクトではありません'],
     // 知らない項目
     ['apply_policy', { ...POLICY_INPUT, weekday_service: 'WK' }, '知らない項目 weekday_service'],
-    ['undo_edit', { draft_id: 'd1' }, '知らない項目 draft_id'],
+    ['undo_edit', { draft_id: '1' }, '知らない項目 draft_id'],
     ['run_validation', { strict: true }, '知らない項目 strict'],
     ['search_trips', { ...SEARCH, offset: 10 }, '知らない項目 offset'],
     ['summarize_impact', { date: null, step_hours: null, band: '6〜9時' }, '知らない項目 band'],
@@ -331,7 +331,7 @@ describe('並べて呼ばれた2つ目の編集は、下書きが承認待ちな
     ] as const) {
       const r = await runTool(name, input, deps)
       expect(r.isError).toBe(true)
-      expect(parse(r.content)).toEqual({ status: 'error', message: `下書き ${id} が承認待ちです。利用者が承認するか、やめるまで、次の編集はできません` })
+      expect(parse(r.content)).toEqual({ status: 'error', message: `下書き #${id} が承認待ちです。利用者が「承認する」か「やめる」を押すまで、次の編集はできません。` })
     }
     // 先の下書きは残る
     expect(store.getState().draft?.id).toBe(id)
@@ -380,7 +380,7 @@ describe('add_back_trips は基準の平日便の trip_id だけを受け付け�
       deps,
     )
     expect(r.isError).toBe(false)
-    expect(r.draft).toEqual({ id: 'd2', kind: 'op' })
+    expect(r.draft).toEqual({ id: '2', kind: 'op' })
     const body = parse(r.content)
     expect(body.merged_duplicates).toBe(1)
     const addBack = (body.summary as Record<string, unknown>).add_back as Record<string, unknown>
@@ -388,7 +388,7 @@ describe('add_back_trips は基準の平日便の trip_id だけを受け付け�
       { trip_id: 'R3_0730_WK', route_id: 'R3', route_name: '3', headsign: '市役所', first_departure: '07:30', first_stop: '駅前', last_stop: '市役所' },
     ])
     expect(addBack.not_accepted).toEqual([
-      { trip_id: 'R1_0700_WK', reason: '土曜ダイヤに同じ時刻の便(R1_0700_SA)があるため、足し戻す必要がありません。' },
+      { trip_id: 'R1_0700_WK', reason: '土曜ダイヤに同じ時刻の便(R1_0700_SA)があるため、平日に戻す必要がありません。' },
     ])
     expect(addBack.totals).toMatchObject({ trips: 1, service_minutes: 20, service_time: '0時間20分', earliest_start: '07:30', latest_end: '07:50' })
     // 便ごとの理由と休校日運休の印は、操作に残る(重複は最初の理由)
@@ -468,8 +468,8 @@ describe('search_trips', () => {
       lost_cells: null,
       nearby_facilities: null,
     })
-    expect(body.notes).toContain('到達圏の比較がまだ無いので、到達圏を使う手がかりは出していません')
-    expect((body.notes as string[]).some((n) => n.includes('学校・病院の手がかり(nearFacility・nearby_facilities)も、到達圏の比較ができてから出します'))).toBe(true)
+    expect(body.notes).toContain('到達圏の比較がまだないため、到達圏を使う判断材料は出していません。')
+    expect((body.notes as string[]).some((n) => n.includes('学校・病院の判断材料(nearFacility・nearby_facilities)も、到達圏の比較ができてから出します'))).toBe(true)
     expect(body).not.toHaveProperty('facility_research')
   })
 
@@ -495,7 +495,7 @@ describe('search_trips', () => {
     expect(hintContext).toHaveBeenCalledTimes(1)
     expect(hintContext).toHaveBeenCalledWith(store.getState().versions[0].feed)
     expect(r.isError).toBe(false)
-    expect(parse(r.content).notes).not.toContain('到達圏の比較がまだ無いので、到達圏を使う手がかりは出していません')
+    expect(parse(r.content).notes).not.toContain('到達圏の比較がまだないため、到達圏を使う判断材料は出していません。')
   })
 
   it('到達圏の比較があれば、候補の一覧に restoresLostCells・onlyServiceAtStop と戻るセルの数を出す', async () => {
@@ -515,9 +515,9 @@ describe('search_trips', () => {
     // 手がかりの多い順に並ぶ
     const counts = trips.map((t) => t.hints.length)
     expect(counts).toEqual([...counts].sort((x, y) => y - x))
-    expect(body.notes).not.toContain('到達圏の比較がまだ無いので、到達圏を使う手がかりは出していません')
+    expect(body.notes).not.toContain('到達圏の比較がまだないため、到達圏を使う判断材料は出していません。')
     // どの日付の比較かを書く
-    expect(body.notes).toContain('到達圏を使う手がかり(onlyServiceAtStop・restoresLostCells)は、比較の日付 2026/11/04 の到達圏の前後の比較から出しています')
+    expect(body.notes).toContain('到達圏を使う判断材料(onlyServiceAtStop・restoresLostCells)は、比較する日付 2026/11/04 の減便前後の到達圏の比較から出しています。')
   })
 
   describe('学校・病院(nearby_facilities と nearFacility。T19)', () => {
@@ -660,7 +660,7 @@ describe('search_trips', () => {
         expect(t.nearby_facilities).toBeNull()
         expect(t.hints).not.toContain('nearFacility')
       }
-      expect((body.notes as string[]).some((n) => n.includes('学校・病院の参照データを読めていない') && n.includes('該当が無いという意味ではありません'))).toBe(true)
+      expect((body.notes as string[]).some((n) => n.includes('学校・病院の参照データを読み込めていない') && n.includes('該当がないという意味ではありません'))).toBe(true)
       expect(body).not.toHaveProperty('facility_research')
     })
 
@@ -837,8 +837,8 @@ describe('search_trips', () => {
       expect(t.lost_cells).toBeNull()
     }
     const notes = body.notes as string[]
-    expect(notes.some((n) => n.includes('比較の日付 2026/11/03 は平日ダイヤの運行日ではない') && n.includes('該当が無いという意味ではありません'))).toBe(true)
-    expect(notes.some((n) => n.includes('の到達圏の前後の比較から出しています'))).toBe(false)
+    expect(notes.some((n) => n.includes('比較する日付 2026/11/03 は平日ダイヤの運行日ではない') && n.includes('該当がないという意味ではありません'))).toBe(true)
+    expect(notes.some((n) => n.includes('の減便前後の到達圏の比較から出しています'))).toBe(false)
   })
 
   it('到達圏の計算中なら終わるのを待ってから ctx を読み、待ちきれなければ手がかりを出さずにそう書く', async () => {
@@ -910,8 +910,8 @@ describe('undo_edit と run_validation', () => {
     expect(none.isError).toBe(true)
     await withPolicy(deps, store)
     const r = await runTool('undo_edit', {}, deps)
-    expect(r.draft).toEqual({ id: 'd2', kind: 'undo' })
-    expect(parse(r.content)).toMatchObject({ status: 'draft', draft_id: 'd2', summary: { after: '編集なし(読み込んだ GTFS のまま)' } })
+    expect(r.draft).toEqual({ id: '2', kind: 'undo' })
+    expect(parse(r.content)).toMatchObject({ status: 'draft', draft_id: '2', summary: { after: '編集なし(読み込んだ GTFS のまま)' } })
     expect(store.getState().draft?.kind).toBe('undo')
   })
 
@@ -920,7 +920,7 @@ describe('undo_edit と run_validation', () => {
     expect((await runTool('run_validation', {}, deps)).isError).toBe(true)
     await runTool('apply_policy', POLICY_INPUT, deps)
     const body = parse((await runTool('run_validation', {}, deps)).content)
-    expect(body).toMatchObject({ status: 'ok', basis: '承認待ちの下書き', draft_id: 'd1', can_export: true })
+    expect(body).toMatchObject({ status: 'ok', basis: '承認待ちの下書き', draft_id: '1', can_export: true })
     // 今日 11/4、開始 11/9 なので実施まで 5 日
     expect((body.timing as { code: string }[]).map((t) => t.code)).toContain('leadTimeUnder7')
   })

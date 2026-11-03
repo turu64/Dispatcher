@@ -180,3 +180,13 @@
     background: none !important;
   }
 }
+
+/* shadcn の Attachment(components/ui/attachment.tsx)が使う。横にならべた項目のスクロールバーを隠す(shadcn の no-scrollbar と同じ) */
+@utility scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

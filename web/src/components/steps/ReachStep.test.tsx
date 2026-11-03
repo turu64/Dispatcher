@@ -6,7 +6,7 @@ import { DEFAULT_REACH_PARAMS, type ReachResult } from '@/reach/reach'
 import { summarizeReach } from '@/reach/summary'
 import { compareReach } from '@/reach/compare'
 import type { ReachSnapshot, RefState } from '@/store/reach'
-import { ReachConditions, ReachNotes, ReachSummaryTable, RefStatus, ZeroServiceSummary } from './ReachStep'
+import { ReachConditions, ReachNotes, ReachSettingLine, ReachSummaryTable, RefStatus, ZeroServiceSummary } from './ReachStep'
 
 // react-dom/server で描画する(useEffect は走らない)。store を使わない表示の部品に、値を直接渡して確かめる
 
@@ -55,6 +55,31 @@ function textOf(html: string): string {
     .replace(/<[^>]+>/g, '|')
     .replace(/\|+/g, '|')
 }
+
+describe('ReachSettingLine(表の上の、今の比較する日付と時間帯の幅)', () => {
+  const PERIOD = { start: '20261001', end: '20261130' }
+
+  it('今の比較する日付と時間帯の幅を1行で出し、地図の下の操作盤で変えることと、計算し直すものを添える', () => {
+    const text = textOf(renderToString(<ReachSettingLine date="20261109" stepHours={3} period={PERIOD} comparing={false} />))
+    expect(text).toContain('比較する日付:|2026年11月9日(月)・3時間ごと|')
+    expect(text).toContain('地図の下の操作盤で変えられます。')
+    expect(text).toContain('比較する日付と時間帯の幅を変えると、到達圏の表・便を平日に戻す判断材料・AI による影響の要約も計算し直します。')
+  })
+
+  it('1時間ごとならそう出す', () => {
+    const text = textOf(renderToString(<ReachSettingLine date="20261104" stepHours={1} period={PERIOD} comparing />))
+    expect(text).toContain('2026年11月4日(水)・1時間ごと')
+  })
+
+  it('運行日が無いときは、操作盤と同じ注意を出す', () => {
+    const plain = renderToString(<ReachSettingLine date={null} stepHours={3} period={null} comparing={false} />)
+    expect(plain).toContain('role="alert"')
+    expect(textOf(plain)).toContain('この GTFS には運行日がありません。calendar.txt・calendar_dates.txt を確かめてください。')
+    expect(textOf(plain)).not.toContain('比較する日付:')
+    const edited = textOf(renderToString(<ReachSettingLine date={null} stepHours={3} period={PERIOD} comparing />))
+    expect(edited).toContain('減便後の GTFS に運行日がありません。減便の期間を確かめてください。')
+  })
+})
 
 describe('ReachSummaryTable', () => {
   it('時間帯ごとの外れるセルと推計人口を出し、割合の分母は到達できる見込みのあるセルにする', () => {

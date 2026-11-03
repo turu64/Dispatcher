@@ -10,7 +10,7 @@ import { serializeTable } from '@/gtfs/write'
 import { useEditStore } from '@/store/edit'
 import { useGtfsStore } from '@/store/gtfs'
 import { useHolidayStore } from '@/store/holidays'
-import { useReachStore } from '@/store/reach'
+import { selectablePeriod, useReachStore } from '@/store/reach'
 import { useStepStore, type StepKey } from '@/store/steps'
 
 /**
@@ -165,8 +165,14 @@ describe('編集の画面の流れ', () => {
     const zero = within(reach).getByRole('region', { name: '運行がゼロになる場所' })
     expect(zero.textContent).toContain('学校前')
     expect(zero.textContent).toContain('運行がゼロになる系統:1 系統')
-    // 日付は出力の有効期間の中だけ
-    expect(within(openStep('reach', REACH)).getByText(/比べられるのは出力の有効期間/)).toBeTruthy()
+    // 日付は出力の有効期間の中だけ。選べる範囲は減便後の GTFS の運行期間(期間の開始日から)で、比較する日付もその中にある。
+    // 範囲の文は地図の操作盤の Popover に出る(map/BandControl.test.tsx が確かめる)。手順の側には今の設定の1行が出る
+    const selectable = selectablePeriod(useReachStore.getState())
+    expect(selectable?.start).toBe('20261020')
+    const picked = useReachStore.getState().date
+    expect(picked).not.toBeNull()
+    expect(picked! >= selectable!.start && picked! <= selectable!.end).toBe(true)
+    expect(within(openStep('reach', REACH)).getByTestId('reach-setting').textContent).toContain('比較する日付')
 
     // ---- 足し戻し:候補は手がかりの多い順(平日だけの系統 R3 が先頭)----
     const restore = openStep('restore', RESTORE)

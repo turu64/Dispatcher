@@ -19,13 +19,14 @@ import {
 import type { ReachParams, RegionClass } from '@/reach/reach'
 import { formatCount, formatPercent, formatPointChange } from '@/reach/summary'
 import { useGtfsStore } from '@/store/gtfs'
-import { useReachStore, type ReachSnapshot, type RefState } from '@/store/reach'
-import DateBandControls from './DateBandStep'
+import { selectablePeriod, useReachStore, type ReachSnapshot, type RefState, type StepHours } from '@/store/reach'
+import { NoServiceDaysMessage } from './DateBandStep'
 
 /**
- * 影響(到達圏。減便の前後)。上部に比べる日と時間帯の幅(DateBandStep.tsx)、続けて参照データの状態、時間帯ごとの結果の表。
+ * 影響(到達圏。減便の前後)。上部に今の比較する日付と時間帯の幅(1行)、続けて参照データの状態、時間帯ごとの結果の表。
  * 減便後の GTFS があれば前後の比較と、運行がゼロになる場所を出す。
- * 地図の色分けは map/ReachLayers.tsx、地図に出す時間帯の切り替えは map/BandControl.tsx(表の強調行と連動する)
+ * 比較する日付・時間帯の幅・地図に出す時間帯は、地図の下の操作盤(map/BandControl.tsx)で選ぶ(docs/tasks-1103b.md の T31)。
+ * 地図の色分けは map/ReachLayers.tsx
  */
 export default function ReachStep() {
   const feed = useGtfsStore((s) => s.feed)
@@ -37,6 +38,10 @@ export default function ReachStep() {
   const selectedHour = useReachStore((s) => s.selectedHour)
   const params = useReachStore((s) => s.params)
   const fallbackClass = useReachStore((s) => s.fallbackClass)
+  const date = useReachStore((s) => s.date)
+  const stepHours = useReachStore((s) => s.stepHours)
+  const period = useReachStore(selectablePeriod)
+  const comparing = useReachStore((s) => s.edited !== null)
   const store = useReachStore.getState
 
   return (
@@ -45,7 +50,7 @@ export default function ReachStep() {
         <p className="text-sm text-muted-foreground">GTFS を読み込むと、選んだ日付・時間帯の到達圏を計算します。</p>
       ) : (
         <>
-          <DateBandControls />
+          <ReachSettingLine date={date} stepHours={stepHours} period={period} comparing={comparing} />
           <RefStatus
             refState={ref}
             fallbackClass={fallbackClass}
@@ -77,6 +82,44 @@ export default function ReachStep() {
         鉄道駅は時刻表データが無いため、6〜24時のすべての時間帯で使えるものとみなしています。
       </p>
     </StepSection>
+  )
+}
+
+/**
+ * 今の比較する日付と時間帯の幅を1行で出し、地図の下の操作盤で変えること、変えると何を計算し直すかを添える。
+ * 値は計算の結果(snapshot)ではなく、選んでいる条件(計算し直している間も新しい値)を出す。
+ * 運行日が無い(選べる日付が無い)ときは、操作盤と同じ注意を出す
+ */
+export function ReachSettingLine({
+  date,
+  stepHours,
+  period,
+  comparing,
+}: {
+  date: string | null
+  stepHours: StepHours
+  period: { start: string; end: string } | null
+  comparing: boolean
+}) {
+  if (!period || !date) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>
+          <NoServiceDaysMessage comparing={comparing} />
+        </AlertDescription>
+      </Alert>
+    )
+  }
+  return (
+    <p className="text-sm" data-testid="reach-setting">
+      比較する日付:
+      <span className="font-medium">
+        {formatDateJa(date)}・{stepHours}時間ごと
+      </span>
+      <span className="block text-xs text-muted-foreground">
+        地図の下の操作盤で変えられます。比較する日付と時間帯の幅を変えると、到達圏の表・便を平日に戻す判断材料・AI による影響の要約も計算し直します。
+      </span>
+    </p>
   )
 }
 

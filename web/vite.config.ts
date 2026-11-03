@@ -11,6 +11,9 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   server: {
+    // ローカルネットワークのほかの機器からも開けるようにする(利用者の指示 11/3)。
+    // API のサーバー(uvicorn)は 127.0.0.1 のままで、外からの /api はこの中継を通る
+    host: '0.0.0.0',
     // 開発中は /api をローカルのサーバー(uv run dispatcher-server)に中継する
     proxy: { '/api': 'http://127.0.0.1:8000' },
   },

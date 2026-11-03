@@ -21,10 +21,18 @@ const ATTRIBUTION = '<a href="https://www.openstreetmap.org/copyright" target="_
  *
  * MapLibre はブラウザでしか動かないため、地図は useEffect の中でだけ作る
  * (react-dom/server での描画やテストで落ちないようにする)。
+ *
+ * 地図を出さない手順では、親が入れ物を隠す(地図は消さない。作り直しの手間と、表示の位置を失わないため)。
+ * 隠している間は大きさが 0 になるので、visible が true に戻ったら map.resize() で大きさを測り直す
  */
-export default function BaseMap() {
+export default function BaseMap({ visible = true }: { visible?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
+  const loadedMap = useMapStore((s) => s.map)
+
+  useEffect(() => {
+    if (visible) loadedMap?.resize()
+  }, [visible, loadedMap])
 
   useEffect(() => {
     const container = containerRef.current

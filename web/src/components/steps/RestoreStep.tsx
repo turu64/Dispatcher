@@ -72,7 +72,7 @@ function reachHintStatus(o: {
 const PAGE = 50
 
 /**
- * 手順5:足し戻し(docs/interfaces-1104.md §8)。
+ * 足し戻しの手順(docs/interfaces-1104.md §8)。手順の番号は components/steps/registry.ts の並びで決まるので、文言に番号を書かない。
  * 候補は、基準の平日便のうち、承認済みの編集後に同じ署名の便が無いもの(消える便)。手がかり(コードが出す)の多い順に並べ、
  * 系統・始発の時間帯・停留所名・手がかりで絞り込む。「足し戻す」「取り消す」は押したことを承認とみなす。
  */
@@ -87,9 +87,9 @@ export default function RestoreStep() {
   return (
     <StepSection title="5. 足し戻し" id={STEP_IDS.restore}>
       {!base ? (
-        <p className="text-sm text-muted-foreground">手順1で GTFS を読み込み、手順2で方針を承認すると、足し戻す便を選べます。</p>
+        <p className="text-sm text-muted-foreground">手順1で GTFS を読み込み、減便の方針を承認すると、足し戻す便を選べます。</p>
       ) : !plan || !version ? (
-        <p className="text-sm text-muted-foreground">手順2で減便の方針を承認すると、消える平日便から足し戻す便を選べます。</p>
+        <p className="text-sm text-muted-foreground">減便の方針を承認すると、消える平日便から足し戻す便を選べます。</p>
       ) : (
         <RestorePanel base={base} plan={plan} version={version} draft={draft} />
       )}
@@ -238,7 +238,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       <p className="text-sm">
         消える平日便 <span className="tabular-nums">{candidates.length}</span> 便から選びます(手がかりの多い順)。
       </p>
-      <AskRestoreButton blocked={policyDraft ? '手順2の方針の下書きを承認するか、やめてから聞いてください。' : null} />
+      <AskRestoreButton blocked={policyDraft ? '減便の方針の下書きを承認するか、やめてから聞いてください。' : null} />
       <fieldset className="grid grid-cols-2 gap-2" aria-label="候補の絞り込み">
         <div className="flex min-w-0 flex-col gap-1">
           <Label htmlFor="restore-route" className="text-xs">
@@ -328,7 +328,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         </Label>
         <Input id="restore-reason" placeholder="例:高校の通学" value={reason} onChange={(e) => setReason(e.target.value)} />
       </div>
-      {policyDraft && <p className="text-sm text-destructive">手順2の方針の下書きを承認するか、やめてから足し戻してください。</p>}
+      {policyDraft && <p className="text-sm text-destructive">減便の方針の下書きを承認するか、やめてから足し戻してください。</p>}
       {confirmBox('add') ?? (
         <Button type="button" className="self-start" disabled={selectedNow.length === 0 || policyDraft} onClick={addBack}>
           選んだ {selectedNow.length} 便を足し戻す

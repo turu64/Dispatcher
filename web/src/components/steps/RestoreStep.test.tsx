@@ -69,7 +69,7 @@ describe('RestoreStep', () => {
   it('方針を承認する前は、方針の承認を促す', () => {
     act(() => useEditStore.getState().undoAll())
     render(<RestoreStep />)
-    expect(screen.getByText('手順2で減便の方針を承認すると、消える平日便から足し戻す便を選べます。')).toBeTruthy()
+    expect(screen.getByText('減便の方針を承認すると、消える平日便から足し戻す便を選べます。')).toBeTruthy()
   })
 
   it('候補は消える平日便で、手がかりの多い順に並べ、停留所名・手がかりで絞り込める', () => {
@@ -108,7 +108,7 @@ describe('RestoreStep', () => {
     render(<RestoreStep />)
     fireEvent.click(within(screen.getByRole('list', { name: '足し戻す便の候補' })).getAllByRole('checkbox')[0])
     expect(screen.getByRole('button', { name: '選んだ 1 便を足し戻す' })).toHaveProperty('disabled', true)
-    expect(screen.getByText('手順2の方針の下書きを承認するか、やめてから足し戻してください。')).toBeTruthy()
+    expect(screen.getByText('減便の方針の下書きを承認するか、やめてから足し戻してください。')).toBeTruthy()
   })
 
   it('Claude の下書きがあるときに足し戻すと、画面の中で捨ててよいかを確かめ、「やめる」なら選んだ便も下書きも残る', () => {
@@ -269,6 +269,6 @@ describe('RestoreStep', () => {
       useEditStore.getState().propose(policy(), 'user')
     })
     expect(button().disabled).toBe(true)
-    expect(screen.getAllByText('手順2の方針の下書きを承認するか、やめてから聞いてください。').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('減便の方針の下書きを承認するか、やめてから聞いてください。').length).toBeGreaterThan(0)
   })
 })

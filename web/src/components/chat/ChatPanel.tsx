@@ -25,7 +25,9 @@ const EXAMPLE = '例:「平日を土曜ダイヤにしてください。期間�
 
 /**
  * 左の手順の欄の下の「AI に相談」(docs/interfaces-1105.md §6.4)。折りたためる。GTFS を読み込むまでは出さない。
- * 方針の指示と質問だけを送る(操作はほかの手順のボタンで行う)。AI が使えなくても、ほかの手順はすべてボタンで動く
+ * どの手順を開いていても同じ場所に出す(方針の指示と質問は、どの手順からも出るため)。
+ * 方針の指示と質問だけを送る(操作はほかの手順のボタンで行う)。AI が使えなくても、ほかの手順はすべてボタンで動く。
+ * 会話の箱は overscroll-behavior: contain にし、中のスクロールが端に着いても左の欄やページに伝わらないようにする
  */
 export default function ChatPanel({ store = useChatStore }: { store?: ChatStoreHook }) {
   const base = useEditStore((s) => s.base)
@@ -98,7 +100,7 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
   }
 
   return (
-    <section aria-label="AI に相談" className="flex max-h-[40vh] shrink-0 flex-col border-t bg-background">
+    <section aria-label="AI に相談" className="print-hide flex max-h-[40vh] shrink-0 flex-col border-t bg-background">
       <h2 className="shrink-0 text-sm font-semibold">
         <button
           type="button"
@@ -112,7 +114,7 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
         </button>
       </h2>
       <div id="chat-body" hidden={!open} className="flex min-h-0 flex-1 flex-col gap-2 px-4 pb-3">
-        <div ref={listRef} role="log" aria-label="AI との会話" aria-live="polite" className="min-h-16 flex-1 overflow-y-auto">
+        <div ref={listRef} role="log" aria-label="AI との会話" aria-live="polite" className="min-h-16 flex-1 overflow-y-auto overscroll-contain">
           {s.items.length === 0 && !checking && !unavailable && !statusFailed && (
             <p className="text-xs text-muted-foreground">
               減便の方針の指示や、質問を送れます。{EXAMPLE}。AI は GTFS を書き換えません。下書きを作るので、承認はあなたが押します。
@@ -137,7 +139,7 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
           )}
         </div>
 
-        <div className="flex shrink-0 flex-col gap-2 overflow-y-auto">
+        <div className="flex shrink-0 flex-col gap-2 overflow-y-auto overscroll-contain">
           {checking && <p className="text-xs text-muted-foreground">AI の状態を確かめています…</p>}
           {unavailable && (
             <p role="status" className="text-xs">

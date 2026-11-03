@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
 import { dataSourceRows } from './dataSourceRows'
 
@@ -8,7 +7,6 @@ import { dataSourceRows } from './dataSourceRows'
 export function DataSourcesView({ holidays }: { holidays: HolidayState }) {
   return (
     <section className="flex flex-col gap-3 text-sm" aria-labelledby="data-sources-heading">
-      <Separator />
       <h2 id="data-sources-heading" className="font-medium">
         データの出典
       </h2>
@@ -25,7 +23,10 @@ export function DataSourcesView({ holidays }: { holidays: HolidayState }) {
   )
 }
 
-/** 左パネルの一番下の「データの出典」欄 */
+/**
+ * 「データの出典」欄。運営情報のページ(pages/AboutPage.tsx、#/about)に出し、画面の上の端のリンクから開く。
+ * 地図の OpenStreetMap の表示は、地図の中にも出す(map/BaseMap.tsx)
+ */
 export default function DataSources() {
   const holidays = useHolidayStore((s) => s.holidays)
   const loadHolidays = useHolidayStore((s) => s.load)

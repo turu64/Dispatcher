@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import StepPanels from '@/components/layout/StepPanels'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { applyForm2 } from '@/gtfs/edit/form2'
 import { smallFeed } from '@/gtfs/edit/form2.fixture'
@@ -10,15 +11,12 @@ import { useEditStore } from '@/store/edit'
 import { useGtfsStore } from '@/store/gtfs'
 import { useHolidayStore } from '@/store/holidays'
 import { useReachStore } from '@/store/reach'
-import DateBandStep from './DateBandStep'
-import ExportStep from './ExportStep'
-import PolicyStep from './PolicyStep'
-import ReachStep from './ReachStep'
-import RestoreStep from './RestoreStep'
+import { useStepStore, type StepKey } from '@/store/steps'
 
 /**
  * 画面の流れ(方針の適用 → 対象便の確かめ → 承認 → 前後の比較 → 足し戻し → 元に戻す → 出力)を、
  * 手で作った小さなフィード(gtfs/edit/form2.fixture.ts)で通す。
+ * 手順は画面と同じ左の欄(layout/StepPanels)で描き、開いている手順だけが見えるので、確かめる前に openStep で開く。
  * 到達圏は Web Worker の代わりにその場で computeReach を呼び、参照データは無い(fallback)ものとする。ZIP の書き出しは偽物にする
  * (ZIP の中身は gtfs/write.test.ts が確かめる)。
  */
@@ -32,6 +30,11 @@ vi.mock('@/reach/workerClient', async () => {
 vi.mock('@/reach/refData', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/reach/refData')>()),
   fetchRefData: async (mesh1s: string[]) => ({ ok: false, mesh1s, missing: mesh1s, message: '参照データがありません(テスト)。' }),
+}))
+// 読み込みの手順は、サンプルの有無をサーバーに聞く。ここではサーバーに届かないものとする
+vi.mock('@/gtfs/sample', () => ({
+  fetchSampleGtfsInfo: () => new Promise(() => {}),
+  fetchSampleGtfs: () => new Promise(() => {}),
 }))
 vi.mock('@/gtfs/write', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/gtfs/write')>()),
@@ -53,20 +56,31 @@ function load() {
 function renderSteps() {
   return render(
     <TooltipProvider>
-      <PolicyStep />
-      <DateBandStep />
-      <ReachStep />
-      <RestoreStep />
-      <ExportStep />
+      <StepPanels />
     </TooltipProvider>,
   )
 }
 
-/** 手順の見出し(「2. 減便の方針」など)のカード */
+/** 見えている手順の見出し(「3. 減便の方針」など)のカード */
 function step(title: string): HTMLElement {
   const heading = screen.getByRole('heading', { name: title })
   return heading.closest('[data-slot="card"]') as HTMLElement
 }
+
+/** 手順を開き(上のステッパーの見出しを押したのと同じ)、その手順の見出しのカードを返す */
+function openStep(key: StepKey, title: string): HTMLElement {
+  act(() => {
+    useStepStore.getState().go(key)
+  })
+  return step(title)
+}
+
+const POLICY = '3. 減便の方針'
+const DATE_BAND = '4. 日付と時間帯'
+const REACH = '5. 到達圏(減便の前後)'
+const RESTORE = '6. 足し戻し'
+/** 出力の手順の中の GTFS のタブ(タブの中の見出しには番号を付けない) */
+const EXPORT = 'GTFS を出力'
 
 beforeEach(() => {
   // 今日は 2026-10-20(日本時間)。小さなフィードの有効期間は 2026-10-01〜2026-11-30
@@ -108,7 +122,7 @@ describe('編集の画面の流れ', () => {
     renderSteps()
 
     // ---- 方針:service は曜日の列から推定し、既定の期間は今日から当面の間 ----
-    const policy = step('2. 減便の方針')
+    const policy = openStep('policy', POLICY)
     expect(within(policy).getByLabelText('平日のダイヤ(入れ替える側)')).toHaveProperty('value', 'WK')
     expect(within(policy).getByLabelText('土曜のダイヤ(写す元)')).toHaveProperty('value', 'SA')
     expect(within(policy).getByLabelText('開始日')).toHaveProperty('value', '2026-10-20')
@@ -126,8 +140,10 @@ describe('編集の画面の流れ', () => {
     expect(review.querySelector('[data-code="holidayWithoutException"]')).not.toBeNull()
     expect(review.querySelector('[data-code="leadTimeUnder3"]')).not.toBeNull()
     // 下書きの間は、到達圏の表に「下書き」と出す
-    await waitFor(() => expect(within(step('4. 到達圏(減便の前後)')).getByText('下書き')).toBeTruthy())
+    await waitFor(() => expect(within(openStep('reach', REACH)).getByText('下書き')).toBeTruthy())
     expect(useEditStore.getState().history).toHaveLength(0)
+    // 方針の手順に戻っても、下書きの確かめはそのまま残る(手順は消さずに隠しているため)
+    openStep('policy', POLICY)
 
     const proceed = within(review).getByRole('button', { name: 'この内容で進める' })
     expect(proceed).toHaveProperty('disabled', true)
@@ -142,17 +158,17 @@ describe('編集の画面の流れ', () => {
     expect(summary.textContent).toContain('2026年10月20日(火)〜当面の間')
 
     // ---- 前後の比較:同じ日付の基準と編集後。S9(学校前)は出力のどの日にも便が来ない ----
-    const reach = step('4. 到達圏(減便の前後)')
+    const reach = openStep('reach', REACH)
     await waitFor(() => expect(within(reach).getByRole('heading', { name: '減便の前後' })).toBeTruthy())
     expect(within(reach).queryByText('下書き')).toBeNull()
     const zero = within(reach).getByRole('region', { name: '運行がゼロになる場所' })
     expect(zero.textContent).toContain('学校前')
     expect(zero.textContent).toContain('運行がゼロになる系統:1 系統')
     // 日付は出力の有効期間の中だけ
-    expect(within(step('3. 日付と時間帯')).getByText(/比べられるのは出力の有効期間/)).toBeTruthy()
+    expect(within(openStep('dateBand', DATE_BAND)).getByText(/比べられるのは出力の有効期間/)).toBeTruthy()
 
     // ---- 足し戻し:候補は手がかりの多い順(平日だけの系統 R3 が先頭)----
-    const restore = step('5. 足し戻し')
+    const restore = openStep('restore', RESTORE)
     const candidates = within(restore).getByRole('list', { name: '足し戻す便の候補' })
     const first = within(candidates).getAllByRole('listitem')[0]
     expect(first.textContent).toContain('R3_0730_WK')
@@ -167,17 +183,19 @@ describe('編集の画面の流れ', () => {
     expect(added.textContent).toContain('理由:高校の通学')
     expect(added.textContent).toContain('足し戻した便 1 便、営業運行時間の合計 0時間20分')
     // 足し戻すと、S9 は運行がゼロの停留所でなくなる
-    await waitFor(() => expect(within(step('4. 到達圏(減便の前後)')).getByRole('region', { name: '運行がゼロになる場所' }).textContent).toContain('運行がゼロになる停留所:0 件'))
+    await waitFor(() => expect(within(openStep('reach', REACH)).getByRole('region', { name: '運行がゼロになる場所' }).textContent).toContain('運行がゼロになる停留所:0 件'))
 
     // ---- 元に戻す:足し戻しの前(方針だけ)に戻る ----
+    openStep('policy', POLICY)
     const history = within(policy).getByRole('region', { name: '編集の履歴' })
     expect(within(history).getAllByRole('listitem')).toHaveLength(2)
     fireEvent.click(within(history).getByRole('button', { name: '元に戻す' }))
     expect(useEditStore.getState().history).toHaveLength(1)
+    openStep('restore', RESTORE)
     expect(within(restore).queryByRole('region', { name: '足し戻した便' })).toBeNull()
 
     // ---- 出力:承認済みの計画で作り直して ZIP に書く ----
-    const exportStep = step('6. GTFS を出力')
+    const exportStep = openStep('output', EXPORT)
     expect(exportStep.textContent).toContain('有効期間:2026年10月20日(火)〜2026年11月30日(月)(42日)')
     fireEvent.click(within(exportStep).getByRole('button', { name: 'GTFS を出力する' }))
     await waitFor(() => expect(within(exportStep).getByRole('status').textContent).toContain('出力しました:test_dispatcher_202610200930.zip'))
@@ -197,7 +215,7 @@ describe('編集の画面の流れ', () => {
   it('方針の下書きを「やめる」と、入れた値のまま入力に戻り、履歴は変わらない', () => {
     load()
     renderSteps()
-    const policy = step('2. 減便の方針')
+    const policy = openStep('policy', POLICY)
     fireEvent.click(within(policy).getByLabelText('平日を日祝ダイヤに'))
     expect(within(policy).getByLabelText('日祝のダイヤ(写す元)')).toHaveProperty('value', 'SU')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
@@ -210,7 +228,7 @@ describe('編集の画面の流れ', () => {
   it('期間を 7 日以下にすると、方針の確かめで警告し、承認はできるが出力は止まる', async () => {
     load()
     renderSteps()
-    const policy = step('2. 減便の方針')
+    const policy = openStep('policy', POLICY)
     fireEvent.change(within(policy).getByLabelText('開始日'), { target: { value: '2026-11-24' } })
     expect(within(policy).getByRole('region', { name: '方針の確かめ' }).textContent).toContain('このままでは出力できません')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
@@ -219,7 +237,7 @@ describe('編集の画面の流れ', () => {
     fireEvent.click(within(review).getByRole('button', { name: 'この内容で進める' }))
     expect(useEditStore.getState().history).toHaveLength(1)
 
-    const exportStep = step('6. GTFS を出力')
+    const exportStep = openStep('output', EXPORT)
     expect(within(exportStep).getByRole('button', { name: 'GTFS を出力する' })).toHaveProperty('disabled', true)
     expect(exportStep.textContent).toContain('誤りがあるため出力できません')
     expect(exportStep.querySelector('[data-code="shortValidity"]')).not.toBeNull()

@@ -748,7 +748,7 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
   const s = reach.getState()
   if (s.error) return fail(`到達圏を計算できませんでした(${s.error})。`)
   const snap = s.snapshot
-  if (!snap || !snap.baseline || !snap.comparison) return fail('到達圏の前後の比較がまだできていません。利用者に、手順4の到達圏を確かめるよう伝えてください。')
+  if (!snap || !snap.baseline || !snap.comparison) return fail('到達圏の前後の比較がまだできていません。利用者に、到達圏の手順で減便の前後を確かめるよう伝えてください。')
 
   const total = snap.baseline.summary.coverableCells
   const totalPop = snap.baseline.summary.coverablePopulation

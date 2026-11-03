@@ -1,53 +1,103 @@
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import ChatPanel from '@/components/chat/ChatPanel'
-import DataSources from '@/components/DataSources'
-import DateBandStep from '@/components/steps/DateBandStep'
-import ExportStep from '@/components/steps/ExportStep'
-import LoadStep from '@/components/steps/LoadStep'
-import PolicyStep from '@/components/steps/PolicyStep'
-import ReachStep from '@/components/steps/ReachStep'
-import RestoreStep from '@/components/steps/RestoreStep'
+import SplitPane from '@/components/layout/SplitPane'
+import StepNav from '@/components/layout/StepNav'
+import StepPanels from '@/components/layout/StepPanels'
+import Stepper from '@/components/layout/Stepper'
+import { stepOf, STEPS } from '@/components/steps/registry'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import BaseMap from '@/map/BaseMap'
-import ReachLayers from '@/map/ReachLayers'
+import AboutPage, { ABOUT_HASH } from '@/pages/AboutPage'
+import { useHolidayStore } from '@/store/holidays'
+import { useStepStore } from '@/store/steps'
 
-// 1画面構成:左に手順のパネル、右に地図。
-// 手順の中身は components/steps/ の1手順1ファイル。左パネルの一番下はデータの出典。
-// 手順の並びは「読み込み → 方針 → 日付と時間帯 → 到達圏(前後) → 足し戻し → 出力」(docs/interfaces-1104.md §7)。
-// 日付と到達圏は、方針の結果を見る場所として方針のあとに置く。前提情報(11/6)は 1 と 2 の間に入る。
+function subscribeHash(onChange: () => void): () => void {
+  window.addEventListener('hashchange', onChange)
+  return () => window.removeEventListener('hashchange', onChange)
+}
+
+/** 今のハッシュ(#/about など)。react-dom/server での描画では空 */
+function useHash(): string {
+  return useSyncExternalStore(
+    subscribeHash,
+    () => window.location.hash,
+    () => '',
+  )
+}
+
+// 1画面構成:上の端にアプリ名と運営情報(#/about)へのリンク、左に手順、右に地図。
+// 左の欄は、上の手順の見出し(ステッパー)・開いている手順の中身・下の「戻る」「次へ」・「AI に相談」の順。
+// 手順の並びと、手順ごとに地図を出すか・地図に何を重ねるかは components/steps/registry.ts の一覧が決める(ここは一覧を描くだけ)。
+// 運営情報のページを開いている間も、手順と地図は消さずに隠しておく(入力中の値と地図の表示を残すため)
 export default function App() {
+  const about = useHash() === ABOUT_HASH
+  const current = useStepStore((s) => s.current)
+  const step = stepOf(current)?.def ?? STEPS[0]
+  const showMap = step.showMap
+
+  // 地図を出さない手順の間は、直前に地図を出していた手順の重ねを残す(戻ったときに作り直さないため)
+  const [mapStep, setMapStep] = useState(current)
+  if (showMap && mapStep !== current) setMapStep(current)
+  const Overlay = (stepOf(mapStep)?.def ?? step).mapOverlay
+
+  // 祝日一覧は、画面を開いたときに 1 回だけ読む(方針の期間の祝日や、出力の検証で使う)。
+  // 読めなかった(missing・error)ときの読み込み直しは、祝日を使う手順のボタンから load を呼ぶ
+  useEffect(() => {
+    const { holidays, load } = useHolidayStore.getState()
+    if (holidays.status === 'idle') void load()
+  }, [])
+
+  // 手順を切り替えたら、左の欄の先頭から見せる
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = 0
+  }, [current])
+
   return (
     <TooltipProvider>
-      <div className="flex h-full w-full">
-        <aside className="flex w-[380px] shrink-0 flex-col border-r bg-muted/30" aria-label="手順">
-          {/* 手順が増えて縦にあふれても、カードが縮んで中身が切れないよう、中身は高さを固定しない入れ物に入れる。
-              この入れ物だけが縦に流れ、下の「AI に相談」の欄は固定で置く */}
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="flex min-h-full flex-col gap-4 p-4">
-              <header>
-                <h1 className="text-xl font-semibold">Dispatcher</h1>
-                <p className="text-sm text-muted-foreground">減便ダイヤの判断支援(準備中)</p>
-              </header>
-
-              <LoadStep />
-              <PolicyStep />
-              <DateBandStep />
-              <ReachStep />
-              <RestoreStep />
-              <ExportStep />
-
-              <div className="mt-auto">
-                <DataSources />
-              </div>
-            </div>
+      <div className="flex size-full flex-col">
+        <header className="print-hide flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <h1 className="text-lg font-semibold">Dispatcher</h1>
+            <p className="truncate text-xs text-muted-foreground">減便ダイヤの判断支援(準備中)</p>
           </div>
-          {/* GTFS を読み込むまでは出さない */}
-          <ChatPanel />
-        </aside>
-        <main className="relative min-w-0 flex-1" aria-label="地図">
-          <BaseMap />
-          {/* 到達圏のセル・停留所・駅のレイヤーと凡例。地図の準備ができてから重ねる */}
-          <ReachLayers />
-        </main>
+          <a href={ABOUT_HASH} className="shrink-0 text-xs underline underline-offset-4 hover:text-foreground/80">
+            このサイトについて・データの出典
+          </a>
+        </header>
+
+        <div hidden={about} className="min-h-0 flex-1">
+          <SplitPane
+            showRight={showMap}
+            left={
+              <aside className="flex h-full flex-col bg-muted/30" aria-label="手順">
+                <Stepper />
+                <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+                  <div className={showMap ? 'flex flex-col gap-4 p-4' : 'mx-auto flex w-full max-w-5xl flex-col gap-4 p-4'}>
+                    <StepPanels />
+                  </div>
+                </div>
+                <StepNav />
+                {/* GTFS を読み込むまでは出さない。どの手順でも、左の欄の下に固定で出す */}
+                <ChatPanel />
+              </aside>
+            }
+            right={
+              <main className="relative size-full" aria-label="地図">
+                <BaseMap visible={showMap && !about} />
+                {/* 手順ごとの重ね(到達圏のセル・停留所・駅と凡例など)。地図の準備ができてから重ねる */}
+                {Overlay && <Overlay />}
+              </main>
+            }
+          />
+        </div>
+
+        {about && (
+          <div className="min-h-0 flex-1">
+            <AboutPage />
+          </div>
+        )}
       </div>
     </TooltipProvider>
   )

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import StepPanels from '@/components/layout/StepPanels'
 import PolicyStep from '@/components/steps/PolicyStep'
 import { fakeApi } from '@/claude/session.fixture'
 import type { SessionPostBody } from '@/claude/session'
@@ -21,9 +22,16 @@ import {
   type TokenStorage,
 } from '@/store/chat'
 import { useEditStore } from '@/store/edit'
+import { useStepStore } from '@/store/steps'
 import { AskRestoreButton } from './AskRestoreButton'
 import ChatPanel from './ChatPanel'
 import SimpleMarkdown from './simpleMarkdown'
+
+// 手順の欄(StepPanels)の読み込みの手順は、サンプルの有無をサーバーに聞く。ここではサーバーに届かないものとする
+vi.mock('@/gtfs/sample', () => ({
+  fetchSampleGtfsInfo: () => new Promise(() => {}),
+  fetchSampleGtfs: () => new Promise(() => {}),
+}))
 
 const NOW = new Date('2026-11-04T00:30:00Z')
 
@@ -327,14 +335,14 @@ describe('AI に相談の欄', () => {
     expect(screen.getByText('調査の間は、この画面を開いたままにしてください')).toBeTruthy()
   })
 
-  it('下書きの知らせに、該当する手順へ移るボタンが付く。押すとその手順の欄に焦点が移る', async () => {
+  it('下書きの知らせに、該当する手順へ移るボタンが付く。押すとその手順が開き、欄に焦点が移る', async () => {
     const scroll = vi.fn()
     Element.prototype.scrollIntoView = scroll
     const { store, fake } = setup()
     render(
       <>
         <ChatPanel store={store} />
-        <PolicyStep />
+        <StepPanels />
       </>,
     )
     await waitFor(() => expect(box().disabled).toBe(false))
@@ -342,11 +350,23 @@ describe('AI に相談の欄', () => {
     act(() => {
       fake.last().push({ type: 'tool_call', id: 'sevt_1', name: 'apply_policy', input: POLICY_INPUT })
     })
-    const jump = await screen.findByRole('button', { name: '手順2へ移る' })
+    // 番号と名前は手順の一覧(steps/registry.ts)の並びから出す
+    const jump = await screen.findByRole('button', { name: '手順3「減便の方針」へ移る' })
     expect(screen.getByText('下書き d1 を作りました。上の欄で確かめて承認してください')).toBeTruthy()
+    // まだ読み込みの手順を開いていて、方針の手順は隠れている
+    expect(useStepStore.getState().current).toBe('load')
+    expect(screen.queryByRole('heading', { name: '3. 減便の方針' })).toBeNull()
     fireEvent.click(jump)
+    expect(useStepStore.getState().current).toBe('policy')
+    expect(screen.getByRole('heading', { name: '3. 減便の方針' })).toBeTruthy()
     expect(scroll).toHaveBeenCalled()
     expect(document.activeElement?.id).toBe('step-policy')
+  })
+
+  it('会話のスクロールが端に着いても、左の欄やページに伝わらない(overscroll-behavior: contain)', () => {
+    const { store } = setup()
+    render(<ChatPanel store={store} />)
+    expect(screen.getByRole('log', { name: 'AI との会話' }).className).toContain('overscroll-contain')
   })
 })
 
@@ -392,9 +412,9 @@ describe('AI に候補を聞く', () => {
 
   it('外から渡した理由(方針の下書きの確認中など)でも押せなくする', async () => {
     const { store } = setup()
-    render(<AskRestoreButton store={store} blocked="手順2の方針の下書きを承認するか、やめてから聞いてください。" />)
+    render(<AskRestoreButton store={store} blocked="減便の方針の下書きを承認するか、やめてから聞いてください。" />)
     const button = screen.getByRole('button', { name: 'AI に候補を聞く' }) as HTMLButtonElement
-    await waitFor(() => expect(screen.getByText('手順2の方針の下書きを承認するか、やめてから聞いてください。')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('減便の方針の下書きを承認するか、やめてから聞いてください。')).toBeTruthy())
     expect(button.disabled).toBe(true)
   })
 })

@@ -1,6 +1,7 @@
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { jumpToStep, type StepKey } from '@/components/steps/stepIds'
+import { stepOf } from '@/components/steps/registry'
+import { jumpToStep, type JumpStepKey } from '@/components/steps/stepIds'
 import type { ChatItem } from '@/store/chat'
 import SimpleMarkdown from './simpleMarkdown'
 
@@ -16,7 +17,11 @@ const DONE_LABELS: Record<string, string> = {
   save_research: '調査の結果を保存しました',
 }
 
-const STEP_BUTTONS: Record<StepKey, string> = { policy: '手順2へ移る', restore: '手順5へ移る' }
+/** 下書きの知らせの「手順へ移る」ボタンの文。番号は手順の一覧(steps/registry.ts)の並びから出す */
+function jumpLabel(step: JumpStepKey): string {
+  const found = stepOf(step)
+  return found ? `手順${found.number}「${found.def.title}」へ移る` : '手順へ移る'
+}
 
 function stripEllipsis(label: string): string {
   return label.replace(/…$/, '')
@@ -78,7 +83,7 @@ export default function ChatMessages({ items }: { items: readonly ChatItem[] }) 
               <li key={item.id} data-kind="draft" className="flex flex-col gap-1.5 rounded-md border border-dashed px-2 py-1.5 text-xs">
                 <p className="break-words">{item.text}</p>
                 <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => jumpToStep(item.step)}>
-                  {STEP_BUTTONS[item.step]}
+                  {jumpLabel(item.step)}
                 </Button>
               </li>
             )

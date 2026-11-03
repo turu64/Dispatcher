@@ -135,3 +135,48 @@
     @apply font-sans;
     }
 }
+
+/*
+ * 印刷の土台。手順の見出し(ステッパー)・地図・AI に相談の欄・上の端・「戻る」「次へ」には .print-hide を付けてあり、印刷では出さない。
+ * 画面に .print-area(変更指示書・周知文など)があれば、それだけを出す:.print-area の外の要素は隠し、
+ * .print-area を含む入れ物は高さの固定とスクロールを外して、中身が1ページ目で切れないようにする。
+ * 隠している手順やタブ([hidden])の中の .print-area は数えない(開いている手順に .print-area が無ければ、ふだんの印刷のまま)。
+ * 印刷のボタンなど、.print-area の中でも紙に要らないものには .print-hide を付ける
+ */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+
+  .print-hide {
+    display: none !important;
+  }
+
+  body:has(.print-area:not([hidden] *)) *:not(.print-area, .print-area *, :has(.print-area:not([hidden] *))) {
+    display: none !important;
+  }
+
+  body:has(.print-area:not([hidden] *)) *:has(.print-area:not([hidden] *)) {
+    display: block !important;
+    position: static !important;
+    overflow: visible !important;
+    width: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: none !important;
+  }
+}

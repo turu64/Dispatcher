@@ -15,6 +15,7 @@ import {
   type RestoreHint,
   type RestoreHintContext,
 } from '@/gtfs/edit/restore'
+import { overlapLongBreaks } from '@/gtfs/edit/facilityHours'
 import { createRouteDirectionTimeline } from '@/gtfs/edit/stopDiff'
 import { activeServiceIds } from '@/gtfs/calendar'
 import { formatDateJa } from '@/lib/dates'
@@ -37,7 +38,7 @@ import {
 import { STEP_IDS } from './stepIds'
 import { CandidateGroups } from './restore/CandidateGroups'
 import { compareByTime, compareCandidates, groupCandidates, tripEndpoints, type Candidate } from './restore/grouping'
-import { AiPicks, SelectedTrips } from './restore/PickLists'
+import { AiPicks, FacilityEvidence, SelectedTrips } from './restore/PickLists'
 import { TripLine } from './restore/TripLine'
 
 /** 到達圏を使う2つの手がかりの説明(date は比較の日付 'YYYYMMDD') */
@@ -255,6 +256,11 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   const selectedNow = selected.filter((id) => candidateById.has(id))
   const selectedSet = new Set(selectedNow)
   const schoolSet = new Set(school)
+  // 学校の長期休業が減便の期間と重なる便の注意(休校日運休(学)の印は自動で付けない)。期間の終わりが「当面の間」なら出力の有効期間の末日まで
+  const schoolNotes = schoolBreakNotes(
+    selectedNow.map((id) => candidateById.get(id)!),
+    { start: plan.period.start, end: plan.period.end ?? version.report.validity.end },
+  )
 
   // 利用者が方針の下書きを確かめている間は、足し戻さない(下書きを黙って置き換えないため)
   const policyDraft = draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draftActor(draft) === 'user'
@@ -425,6 +431,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       <SelectedTrips
         trips={selectedNow.map((id) => candidateById.get(id)!)}
         school={schoolSet}
+        schoolNotes={schoolNotes}
         onSchool={(id, checked) => setSchool((s) => (checked ? (s.includes(id) ? s : [...s, id]) : s.filter((x) => x !== id)))}
         onRemove={(id) => select(id, false)}
       />
@@ -462,6 +469,26 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   )
 }
 
+/**
+ * 選んだ便ごとの、学校の長期休業が減便の期間と重なるときの注意の文(便の id → 文)。窓に当たる学校の、調べた長期休業
+ * (HintFacility.longBreaks)のうち減便の期間と重なるものを、休業の名前と期間つきで出す。重ならなければ便の項目を作らない。
+ * 期間が1年を超えると同じ休業が年ごとに重なる(overlapLongBreaks は年ごとに返す)が、文は年を含まないので、同じ文は1つにまとめる
+ */
+function schoolBreakNotes(trips: readonly Candidate[], period: { start: string; end: string | null }): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  for (const c of trips) {
+    const notes = new Set<string>()
+    for (const n of matchedFacilities(c.detail.facilities)) {
+      if (n.facility.kind !== 'school') continue
+      for (const b of overlapLongBreaks(n.facility.longBreaks, period)) {
+        notes.add(`${n.facility.name}:期間中に${b.name}(${b.text})が重なります。休校日運休(学)の印を付けるか確かめてください。`)
+      }
+    }
+    if (notes.size > 0) out.set(c.trip.tripId, [...notes])
+  }
+  return out
+}
+
 /** 選んだ便ごとに出す、学校・病院の理由の文の上限 */
 const MAX_REASONS_PER_TRIP = 3
 
@@ -474,7 +501,7 @@ const MAX_REASONS_PER_TRIP = 3
 function SelectedFacilityReasons({ trips, onUse }: { trips: readonly Candidate[]; onUse: (reason: string) => void }) {
   const rows = trips.flatMap((c) => {
     const matched = matchedFacilities(c.detail.facilities).slice(0, MAX_REASONS_PER_TRIP)
-    return matched.length > 0 ? [{ c, texts: matched.map(nearFacilityText) }] : []
+    return matched.length > 0 ? [{ c, matched, texts: matched.map(nearFacilityText) }] : []
   })
   if (rows.length === 0) return null
   const single = trips.length === 1
@@ -487,16 +514,17 @@ function SelectedFacilityReasons({ trips, onUse }: { trips: readonly Candidate[]
         </p>
       )}
       <ul className="flex flex-col divide-y rounded-md border">
-        {rows.map(({ c, texts }) => (
+        {rows.map(({ c, matched, texts }) => (
           <li key={c.trip.tripId} className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1 px-2 py-1">
             <span className="flex min-w-0 flex-col gap-0.5">
               <span>
                 <span className="font-medium tabular-nums">{c.trip.firstDeparture ?? '—'}</span> {c.trip.routeName}{' '}
                 <span className="font-mono text-[10px] text-muted-foreground">{c.trip.tripId}</span>
               </span>
-              {texts.map((t) => (
-                <span key={t} className="break-words text-muted-foreground">
-                  {t}
+              {texts.map((t, i) => (
+                <span key={t} className="flex flex-col gap-0.5">
+                  <span className="break-words text-muted-foreground">{t}</span>
+                  <FacilityEvidence near={matched[i]} />
                 </span>
               ))}
             </span>

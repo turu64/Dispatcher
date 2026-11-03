@@ -1,7 +1,141 @@
+import { useId, useState } from 'react'
+import { ExternalLink } from 'lucide-react'
+import { checkedAtText, safeUrl } from '@/claude/research'
 import { Button } from '@/components/ui/button'
 import type { AddBackItem } from '@/gtfs/edit/ops'
+import { FACILITY_WINDOW_NAMES, type HintFacility, type NearFacility } from '@/gtfs/edit/restore'
 import type { Candidate } from './grouping'
 import { TripLine } from './TripLine'
+
+/** 調べた結果の確認日時が古いとみなす日数。これを超えたら、出典で確かめるよう添える */
+const STALE_CHECK_DAYS = 30
+
+/** 確認日時(ISO 8601)が now の STALE_CHECK_DAYS 日より前か。日時を読めなければ false(古いとは決めつけない) */
+function isStaleCheck(checkedAt: string, now: number): boolean {
+  const t = Date.parse(checkedAt)
+  return Number.isFinite(t) && now - t > STALE_CHECK_DAYS * 86_400_000
+}
+
+/** 古い確認日時に添える注意 */
+const STALE_CHECK_NOTE = `${STALE_CHECK_DAYS}日より前の確認です。出典で確かめてください。`
+
+/** 施設の時間帯の窓や長期休業を決めるのに使った、調べた事実(使い道つき) */
+interface EvidenceFact {
+  label: string
+  value: string
+  url: string | null
+  uses: string[]
+}
+
+/** 施設の窓と長期休業に使った事実を、同じラベルと値でまとめて集める */
+function evidenceFacts(f: HintFacility): EvidenceFact[] {
+  const out: EvidenceFact[] = []
+  const add = (fact: { label: string; value: string; url: string | null } | undefined, use: string) => {
+    if (!fact) return
+    const hit = out.find((e) => e.label === fact.label && e.value === fact.value)
+    if (hit) {
+      if (!hit.uses.includes(use)) hit.uses.push(use)
+    } else out.push({ label: fact.label, value: fact.value, url: fact.url, uses: [use] })
+  }
+  for (const timing of ['arrive', 'depart'] as const) {
+    const w = f.windows[timing]
+    if (w.source === 'research') add(w.fact, `${FACILITY_WINDOW_NAMES[f.kind][timing]}の窓に使用`)
+  }
+  for (const b of f.longBreaks) add(b.fact, '長期休業の重なりの確認に使用')
+  return out
+}
+
+/** 窓の出どころの文 */
+function windowSourceText(f: HintFacility): string {
+  const sources = [f.windows.arrive.source, f.windows.depart.source]
+  if (sources.every((s) => s === 'research')) return '調べた結果'
+  if (sources.every((s) => s === 'default')) return '既定'
+  return '調べた結果と既定'
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
+/**
+ * 学校・病院の判断材料の理由の文の下に出す、調べた要点(開閉できる)。閉じていても、窓の出どころと確認日時
+ * (30 日を超えたら注意)は見える。開くと、窓と長期休業を決めた事実(受付時間・始業・終業・休業)を出典のリンクつきで出す。
+ * 数と時刻はコードが読んだもの(AI の文ではない)。確認日時は調べた結果のもの
+ */
+export function FacilityEvidence({ near }: { near: NearFacility }) {
+  const [open, setOpen] = useState(false)
+  // 画面を開いた時点の日時で、確認日時が古いかを決める(再描画のたびに変わらない)
+  const [now] = useState(() => Date.now())
+  const f = near.facility
+  const research = f.research
+  const facts = evidenceFacts(f)
+  const panelId = useId()
+  const stale = research ? isStaleCheck(research.checkedAt, now) : false
+  return (
+    <div className="flex flex-col gap-0.5 text-[11px]">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-left font-medium underline-offset-2 hover:underline"
+          aria-expanded={open}
+          aria-controls={panelId}
+          aria-label={`${f.name}の調べた要点`}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <span aria-hidden="true" className="w-3 text-muted-foreground">
+            {open ? '▾' : '▸'}
+          </span>
+          調べた要点
+        </button>
+        <span className="text-muted-foreground">窓は{windowSourceText(f)}</span>
+        {research && (
+          <span className="text-muted-foreground">
+            確認日時 {checkedAtText(research.checkedAt)}・{research.origin === 'demo' ? 'デモ用の保存済みの結果' : 'Web で調べた結果'}
+          </span>
+        )}
+        {stale && <span className="font-medium text-amber-800 dark:text-amber-300">{STALE_CHECK_NOTE}</span>}
+      </div>
+      {open && (
+        <div id={panelId} className="flex flex-col gap-0.5 rounded-md border bg-muted/30 px-2 py-1">
+          {facts.length > 0 ? (
+            <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+              {facts.map((e) => {
+                const url = e.url ? safeUrl(e.url) : null
+                return (
+                  <div key={`${e.label}\t${e.value}`} className="contents">
+                    <dt className="text-muted-foreground">{e.label}</dt>
+                    <dd className="break-words">
+                      {e.value}
+                      <span className="ml-1 text-muted-foreground">({e.uses.join('・')})</span>{' '}
+                      {url ? (
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 break-all underline underline-offset-2">
+                          出典 {hostOf(url)}
+                          <ExternalLink className="size-3 shrink-0" aria-hidden="true" />
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground">出典を表示できません</span>
+                      )}
+                    </dd>
+                  </div>
+                )
+              })}
+            </dl>
+          ) : !research ? (
+            <p className="text-muted-foreground">この施設は前提情報で調べていないため、時間帯の窓は既定です。</p>
+          ) : research.status === 'not_found' ? (
+            <p className="text-muted-foreground">調べましたが見つからなかったため、時間帯の窓は既定です。</p>
+          ) : (
+            <p className="text-muted-foreground">調べた結果から受付時間・始業・終業を読めなかったため、時間帯の窓は既定です。</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /**
  * 「AI に候補を聞く」の結果(Claude の足し戻しの下書き)にある便を、一覧の先頭にまとめて出す(指摘5)。
@@ -54,11 +188,14 @@ export function AiPicks({
 export function SelectedTrips({
   trips,
   school,
+  schoolNotes,
   onSchool,
   onRemove,
 }: {
   trips: readonly Candidate[]
   school: ReadonlySet<string>
+  /** 便ごとの、学校の長期休業が減便の期間と重なるときの注意(休校日運休(学)のチェックの近くに出す。チェックは自動で付けない) */
+  schoolNotes?: ReadonlyMap<string, readonly string[]>
   onSchool: (tripId: string, checked: boolean) => void
   onRemove: (tripId: string) => void
 }) {
@@ -88,6 +225,11 @@ export function SelectedTrips({
                 外す
               </Button>
             </span>
+            {(schoolNotes?.get(c.trip.tripId) ?? []).map((t) => (
+              <p key={t} className="w-full break-words text-amber-900 dark:text-amber-200" data-testid="school-break-note">
+                {t}
+              </p>
+            ))}
           </li>
         ))}
       </ul>

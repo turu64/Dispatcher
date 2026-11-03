@@ -6,6 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { describeServices, feedValidity, type ServiceRole } from '@/gtfs/edit/services'
+import type { GtfsFeed } from '@/gtfs/load'
+import { formatDateJa } from '@/lib/dates'
 import { fetchSampleGtfs, fetchSampleGtfsInfo, type SampleGtfsInfo } from '@/gtfs/sample'
 import { loadGtfsInWorker } from '@/gtfs/workerClient'
 import { useEditStore } from '@/store/edit'
@@ -15,6 +18,62 @@ import { useReachStore } from '@/store/reach'
 type SampleState = { status: 'checking' } | { status: 'ready'; info: SampleGtfsInfo } | { status: 'unreachable' }
 
 const MAX_WARNINGS_SHOWN = 10
+const MAX_SERVICES_SHOWN = 12
+
+const ROLE_LABELS: Record<ServiceRole, string> = {
+  weekday: '平日',
+  saturday: '土曜',
+  sunday: '日曜',
+  saturdaySunday: '土日',
+  other: 'その他',
+}
+
+/**
+ * 読み込んだ GTFS の版と期間:feed_version、有効期間、service_id ごとの便数。
+ * 出力の feed_version と有効期間を決める材料なので、読み込んだ直後に見せる。
+ * 有効期間は feed_info の値で、無ければ calendar・calendar_dates の端から求める
+ */
+function FeedSummary({ feed }: { feed: GtfsFeed }) {
+  const info = feed.tables.get('feed_info')?.rows[0]
+  const version = (info?.feed_version ?? '').trim()
+  const validity = feedValidity(feed)
+  const fromInfo = (info?.feed_start_date ?? '').trim() !== '' && (info?.feed_end_date ?? '').trim() !== ''
+  const services = describeServices(feed, null)
+  const shown = services.slice(0, MAX_SERVICES_SHOWN)
+  return (
+    <dl className="flex flex-col gap-0.5 text-sm" aria-label="読み込んだ GTFS の版と期間">
+      <div>
+        <dt className="inline">feed_version:</dt>
+        <dd className="inline font-mono break-all">{version || '(空)'}</dd>
+      </div>
+      <div>
+        <dt className="inline">有効期間:</dt>
+        <dd className="inline">
+          {validity ? `${formatDateJa(validity.start)}〜${formatDateJa(validity.end)}` : '(求められません)'}
+          {validity && !fromInfo && '(feed_info に無いため、calendar・calendar_dates から求めました)'}
+        </dd>
+      </div>
+      <div>
+        <dt>service_id ごとの便数:</dt>
+        <dd>
+          {services.length === 0 ? (
+            '(service_id がありません)'
+          ) : (
+            <ul className="list-disc pl-5">
+              {shown.map((sv) => (
+                <li key={sv.serviceId}>
+                  <span className="font-mono break-all">{sv.serviceId}</span>({ROLE_LABELS[sv.role]}):
+                  <span className="tabular-nums">{sv.tripCount.toLocaleString('ja-JP')}</span> 便
+                </li>
+              ))}
+              {services.length > shown.length && <li>ほか {services.length - shown.length} 件</li>}
+            </ul>
+          )}
+        </dd>
+      </div>
+    </dl>
+  )
+}
 
 /** 手順1:GTFS の読み込み。読み込んだ GTFS は store(useGtfsStore)に入る */
 export default function LoadStep() {
@@ -114,6 +173,7 @@ export default function LoadStep() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            <FeedSummary feed={feed} />
             <Table>
               <TableHeader>
                 <TableRow>

@@ -147,4 +147,82 @@ describe('ExportStep', () => {
     expect(text).toContain('全曜日で便がなくなる系統:1 系統(3)')
     expect(text).toContain('Dispatcher で減便を反映して加工しています')
   })
+
+  it('feed_version の入力欄:既定は空で出力の日時、入れた値が出力と ZIP の feed_info に入る', async () => {
+    act(() => {
+      useEditStore.getState().propose(policy(), 'user')
+      useEditStore.getState().commit()
+    })
+    render(<ExportStep />)
+    const field = screen.getByLabelText('出力する feed_version') as HTMLInputElement
+    expect(field.value).toBe('')
+    expect(field.placeholder).toContain('202610201200')
+    expect(screen.getByText(/入力の feed_version は 202609171038/)).toBeTruthy()
+
+    fireEvent.change(field, { target: { value: '202611050900' } })
+    expect(useEditStore.getState().feedVersion).toBe('202611050900')
+    expect(document.body.textContent).toContain('202609171038 → 202611050900')
+    fireEvent.click(screen.getByRole('button', { name: 'GTFS を出力する' }))
+    await waitFor(() => expect(writeGtfsZip).toHaveBeenCalledTimes(1))
+    const input = writeGtfsZip.mock.calls[0][0]
+    expect(input.edited.tables.get('feed_info')?.rows[0].feed_version).toBe('202611050900')
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('feed_version 202611050900'))
+  })
+
+  it('入れた feed_version が入力以下なら注意を出し、同じなら出力を止める。読み込み直すと空に戻る', () => {
+    act(() => {
+      useEditStore.getState().propose(policy(), 'user')
+      useEditStore.getState().commit()
+    })
+    render(<ExportStep />)
+    const field = screen.getByLabelText('出力する feed_version')
+    const button = screen.getByRole('button', { name: 'GTFS を出力する' })
+
+    fireEvent.change(field, { target: { value: '202501010000' } })
+    expect(document.querySelector('[data-code="form2.feedVersionNotIncreasing"]')?.textContent).toContain('以下です')
+    expect(button).toHaveProperty('disabled', false)
+
+    // 入力と同じ値は検証の誤り(基準と同じ feed_version)。出力を止める
+    fireEvent.change(field, { target: { value: '202609171038' } })
+    expect(button).toHaveProperty('disabled', true)
+
+    // 改行などは入れられない
+    fireEvent.change(field, { target: { value: 'a\tb' } })
+    expect(button).toHaveProperty('disabled', true)
+    expect(screen.getAllByText('feed_version に改行や制御文字は使えません。').length).toBeGreaterThan(0)
+
+    fireEvent.change(field, { target: { value: '202611050900' } })
+    expect(document.querySelector('[data-code="form2.feedVersionNotIncreasing"]')).toBeNull()
+    expect(button).toHaveProperty('disabled', false)
+
+    act(() => useEditStore.getState().setBase({ feed: smallFeed(), zip: new ArrayBuffer(0), label: 'dohoku.zip', sample: SAMPLE }))
+    expect(useEditStore.getState().feedVersion).toBe('')
+  })
+
+  it('trip_id の注意を出す。写す元のダイヤは方針に合わせる(方針が無いときは「入れ替え先」)', () => {
+    render(<ExportStep />)
+    expect(screen.getByTestId('trip-id-note').textContent).toBe(
+      '足し戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は入れ替え先のダイヤの運用とは対応しません。',
+    )
+    act(() => {
+      useEditStore.getState().propose(policy(), 'user')
+      useEditStore.getState().commit()
+    })
+    expect(screen.getByTestId('trip-id-note').textContent).toBe(
+      '足し戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は出力の土曜ダイヤの運用とは対応しません。',
+    )
+  })
+
+  it('方針が「平日を日祝ダイヤに」なら、trip_id の注意は日祝ダイヤと書く', () => {
+    const op = policy()
+    if (op.type !== 'applyPolicy') throw new Error('方針の操作ではありません')
+    act(() => {
+      useEditStore.getState().propose({ ...op, settings: { ...op.settings, kind: 'weekdayToSundayHoliday', replacementService: 'SU' } }, 'user')
+      useEditStore.getState().commit()
+    })
+    render(<ExportStep />)
+    expect(screen.getByTestId('trip-id-note').textContent).toBe(
+      '足し戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は出力の日祝ダイヤの運用とは対応しません。',
+    )
+  })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GtfsFeed, GtfsRow } from '../load'
-import { applyForm2, type Form2Result } from './form2'
+import { applyForm2, defaultFeedVersion, feedVersionProblem, type Form2Result } from './form2'
 import {
   basePlan,
   dohokuShapedFeed,
@@ -255,6 +255,49 @@ describe('applyForm2', () => {
     const later = versionOf('209912312359')
     expect(later.report.feedVersion.after).toBe('202611041200')
     expect(codes(later)).toEqual(['feedVersionNotIncreasing'])
+  })
+
+  it('feedVersion を渡すと、その値が feed_info に入る(既定の規則は使わない)', () => {
+    const withOpts = (feedVersion: string | undefined, feed = smallFeed()) => {
+      const outcome = applyForm2(feed, basePlan(), { ...OPTS, feedVersion })
+      if (!outcome.ok) throw new Error(outcome.message)
+      return outcome.result
+    }
+    const custom = withOpts('  202611050900  ')
+    expect(custom.report.feedVersion).toEqual({ before: '202609171038', after: '202611050900' })
+    expect(rows(custom.feed, 'feed_info')[0].feed_version).toBe('202611050900')
+    expect(codes(custom)).toEqual([])
+    // 12 桁でない値もそのまま入る(入力の前に付け足さない)
+    const text = withOpts('2026年11月減便')
+    expect(rows(text.feed, 'feed_info')[0].feed_version).toBe('2026年11月減便')
+    expect(codes(text)).toEqual([])
+    // 空・空白だけ・省略は既定の規則
+    for (const v of [undefined, '', '   ']) {
+      expect(rows(withOpts(v).feed, 'feed_info')[0].feed_version).toBe('202611041200')
+    }
+    // 入力と同じ、または入力より小さい値は警告(入力が 12 桁でなくても比べる)
+    const same = withOpts('202609171038')
+    expect(codes(same)).toEqual(['feedVersionNotIncreasing'])
+    expect(codes(withOpts('202501010000'))).toEqual(['feedVersionNotIncreasing'])
+    const feed = smallFeed()
+    const named = withRows(feed, 'feed_info', [{ ...rows(feed, 'feed_info')[0], feed_version: '2026.10 改正' }])
+    expect(codes(withOpts('2026.09', named))).toEqual(['feedVersionNotIncreasing'])
+    expect(codes(withOpts('2026.11', named))).toEqual([])
+    // 入力が空なら比べない
+    const empty = withRows(feed, 'feed_info', [{ ...rows(feed, 'feed_info')[0], feed_version: '' }])
+    expect(codes(withOpts('1', empty))).toEqual([])
+  })
+
+  it('feedVersion に改行などの制御文字や長すぎる値は使えない', () => {
+    expect(feedVersionProblem('202611050900')).toBeNull()
+    expect(feedVersionProblem('')).toBeNull()
+    expect(feedVersionProblem('a\nb')).toContain('改行')
+    expect(feedVersionProblem('a'.repeat(101))).toContain('100 文字以内')
+    const outcome = applyForm2(smallFeed(), basePlan(), { ...OPTS, feedVersion: 'x\ty' })
+    expect(outcome.ok).toBe(false)
+    expect(defaultFeedVersion('', '202611041200')).toBe('202611041200')
+    expect(defaultFeedVersion('202609171038', '202611041200')).toBe('202611041200')
+    expect(defaultFeedVersion('v1', '202611041200')).toBe('v1_dispatcher_202611041200')
   })
 
   it('feed_info が無ければ agency から作って警告する', () => {

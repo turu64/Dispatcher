@@ -15,6 +15,12 @@ import { compareStrings, stopTimesByTrip, tripSignature } from './signature'
 export interface Form2Options {
   /** 作成日時 'YYYYMMDDhhmm'(日本時間)。feed_version に使う */
   generatedAt: string
+  /**
+   * 利用者が決めた feed_version。省く・空(空白だけを含む)なら既定の規則(defaultFeedVersion)。
+   * 書き出しの後で書き換えず、ここで渡す(検証が feed_info の同じ値を見るため)。
+   * 入力の feed_version と同じ・以下なら feedVersionNotIncreasing の警告を出す
+   */
+  feedVersion?: string
 }
 
 export type Form2Outcome = { ok: true; result: Form2Result } | { ok: false; message: string }
@@ -64,6 +70,31 @@ export interface Form2Report {
 }
 
 const GENERATED_AT = /^\d{12}$/
+const TWELVE_DIGITS = /^\d{12}$/
+// 改行・制御文字は CSV の1行を壊すので入れない
+function hasControlChar(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c < 0x20 || c === 0x7f) return true
+  }
+  return false
+}
+/** 長すぎる値は経路検索側の取り込みで切られることがある */
+export const MAX_FEED_VERSION_LENGTH = 100
+
+/** 既定の feed_version の規則:入力が空か 12 桁なら作成日時、それ以外は '{入力}_dispatcher_{作成日時}' */
+export function defaultFeedVersion(before: string, generatedAt: string): string {
+  const b = before.trim()
+  return b === '' || TWELVE_DIGITS.test(b) ? generatedAt : `${b}_dispatcher_${generatedAt}`
+}
+
+/** 利用者が入れた feed_version の問題。問題が無ければ null(空は既定にするので問題としない) */
+export function feedVersionProblem(value: string): string | null {
+  const v = value.trim()
+  if (hasControlChar(v)) return 'feed_version に改行や制御文字は使えません。'
+  if (v.length > MAX_FEED_VERSION_LENGTH) return `feed_version は ${MAX_FEED_VERSION_LENGTH} 文字以内にしてください。`
+  return null
+}
 /** 警告の文に並べる例の数 */
 const MAX_EXAMPLES = 5
 
@@ -147,6 +178,8 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   if (!GENERATED_AT.test(opts.generatedAt)) {
     return { ok: false, message: `作成日時の形が正しくありません(${opts.generatedAt})。YYYYMMDDhhmm の12桁にしてください。` }
   }
+  const versionProblem = opts.feedVersion === undefined ? null : feedVersionProblem(opts.feedVersion)
+  if (versionProblem) return { ok: false, message: versionProblem }
   const errors = checkPolicy(base, plan).filter((p) => p.severity === 'error')
   if (errors.length > 0) return { ok: false, message: errors.map((e) => e.message).join('\n') }
 
@@ -436,7 +469,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   }
 
   // ---- §5.7 feed_info ----
-  const feedInfo = feedInfoOf(base, validity, opts.generatedAt, warn)
+  const feedInfo = feedInfoOf(base, validity, opts.generatedAt, opts.feedVersion?.trim() || undefined, warn)
 
   // ---- ほかの警告 ----
   const routeIds = new Set((base.tables.get('routes')?.rows ?? []).map((r) => trimmed(r.route_id)))
@@ -494,7 +527,6 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
 
 const FEED_INFO_DATE_FIELDS = ['feed_start_date', 'feed_end_date', 'feed_version'] as const
 const FEED_INFO_FIELDS = ['feed_publisher_name', 'feed_publisher_url', 'feed_lang', ...FEED_INFO_DATE_FIELDS]
-const TWELVE_DIGITS = /^\d{12}$/
 
 /**
  * feed_info(§5.7)。1行目の feed_start_date・feed_end_date を新しい有効期間に、feed_version を規則で書き換える。
@@ -504,13 +536,15 @@ function feedInfoOf(
   base: GtfsFeed,
   validity: { start: string; end: string },
   generatedAt: string,
+  custom: string | undefined,
   warn: (code: string, message: string) => void,
 ): { table: GtfsTable; version: { before: string; after: string } } {
   const table = base.tables.get('feed_info')
   const first = table?.rows[0]
   const before = trimmed(first?.feed_version)
-  const after = before === '' || TWELVE_DIGITS.test(before) ? generatedAt : `${before}_dispatcher_${generatedAt}`
-  if (TWELVE_DIGITS.test(before) && after <= before) {
+  const after = custom ?? defaultFeedVersion(before, generatedAt)
+  // 既定の規則では入力が 12 桁のときだけ比べる(それ以外は入力を前に付けるので必ず大きい)。利用者が決めた値は、入力があれば常に比べる
+  if ((custom !== undefined ? before !== '' : TWELVE_DIGITS.test(before)) && after <= before) {
     warn('feedVersionNotIncreasing', `新しい feed_version(${after})が入力の feed_version(${before})以下です。公開先が新しい版と見なさないことがあります。`)
   }
   const version = { before, after }

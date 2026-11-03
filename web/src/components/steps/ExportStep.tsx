@@ -1,23 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import StepSection from '@/components/StepSection'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { restoreTotals } from '@/gtfs/edit/diff'
-import { applyForm2, type Form2Result } from '@/gtfs/edit/form2'
-import { planOf } from '@/gtfs/edit/ops'
+import { applyForm2, defaultFeedVersion, feedVersionProblem, type Form2Result } from '@/gtfs/edit/form2'
+import { planOf, type PolicyKind } from '@/gtfs/edit/ops'
 import { form2Texts, timingNotices, validateEdit, type ValidationIssue } from '@/gtfs/validate/edit'
 import { exportFileName, writeGtfsZip } from '@/gtfs/write'
 import { formatDateJa, todayInJapan } from '@/lib/dates'
 import { diffOf, generatedAtOf, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { FromTo, IssueList, NoteList } from './editParts'
-import { attributionOf, generatedAtText, restoreTotalsText } from './editText'
+import { attributionOf, generatedAtText, REPLACEMENT_LABELS, restoreTotalsText } from './editText'
 
 interface Exported {
   url: string
   fileName: string
   generatedAt: string
   feedVersion: string
+}
+
+/**
+ * 足し戻した便と trip_id の注意(取り決め 1104 §5.4 の運用の違い)。
+ * 写す元のダイヤは方針で決まる(土曜・日祝)。方針がまだ無いときは「入れ替え先のダイヤ」と書く
+ */
+function tripIdNote(kind: PolicyKind | null): string {
+  const target = kind ? `出力の${REPLACEMENT_LABELS[kind]}ダイヤ` : '入れ替え先のダイヤ'
+  return `足し戻した便の trip_id は元の平日ダイヤのままで、trip_id の運用番号は${target}の運用とは対応しません。`
 }
 
 function errorsIn(issues: readonly ValidationIssue[]): ValidationIssue[] {
@@ -38,6 +49,9 @@ export default function ExportStep() {
   const holidays = holidayState.status === 'ready' ? holidayState.list : null
   const plan = useMemo(() => planOf(history), [history])
   const version = lastVersion({ versions })
+  const feedVersion = useEditStore((s) => s.feedVersion)
+  const customVersion = feedVersion.trim()
+  const versionProblem = feedVersionProblem(customVersion)
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -69,7 +83,23 @@ export default function ExportStep() {
     }
   }, [exported])
 
-  const preview = useMemo(() => (base && version ? validateEdit(base.feed, version, holidays) : []), [base, version, holidays])
+  // 検証は、出力する feed_version と同じ値で行う。利用者が入れていれば、その値で作り直した版を見る
+  // (既定の規則のときは、feed_version は出力の日時で決まるので、承認した版のままで足りる)
+  // 作り直しと検証は道北バスの規模で 70ms ほどかかるので、入力のたびには待たせない(useDeferredValue で後から追いつく)。
+  // 追いつく前に押されても、出力のときに押した値で作り直して検証するので、誤った値は書き出さない
+  const [previewAt] = useState(() => generatedAtOf(new Date()))
+  const deferredVersion = useDeferredValue(customVersion)
+  const deferredProblem = feedVersionProblem(deferredVersion)
+  const previewVersion = useMemo<Form2Result | null>(() => {
+    if (!base || !plan || !version) return null
+    if (deferredVersion === '' || deferredProblem) return version
+    const outcome = applyForm2(base.feed, plan, { generatedAt: previewAt, feedVersion: deferredVersion })
+    return outcome.ok ? outcome.result : version
+  }, [base, plan, version, deferredVersion, deferredProblem, previewAt])
+  const preview = useMemo(
+    () => (base && previewVersion ? validateEdit(base.feed, previewVersion, holidays) : []),
+    [base, previewVersion, holidays],
+  )
   const previewErrors = errorsIn(preview)
   const blocked = !base
     ? null
@@ -77,7 +107,9 @@ export default function ExportStep() {
       ? `下書き ${draft.id} を承認するか、やめてから出力してください。`
       : !plan || !version
         ? '方針を適用してから出力できます。'
-        : previewErrors.length > 0
+        : versionProblem
+          ? versionProblem
+          : previewErrors.length > 0
           ? '誤りがあるため出力できません(下の一覧)。方針の期間などを直してください。'
           : null
 
@@ -89,7 +121,7 @@ export default function ExportStep() {
     try {
       // 押した時刻で作り直す(承認済みの計画だけを使う)
       const generatedAt = generatedAtOf(new Date())
-      const outcome = applyForm2(base.feed, plan, { generatedAt })
+      const outcome = applyForm2(base.feed, plan, { generatedAt, feedVersion: customVersion })
       if (!outcome.ok) {
         setError(outcome.message)
         return
@@ -110,7 +142,7 @@ export default function ExportStep() {
       })
       // 書いている間に編集が変わったら(元に戻すなど)、古い内容の ZIP は渡さない
       const now = useEditStore.getState()
-      if (now.base !== base || lastVersion(now) !== version) {
+      if (now.base !== base || lastVersion(now) !== version || now.feedVersion.trim() !== customVersion) {
         setError('出力の途中で編集の内容が変わったため、出力をやめました。もう一度押してください。')
         return
       }
@@ -135,10 +167,14 @@ export default function ExportStep() {
   return (
     <StepSection title="6. GTFS を出力">
       {!base ? (
-        <p className="text-sm text-muted-foreground">手順1で GTFS を読み込み、方針を承認すると、減便を反映した GTFS を出力できます。</p>
+        <p className="text-sm text-muted-foreground">GTFS を読み込み、方針を承認すると、減便を反映した GTFS を出力できます。</p>
       ) : (
         <>
-          {version && <ExportSummary base={base} version={version} />}
+          {version && <ExportSummary base={base} version={version} customVersion={versionProblem ? '' : customVersion} />}
+          <FeedVersionField before={version?.report.feedVersion.before ?? feedInfoVersion(base)} problem={versionProblem} previewAt={previewAt} />
+          <p className="text-xs" data-testid="trip-id-note">
+            {tripIdNote(plan?.kind ?? null)}
+          </p>
           <IssueList issues={preview} title="出力の前の検証" />
           {blocked && <p className="text-sm text-muted-foreground">{blocked}</p>}
           <Button type="button" className="self-start" disabled={blocked !== null || busy} onClick={() => void onExport()}>
@@ -168,8 +204,42 @@ export default function ExportStep() {
   )
 }
 
+/** 入力の feed_info の feed_version(1行目)。無ければ空 */
+function feedInfoVersion(base: BaseGtfs): string {
+  return (base.feed.tables.get('feed_info')?.rows[0]?.feed_version ?? '').trim()
+}
+
+/**
+ * feed_version の入力欄。空なら既定の規則(入力が空か 12 桁なら出力の日時、それ以外は '{入力}_dispatcher_{日時}')。
+ * 入れた値が入力の値以下なら、下の検証の一覧に feedVersionNotIncreasing の注意が出る(同じ値なら誤り)
+ */
+function FeedVersionField({ before, problem, previewAt }: { before: string; problem: string | null; previewAt: string }) {
+  const value = useEditStore((s) => s.feedVersion)
+  const setValue = useEditStore((s) => s.setFeedVersion)
+  const example = defaultFeedVersion(before, previewAt)
+  return (
+    <div className="flex flex-col gap-1">
+      <Label htmlFor="export-feed-version">出力する feed_version</Label>
+      <Input
+        id="export-feed-version"
+        value={value}
+        placeholder={`空欄なら出力した日時(例 ${example})`}
+        aria-invalid={problem ? true : undefined}
+        aria-describedby="export-feed-version-help"
+        onChange={(e) => setValue(e.target.value)}
+        className="font-mono"
+      />
+      <p id="export-feed-version-help" className="text-xs text-muted-foreground">
+        入力の feed_version は {before || '(空)'}。空欄のときは、入力が空か 12 桁なら出力した日時、それ以外は「入力の値_dispatcher_出力した日時」にします。
+        公開先が新しい版と見なすよう、入力より大きい値にしてください。
+      </p>
+      {problem && <p className="text-xs text-destructive">{problem}</p>}
+    </div>
+  )
+}
+
 /** 出力する内容の要約(承認済みの最後の版):有効期間、feed_version、§5.10 の文言、平日便、全曜日で便がなくなる系統、足し戻しの集計 */
-function ExportSummary({ base, version }: { base: BaseGtfs; version: Form2Result }) {
+function ExportSummary({ base, version, customVersion }: { base: BaseGtfs; version: Form2Result; customVersion: string }) {
   // 実施日までの日数などに使う今日(日本時間)。画面を開いた日
   const [today] = useState(() => todayInJapan(new Date()))
   const { report } = version
@@ -195,7 +265,8 @@ function ExportSummary({ base, version }: { base: BaseGtfs; version: Form2Result
         <div>
           <dt className="inline">feed_version:</dt>
           <dd className="inline">
-            {report.feedVersion.before || '(空)'} → 出力した日時の値(承認したときの例 {report.feedVersion.after})
+            {report.feedVersion.before || '(空)'} →{' '}
+            {customVersion !== '' ? <span className="font-mono break-all">{customVersion}</span> : `出力した日時の値(承認したときの例 ${report.feedVersion.after})`}
           </dd>
         </div>
         <div>

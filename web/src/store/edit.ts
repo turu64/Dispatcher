@@ -68,6 +68,12 @@ export interface EditState {
   /** versions[i] は history[0..i] を適用した結果 */
   versions: Form2Result[]
   draft: Draft | null
+  /**
+   * 利用者が出力の画面で入れた feed_version。空なら既定の規則(defaultFeedVersion)。
+   * 手順を移っても残すために store に置く。読み込み直すと空に戻す
+   */
+  feedVersion: string
+  setFeedVersion: (value: string) => void
   /** Claude にまだ伝えていない下書きの行方(Claude が出した下書きの分だけ) */
   draftNotices: DraftNotice[]
   /**
@@ -240,6 +246,11 @@ export function createEditStore(deps: EditStoreDeps) {
       versions: [],
       draft: null,
       draftNotices: [],
+      feedVersion: '',
+
+      setFeedVersion(value) {
+        set({ feedVersion: value })
+      },
 
       propose(op, by) {
         const blocked = blockedBy(by)
@@ -351,7 +362,7 @@ export function createEditStore(deps: EditStoreDeps) {
       },
 
       setBase(base) {
-        set({ base, history: [], versions: [], draft: null, draftNotices: [] })
+        set({ base, history: [], versions: [], draft: null, draftNotices: [], feedVersion: '' })
         publish()
       },
 

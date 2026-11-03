@@ -4,6 +4,7 @@ import type { GtfsFeed, GtfsRow } from '@/gtfs/load'
 import { toStops } from '@/gtfs/parse'
 import {
   bandIndexForHour,
+  boardingStopIds,
   buildReachStops,
   cloneParams,
   originStops,
@@ -99,7 +100,84 @@ describe('originStops', () => {
 
   it('stop_id が空の行は照合しない', () => {
     const feed = feedOf([{ stop_id: '', stop_name: '空', stop_lat: '43.70', stop_lon: '142.30' }], [{ trip_id: 'T', stop_id: ' ' }])
-    expect(originStops(feed, toStops(feed).stops)).toEqual({ stops: [], unused: 1, nonStop: 0 })
+    expect(originStops(feed, toStops(feed).stops)).toEqual({ stops: [], unused: 1, nonStop: 0, noBoarding: 0 })
+  })
+
+  it('乗れる行が1つも無い停留所(すべて終点か pickup_type 1)は起点にせず、noBoarding に数える', () => {
+    const stops: GtfsRow[] = [
+      { stop_id: 'A', stop_name: 'A', stop_lat: '43.70', stop_lon: '142.30' },
+      { stop_id: 'B', stop_name: '終点だけ', stop_lat: '43.71', stop_lon: '142.31' },
+      { stop_id: 'P', stop_name: '降車専用', stop_lat: '43.72', stop_lon: '142.32' },
+      { stop_id: 'C', stop_name: '使われない', stop_lat: '43.73', stop_lon: '142.33' },
+      { stop_id: 'S', stop_name: '駅舎', stop_lat: '43.74', stop_lon: '142.34', location_type: '1' },
+    ]
+    const feed = feedOf(stops, [
+      { trip_id: 'T1', stop_id: 'A', stop_sequence: '1' },
+      { trip_id: 'T1', stop_id: 'P', stop_sequence: '2', pickup_type: ' 1 ' },
+      { trip_id: 'T1', stop_id: 'B', stop_sequence: '3' },
+      { trip_id: 'T2', stop_id: 'A', stop_sequence: '1' },
+      { trip_id: 'T2', stop_id: 'B', stop_sequence: '10' },
+      // 駅舎は乗れる行があっても起点にしない(location_type で先に除く)
+      { trip_id: 'T2', stop_id: 'S', stop_sequence: '2' },
+    ])
+    const r = originStops(feed, toStops(feed).stops)
+    expect(r.stops.map((s) => s.id)).toEqual(['A'])
+    expect(r).toMatchObject({ unused: 1, nonStop: 1, noBoarding: 2 })
+  })
+})
+
+describe('boardingStopIds', () => {
+  function feedOf(stopTimes: GtfsRow[]): GtfsFeed {
+    return { tables: new Map([['stop_times', { fileName: 'stop_times.txt', fields: [], rows: stopTimes }]]), warnings: [] }
+  }
+
+  it('各便の最後の停留所(stop_sequence の数値が最大)と pickup_type 1 の行は乗れる行にしない', () => {
+    const feed = feedOf([
+      { trip_id: 'T1', stop_id: 'A', stop_sequence: '9' },
+      { trip_id: 'T1', stop_id: 'B', stop_sequence: '10' },
+      { trip_id: 'T2', stop_id: 'C', stop_sequence: '1', pickup_type: '1' },
+      { trip_id: 'T2', stop_id: 'D', stop_sequence: '2', pickup_type: '' },
+      { trip_id: 'T2', stop_id: 'E', stop_sequence: '3' },
+    ])
+    // '10' は '9' より大きい(文字の並びではなく数値で比べる)
+    expect([...boardingStopIds(feed)].sort()).toEqual(['A', 'D'])
+  })
+
+  it('ほかの便で乗れる行があれば、ある便の終点でも乗れる停留所にする', () => {
+    const feed = feedOf([
+      { trip_id: 'T1', stop_id: 'A', stop_sequence: '1' },
+      { trip_id: 'T1', stop_id: 'B', stop_sequence: '2' },
+      { trip_id: 'T2', stop_id: 'B', stop_sequence: '1' },
+      { trip_id: 'T2', stop_id: 'A', stop_sequence: '2' },
+    ])
+    expect([...boardingStopIds(feed)].sort()).toEqual(['A', 'B'])
+  })
+
+  it('stop_sequence が読めない行は終点の判定に使わず、乗れる行として扱う(departures.ts と同じ)', () => {
+    const feed = feedOf([
+      { trip_id: 'T1', stop_id: 'A', stop_sequence: '1' },
+      { trip_id: 'T1', stop_id: 'X', stop_sequence: '0x0A' },
+      { trip_id: 'T1', stop_id: 'B', stop_sequence: '002' },
+      // 1つしか行の無い便は、その行が終点
+      { trip_id: 'T2', stop_id: 'C', stop_sequence: '5' },
+    ])
+    expect([...boardingStopIds(feed)].sort()).toEqual(['A', 'X'])
+  })
+
+  it('trip_id・stop_id・pickup_type は前後の空白を取って照合する', () => {
+    const feed = feedOf([
+      { trip_id: ' T1', stop_id: ' A ', stop_sequence: ' 1 ' },
+      { trip_id: 'T1 ', stop_id: 'B', stop_sequence: '2' },
+      { trip_id: 'T2', stop_id: 'C', stop_sequence: '1', pickup_type: ' 1' },
+      { trip_id: 'T2', stop_id: 'D', stop_sequence: '2' },
+      { trip_id: 'T3', stop_id: ' ', stop_sequence: '1' },
+      { trip_id: 'T3', stop_id: 'E', stop_sequence: '2' },
+    ])
+    expect([...boardingStopIds(feed)]).toEqual(['A'])
+  })
+
+  it('stop_times.txt が無ければ空', () => {
+    expect(boardingStopIds({ tables: new Map(), warnings: [] }).size).toBe(0)
   })
 })
 

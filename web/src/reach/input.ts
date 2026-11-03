@@ -2,8 +2,8 @@
  * 画面の条件から到達圏の計算の入力(ReachInput)を作るための、純粋な補助。
  */
 import type { TimeBand } from '@/gtfs/departures'
-import type { GtfsFeed } from '@/gtfs/load'
-import type { Stop } from '@/gtfs/parse'
+import type { GtfsFeed, GtfsRow } from '@/gtfs/load'
+import { NON_NEGATIVE_INTEGER, type Stop } from '@/gtfs/parse'
 import type { ReachInput, ReachParams, RegionClass } from './reach'
 
 export const REGION_CLASSES: readonly RegionClass[] = ['urban', 'suburban', 'rural']
@@ -56,12 +56,70 @@ export interface OriginStops {
   unused: number
   /** location_type が 0 でも空でもない(駅舎・出入口など)ので除いた行の数 */
   nonStop: number
+  /**
+   * location_type が 0 か空で stop_times.txt に出てくるが、乗れる行が1つも無いので除いた停留所の数
+   * (すべて便の最後の停留所か pickup_type が 1。降車専用の停留所。docs/interfaces-1104.md §7)
+   */
+  noBoarding: number
 }
 
 /**
- * 到達圏の起点にする停留所を選ぶ(docs/interfaces-1103.md の追記2)。
- * stop_times.txt に1回以上出てくる停留所で、location_type が 0 か空のもの(toStops は空を 0 にしている)。
+ * 乗れる行が1つ以上ある停留所の stop_id(前後の空白を取った値)。日付に関係なく、stop_times.txt の全便で判定する。
+ *
+ * 乗れる行は、pickup_type が '1'(前後の空白を取って照合)でなく、その便の最後の停留所でない行
+ * (docs/interfaces-1104.md §7)。最後の停留所は、便(空白を取った trip_id)ごとに stop_sequence を数値として比べて最大の行。
+ * stop_sequence は 0 以上の10進の整数だけを読み、読めない行は最後の停留所の判定に使わない(gtfs/departures.ts と同じ規則)。
+ * 同じ便で最大の stop_sequence の行が複数あれば、どれも最後の停留所とみなす。
+ * 到達圏の起点の選び方(originStops)と、運行がゼロになる停留所の 'feed' の判定(compare.ts)で、同じ定義を使う。
+ */
+export function boardingStopIds(feed: GtfsFeed): Set<string> {
+  const rows = feed.tables.get('stop_times')?.rows ?? []
+  // 1. 便ごとの最後の stop_sequence
+  const lastSequence = new Map<string, string>()
+  for (const row of rows) {
+    const seq = sequenceOf(row)
+    if (seq === null) continue
+    const tripId = trimmed(row.trip_id)
+    const prev = lastSequence.get(tripId)
+    if (prev === undefined || isLaterSequence(seq, prev)) lastSequence.set(tripId, seq)
+  }
+  // 2. 乗れる行の停留所
+  const ids = new Set<string>()
+  for (const row of rows) {
+    const stopId = trimmed(row.stop_id)
+    if (stopId === '' || ids.has(stopId)) continue
+    if (trimmed(row.pickup_type) === '1') continue
+    const seq = sequenceOf(row)
+    if (seq !== null && seq === lastSequence.get(trimmed(row.trip_id))) continue
+    ids.add(stopId)
+  }
+  return ids
+}
+
+function trimmed(v: string | undefined): string {
+  return v === undefined ? '' : v.trim()
+}
+
+/** stop_sequence を、先頭の 0 を除いた10進の文字列にする。0 以上の10進の整数でなければ null('0x0A'・'1e1'・'1.5'・空) */
+function sequenceOf(row: GtfsRow): string | null {
+  const s = trimmed(row.stop_sequence)
+  if (!NON_NEGATIVE_INTEGER.test(s)) return null
+  return s.replace(/^0+(?=\d)/, '')
+}
+
+/** sequenceOf の値 a が b より大きいか(桁数が多いほど大きく、同じ桁数なら文字の並びで決まる) */
+function isLaterSequence(a: string, b: string): boolean {
+  return a.length !== b.length ? a.length > b.length : a > b
+}
+
+/**
+ * 到達圏の起点にする停留所を選ぶ(docs/interfaces-1103.md の追記2・追記3、docs/interfaces-1104.md §7)。
+ * location_type が 0 か空(toStops は空を 0 にしている)で、stop_times.txt に乗れる行(boardingStopIds)がある停留所。
+ * 除いたものは、駅舎・出入口など(nonStop)、stop_times.txt に出てこない(unused)、乗れる行が無い(noBoarding)の順に1つに数える。
  * stop_id は前後の空白を取って照合する。stops は toStops の結果(緯度経度が読めない行は除いてある)。
+ *
+ * 渡すのは基準の GTFS(利用者が読み込んだもの)だけ。編集後の GTFS で選び直すと、便が無くなった停留所のまわりのセルが
+ * 調べるセルから消える(追記3)。
  */
 export function originStops(feed: GtfsFeed, stops: readonly Stop[]): OriginStops {
   const used = new Set<string>()
@@ -69,15 +127,18 @@ export function originStops(feed: GtfsFeed, stops: readonly Stop[]): OriginStops
     const id = row.stop_id?.trim()
     if (id) used.add(id)
   }
+  const boarding = boardingStopIds(feed)
   const origins: Stop[] = []
   let unused = 0
   let nonStop = 0
+  let noBoarding = 0
   for (const s of stops) {
     if (s.locationType !== 0) nonStop++
     else if (!used.has(s.id)) unused++
+    else if (!boarding.has(s.id)) noBoarding++
     else origins.push(s)
   }
-  return { stops: origins, unused, nonStop }
+  return { stops: origins, unused, nonStop, noBoarding }
 }
 
 /**

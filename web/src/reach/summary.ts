@@ -75,6 +75,19 @@ export function formatPercent(part: number, total: number): string {
   return `${((part / total) * 100).toFixed(1)}%`
 }
 
+/**
+ * 減便の前後の割合の増減(ポイント)を、小数1桁の符号つきの文字にする(例 '+1.7'、'−0.3'、'±0.0')。
+ * 分母は前後とも基準の coverable のセル(または推計人口)。表に並べる formatPercent の値(小数1桁に丸めた割合)の差にするので、
+ * 表の「減便前」「減便後」の数字の差と必ず一致する。分母が 0 なら '—'
+ */
+export function formatPointChange(beforePart: number, afterPart: number, total: number): string {
+  if (!(total > 0)) return '—'
+  const tenths = (part: number) => Math.round(Number(((part / total) * 100).toFixed(1)) * 10)
+  const diff = tenths(afterPart) - tenths(beforePart)
+  const text = (Math.abs(diff) / 10).toFixed(1)
+  return diff > 0 ? `+${text}` : diff < 0 ? `−${text}` : `±${text}`
+}
+
 /** 人数・件数を3桁区切りにする。推計人口は 0.25 人単位なので、整数に丸めて出す */
 export function formatCount(n: number): string {
   return Math.round(n).toLocaleString('ja-JP')

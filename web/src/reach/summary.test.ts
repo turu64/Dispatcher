@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ReachResult } from './reach'
-import { formatCount, formatPercent, summarizeReach } from './summary'
+import { formatCount, formatPercent, formatPointChange, summarizeReach } from './summary'
 
 const RESULT: ReachResult = {
   cells: ['65420000111', '65420000112', '65420000113', '65420000114'],
@@ -70,6 +70,28 @@ describe('formatPercent', () => {
 
   it('分母が 0 なら —', () => {
     expect(formatPercent(0, 0)).toBe('—')
+  })
+})
+
+describe('formatPointChange', () => {
+  it('表に出す割合(小数1桁)の差を、符号つきのポイントにする', () => {
+    // 追記3の例:減便前の見込みのあるセル 17,200 を分母に、6〜9時 2,431 → 2,718
+    expect(formatPercent(2431, 17200)).toBe('14.1%')
+    expect(formatPercent(2718, 17200)).toBe('15.8%')
+    expect(formatPointChange(2431, 2718, 17200)).toBe('+1.7')
+    expect(formatPointChange(2718, 2431, 17200)).toBe('−1.7')
+    expect(formatPointChange(5, 5, 10)).toBe('±0.0')
+  })
+
+  it('丸めた割合の差にする(丸める前の差 0.1 未満でも、表の数字が違えば差を出す)', () => {
+    // 0.1449…% → 0.1%、0.1501…% → 0.2%(丸める前の差は 0.005 ポイント)
+    expect(formatPercent(1449, 1_000_000)).toBe('0.1%')
+    expect(formatPercent(1501, 1_000_000)).toBe('0.2%')
+    expect(formatPointChange(1449, 1501, 1_000_000)).toBe('+0.1')
+  })
+
+  it('分母が 0 なら —', () => {
+    expect(formatPointChange(0, 0, 0)).toBe('—')
   })
 })
 

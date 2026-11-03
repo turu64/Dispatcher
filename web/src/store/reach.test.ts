@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { servicesFor } from '../gtfs/calendar'
+import { departureCountsByBand, makeBands } from '../gtfs/departures'
 import type { GtfsFeed, GtfsRow } from '../gtfs/load'
 import { toStops } from '../gtfs/parse'
-import type { ReachInput, ReachResult } from '../reach/reach'
+import { cellsWithinRadius } from '../reach/mesh'
+import { computeReach, type ReachInput, type ReachResult } from '../reach/reach'
 import type { RefLoadResult } from '../reach/refData'
-import { createReachStore, type ReachSource, type ReachStoreDeps } from './reach'
+import { createReachStore, selectablePeriod, type EditedSource, type ReachSource, type ReachStoreDeps } from './reach'
 
 function table(fileName: string, rows: GtfsRow[]) {
   return { fileName, fields: Object.keys(rows[0] ?? {}), rows }
 }
 
-/** 平日(01)だけの小さなフィード。停留所 A・B を 1 便が 7:00・7:10 に通り、B が終点 */
+/** 平日(01)だけの小さなフィード。停留所 A・B を 1 便が 7:00・7:10 に通り、B が終点(乗れる行が無いので起点にしない) */
 function makeFeed(stopRows: GtfsRow[] = DEFAULT_STOPS): GtfsFeed {
   return {
     tables: new Map([
@@ -127,11 +130,8 @@ describe('useReachStore(createReachStore)', () => {
     expect(compute).toHaveBeenCalledTimes(1)
     const input = compute.mock.calls[0][0]
     expect(input.bandCount).toBe(6)
-    // A は 7:00 に出発(6〜9時)、B は終点なので数えない
-    expect(input.stops).toEqual([
-      { lat: 43.6667, lon: 142.5, bandCounts: [1, 0, 0, 0, 0, 0] },
-      { lat: 43.67, lon: 142.51, bandCounts: [0, 0, 0, 0, 0, 0] },
-    ])
+    // A は 7:00 に出発(6〜9時)。B はどの便でも終点で乗れる行が無いので、起点にしない
+    expect(input.stops).toEqual([{ lat: 43.6667, lon: 142.5, bandCounts: [1, 0, 0, 0, 0, 0] }])
     expect(input.ref).toBe(REF_OK.ref)
     expect(input.params).toEqual(store.getState().params)
     expect(input.params).not.toBe(store.getState().params)
@@ -145,6 +145,11 @@ describe('useReachStore(createReachStore)', () => {
     expect(s.snapshot?.departures.counts.get('A')).toEqual([1, 0, 0, 0, 0, 0])
     expect(s.snapshot?.summary.bands[0]).toEqual({ unreachableCells: 1, unreachablePopulation: 5 })
     expect(s.snapshot?.summary.bands[1]).toEqual({ unreachableCells: 2, unreachablePopulation: 15 })
+    expect(s.snapshot?.origin).toEqual({ origins: 1, unused: 0, nonStop: 0, noBoarding: 1 })
+    // 編集後が無ければ、基準だけを計算し、比較は入れない
+    expect(s.edited).toBeNull()
+    expect(s.snapshot?.baseline).toBeUndefined()
+    expect(s.snapshot?.comparison).toBeUndefined()
   })
 
   it('日付を続けて切り替えたら、後から届いた古い結果では上書きしない', async () => {
@@ -303,7 +308,7 @@ describe('useReachStore(createReachStore)', () => {
       { lat: 43.6667, lon: 142.5, bandCounts: [1, 0, 0, 0, 0, 0] },
       { lat: 43.67, lon: 142.51, bandCounts: [1, 0, 0, 0, 0, 0] },
     ])
-    expect(store.getState().snapshot?.origin).toEqual({ origins: 2, unused: 1, nonStop: 2 })
+    expect(store.getState().snapshot?.origin).toEqual({ origins: 2, unused: 1, nonStop: 2, noBoarding: 0 })
   })
 
   it('stop_times に出てくる停留所に位置の分かるものが無ければ、計算せずに理由を出す', async () => {
@@ -505,5 +510,444 @@ describe('useReachStore(createReachStore)', () => {
     expect(s.source).toBeNull()
     expect(s.snapshot).toBeNull()
     expect(s.computing).toBe(false)
+  })
+})
+
+// ---- 前後の比較(docs/interfaces-1104.md §7・§11、docs/interfaces-1103.md の追記3) ----
+
+/**
+ * 基準の小さなフィード(平日 WK・土曜 SA・日曜 SU。2026-11-03 は平日を運休)。
+ * - R1:平日 A→B 7:00、平日 A→C→B 19:00、土曜 A→B 8:00
+ * - R3:平日 S9→B 7:30。S9 を通るのはこの便だけ(消すと S9 が stop_times から無くなる)
+ * - R4:平日 D→B 9:00、日曜 D→B 9:00
+ * B はどの便でも終点なので、乗れる行が無く起点にしない。S9・D は A・B・C から 3km 以上離れている
+ */
+function compareFeed(extraStops: GtfsRow[] = [], r1Morning: [string, string, string?][] = [['A', '07:00:00'], ['B', '07:10:00']]): GtfsFeed {
+  const days = (wk: string) => ({
+    monday: wk,
+    tuesday: wk,
+    wednesday: wk,
+    thursday: wk,
+    friday: wk,
+  })
+  return {
+    tables: new Map([
+      [
+        'stops',
+        table('stops.txt', [
+          { stop_id: 'A', stop_name: 'A', stop_lat: '43.6667', stop_lon: '142.5' },
+          { stop_id: 'C', stop_name: 'C', stop_lat: '43.6680', stop_lon: '142.505' },
+          { stop_id: 'B', stop_name: 'B', stop_lat: '43.6700', stop_lon: '142.51' },
+          { stop_id: 'S9', stop_name: 'S9', stop_lat: '43.70', stop_lon: '142.60' },
+          { stop_id: 'D', stop_name: 'D', stop_lat: '43.63', stop_lon: '142.44' },
+          ...extraStops,
+        ]),
+      ],
+      ['routes', table('routes.txt', ['R1', 'R3', 'R4'].map((id) => ({ route_id: id, route_short_name: id, route_long_name: '' })))],
+      [
+        'calendar',
+        table('calendar.txt', [
+          { service_id: 'WK', ...days('1'), saturday: '0', sunday: '0', start_date: '20261001', end_date: '20261130' },
+          { service_id: 'SA', ...days('0'), saturday: '1', sunday: '0', start_date: '20261001', end_date: '20261130' },
+          { service_id: 'SU', ...days('0'), saturday: '0', sunday: '1', start_date: '20261001', end_date: '20261130' },
+        ]),
+      ],
+      ['calendar_dates', table('calendar_dates.txt', [{ service_id: 'WK', date: '20261103', exception_type: '2' }])],
+      [
+        'trips',
+        table('trips.txt', [
+          { route_id: 'R1', service_id: 'WK', trip_id: 'R1_0700_WK' },
+          { route_id: 'R1', service_id: 'WK', trip_id: 'R1_1900_WK' },
+          { route_id: 'R3', service_id: 'WK', trip_id: 'R3_0730_WK' },
+          { route_id: 'R4', service_id: 'WK', trip_id: 'R4_0900_WK' },
+          { route_id: 'R1', service_id: 'SA', trip_id: 'R1_0800_SA' },
+          { route_id: 'R4', service_id: 'SU', trip_id: 'R4_0900_SU' },
+        ]),
+      ],
+      [
+        'stop_times',
+        table('stop_times.txt', [
+          ...timesOf('R1_0700_WK', r1Morning),
+          ...timesOf('R1_1900_WK', [['A', '19:00:00'], ['C', '19:05:00'], ['B', '19:10:00']]),
+          ...R3_TIMES,
+          ...timesOf('R4_0900_WK', [['D', '09:00:00'], ['B', '09:30:00']]),
+          ...timesOf('R1_0800_SA', [['A', '08:00:00'], ['B', '08:10:00']]),
+          ...timesOf('R4_0900_SU', [['D', '09:00:00'], ['B', '09:30:00']]),
+        ]),
+      ],
+    ]),
+    warnings: [],
+  }
+}
+
+/** stop_times の行(stops は [stop_id, 時刻, pickup_type] の並び。stop_sequence は 1 から) */
+function timesOf(tripId: string, stops: [string, string, string?][]): GtfsRow[] {
+  return stops.map(([stopId, time, pickup], i) => ({
+    trip_id: tripId,
+    stop_id: stopId,
+    stop_sequence: String(i + 1),
+    arrival_time: time,
+    departure_time: time,
+    ...(pickup === undefined ? {} : { pickup_type: pickup }),
+  }))
+}
+
+const R3_TIMES = timesOf('R3_0730_WK', [['S9', '07:30:00'], ['B', '07:50:00']])
+const R3_TRIP: GtfsRow = { route_id: 'R3', service_id: 'WK', trip_id: 'R3_0730_WK' }
+
+/**
+ * 「平日を土曜ダイヤに」を当てたような編集後のフィード(手で作る。form2 は使わない)。
+ * 平日の便は土曜の R1 8:00 の写しだけ(R1_0800_WK)。R3 は消え(addBackR3 なら足し戻す)、R4 は日曜だけに残る。
+ * stops・routes・calendar・calendar_dates は基準と同じ表を使う
+ */
+function editedOf(base: GtfsFeed, addBackR3: boolean, draft = false, period = { start: '20261101', end: '20261130' }): EditedSource {
+  const tables = new Map(base.tables)
+  tables.set(
+    'trips',
+    table('trips.txt', [
+      { route_id: 'R1', service_id: 'WK', trip_id: 'R1_0800_WK' },
+      ...(addBackR3 ? [R3_TRIP] : []),
+      { route_id: 'R1', service_id: 'SA', trip_id: 'R1_0800_SA' },
+      { route_id: 'R4', service_id: 'SU', trip_id: 'R4_0900_SU' },
+    ]),
+  )
+  tables.set(
+    'stop_times',
+    table('stop_times.txt', [
+      ...timesOf('R1_0800_WK', [['A', '08:00:00'], ['B', '08:10:00']]),
+      ...(addBackR3 ? R3_TIMES : []),
+      ...timesOf('R1_0800_SA', [['A', '08:00:00'], ['B', '08:10:00']]),
+      ...timesOf('R4_0900_SU', [['D', '09:00:00'], ['B', '09:30:00']]),
+    ]),
+  )
+  return { feed: { tables, warnings: [] }, period, draft }
+}
+
+const REF_MISSING: RefLoadResult = { ok: false, mesh1s: ['6542'], missing: ['6542'], message: '読めません' }
+
+/** 本物の computeReach で計算する(参照データは無いものとし、すべて郊外 = バス停 800m)。渡された条件を記録する */
+function setupReal() {
+  const inputs: ReachInput[] = []
+  const { store, compute } = setup({
+    compute: vi.fn(async (input: ReachInput) => {
+      inputs.push(structuredClone(input))
+      return computeReach(input)
+    }),
+    loadRef: vi.fn(async () => REF_MISSING),
+  })
+  return { store, compute, inputs }
+}
+
+/** S9 から 800m 以内のセルの、結果の中での番号 */
+function cellsAroundS9(cells: readonly string[]): number[] {
+  const around = new Set(cellsWithinRadius([{ lat: 43.7, lon: 142.6 }], 800))
+  const out: number[] = []
+  cells.forEach((c, i) => {
+    if (around.has(c)) out.push(i)
+  })
+  expect(out).toHaveLength(around.size)
+  return out
+}
+
+describe('到達圏の前後の比較(基準の起点を使う)', () => {
+  it('便を消して停留所が stop_times から消えても、基準の起点を使うので、そのまわりのセルは外れるセルに残り分母から消えない', async () => {
+    const { store, inputs } = setupReal()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    const edited = editedOf(base, false)
+    // 編集後のフィードには S9 の行が無い
+    expect(edited.feed.tables.get('stop_times')!.rows.some((r) => r.stop_id === 'S9')).toBe(false)
+    store.getState().setEdited(edited)
+    await settle()
+
+    // 起点は基準の A・C・S9・D(B は乗れる行が無い)。編集後の計算にも同じ起点を渡し、S9 の出発は 0
+    const ids = store.getState().origins!.stops.map((s) => s.id)
+    expect(ids).toEqual(['A', 'C', 'S9', 'D'])
+    expect(inputs).toHaveLength(2)
+    expect(inputs[1].stops).toHaveLength(4)
+    expect(inputs[1].stops[ids.indexOf('S9')]).toEqual({ lat: 43.7, lon: 142.6, bandCounts: [0, 0, 0, 0, 0, 0] })
+    expect(inputs[0].stops[ids.indexOf('S9')].bandCounts).toEqual([1, 0, 0, 0, 0, 0])
+
+    const snap = store.getState().snapshot!
+    const baseline = snap.baseline!
+    expect(snap.result.cells).toEqual(baseline.result.cells)
+    expect(snap.result.coverable).toEqual(baseline.result.coverable)
+    expect(snap.summary.coverableCells).toBe(baseline.summary.coverableCells)
+    // S9 のまわりのセルは見込みがあり(分母に残り)、編集後はどの時間帯でも外れる(分子に入る)
+    const around = cellsAroundS9(snap.result.cells)
+    for (const i of around) {
+      expect(snap.result.coverable[i]).toBe(true)
+      expect(baseline.result.reachable[0][i]).toBe(true)
+      expect(snap.result.reachable.every((row) => !row[i])).toBe(true)
+    }
+    expect(snap.summary.bands[0].unreachableCells).toBe(baseline.summary.bands[0].unreachableCells + around.length)
+    // 6〜9時に減便で外れたのは S9 のまわりだけ(A は 8:00 の便が残る)
+    expect(snap.comparison!.bands[0].lostCells).toBe(around.length)
+  })
+
+  it('編集後を渡すと、同じ日付で基準と編集後を計算し、表示は編集後、baseline は基準になる', async () => {
+    const { store, compute } = setup()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    const edited = editedOf(base, false, true)
+    store.getState().setEdited(edited)
+    await settle()
+
+    const s = store.getState()
+    expect(s.edited).toBe(edited)
+    expect(s.compareMode).toBe('diff')
+    const snap = s.snapshot!
+    expect(snap.date).toBe('20261104')
+    expect(snap.draft).toBe(true)
+    // 表示する側は編集後(A は 8:00 だけ)。baseline は同じ日付の基準(A は 7:00 と 19:00)
+    const bands = makeBands(3)
+    expect(snap.departures.counts).toEqual(departureCountsByBand(edited.feed, servicesFor(edited.feed, '20261104'), bands).counts)
+    expect(snap.baseline!.departures.counts).toEqual(departureCountsByBand(base, servicesFor(base, '20261104'), bands).counts)
+    expect(snap.departures.counts.get('A')).toEqual([1, 0, 0, 0, 0, 0])
+    expect(snap.baseline!.departures.counts.get('A')).toEqual([1, 0, 0, 0, 1, 0])
+    // 計算の条件は、基準と編集後で出発の数だけが違う
+    const [baseInput, editedInput] = compute.mock.calls.map((c) => c[0])
+    expect(editedInput.stops.map((p) => [p.lat, p.lon])).toEqual(baseInput.stops.map((p) => [p.lat, p.lon]))
+    expect(editedInput.ref).toBe(baseInput.ref)
+    expect(editedInput.params).toEqual(baseInput.params)
+    expect(snap.comparison?.bands).toHaveLength(6)
+    expect(snap.zeroRoutes?.map((r) => [r.routeId, r.scope])).toEqual([
+      ['R3', 'feed'],
+      ['R4', 'day'],
+    ])
+
+    // 地図の塗り分けは計算し直さない
+    s.setCompareMode('before')
+    await settle()
+    expect(store.getState().compareMode).toBe('before')
+    expect(compute).toHaveBeenCalledTimes(2)
+  })
+
+  it('編集後だけが変わったときは、基準の側を計算し直さない', async () => {
+    const { store, compute } = setup()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    expect(compute).toHaveBeenCalledTimes(1)
+
+    store.getState().setEdited(editedOf(base, false))
+    await settle()
+    expect(compute).toHaveBeenCalledTimes(2)
+    // 足し戻しで編集後だけが変わる
+    store.getState().setEdited(editedOf(base, true))
+    await settle()
+    expect(compute).toHaveBeenCalledTimes(3)
+    // すべて戻すと基準だけになり、基準は計算し直さない
+    store.getState().setEdited(null)
+    await settle()
+    expect(compute).toHaveBeenCalledTimes(3)
+    expect(store.getState().snapshot?.baseline).toBeUndefined()
+    expect(store.getState().snapshot?.departures.counts.get('A')).toEqual([1, 0, 0, 0, 1, 0])
+
+    // 日付や時間帯の幅を変えれば、基準も計算し直す
+    store.getState().setEdited(editedOf(base, false))
+    await settle()
+    expect(compute).toHaveBeenCalledTimes(4)
+    expect(store.getState().setDate('20261105')).toBeNull()
+    await settle()
+    expect(compute).toHaveBeenCalledTimes(6)
+    store.getState().setStepHours(1)
+    await settle()
+    expect(compute).toHaveBeenCalledTimes(8)
+    expect(store.getState().snapshot?.baseline?.result.reachable).toHaveLength(18)
+  })
+
+  it('基準の計算中に編集後を渡しても、基準は1回だけ計算し、失敗した基準の結果は使い回さない', async () => {
+    const pending: { input: ReachInput; d: ReturnType<typeof deferred<ReachResult>> }[] = []
+    const { store } = setup({
+      compute: (input) => {
+        const d = deferred<ReachResult>()
+        pending.push({ input, d })
+        return d.promise
+      },
+    })
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    expect(pending).toHaveLength(1)
+    // 基準を計算している間に編集後が届く。基準の計算を待ち、編集後だけを計算する
+    store.getState().setEdited(editedOf(base, false))
+    await settle()
+    expect(pending).toHaveLength(2)
+    pending[1].d.resolve(fakeResult(pending[1].input))
+    pending[0].d.resolve(fakeResult(pending[0].input))
+    await settle()
+    expect(store.getState().snapshot?.baseline?.result.reachable[0]).toEqual([true, false])
+    expect(store.getState().error).toBeNull()
+
+    // 基準の計算が失敗したら、次の計算では基準を計算し直す
+    expect(store.getState().setDate('20261105')).toBeNull()
+    await settle()
+    expect(pending).toHaveLength(4)
+    pending[2].d.reject(new Error('基準の計算の失敗'))
+    pending[3].d.resolve(fakeResult(pending[3].input))
+    await settle()
+    expect(store.getState().error).toBe('基準の計算の失敗')
+    store.getState().setEdited(editedOf(base, true))
+    await settle()
+    expect(pending).toHaveLength(6)
+  })
+
+  it('編集後の有効期間の外の日付は選べず、編集後を渡したときに日付が外なら期間の中の日に移す', async () => {
+    const { store } = setup()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    expect(store.getState().date).toBe('20261104')
+
+    // 編集後の期間は 11/10(火)から。11/4 は外なので、期間の中の最初の平日に移す
+    const edited = editedOf(base, false, false, { start: '20261110', end: '20261130' })
+    store.getState().setEdited(edited)
+    expect(store.getState().date).toBe('20261110')
+    expect(selectablePeriod(store.getState())).toEqual({ start: '20261110', end: '20261130' })
+    await settle()
+    expect(store.getState().snapshot?.date).toBe('20261110')
+    expect(store.getState().snapshot?.baseline).toBeDefined()
+
+    expect(store.getState().setDate('20261105')).toBe('比べられるのは減便後の GTFS の運行期間(2026/11/10〜2026/11/30)の日付です。')
+    expect(store.getState().date).toBe('20261110')
+    expect(store.getState().setDate('20261112')).toBeNull()
+    await settle()
+    expect(store.getState().snapshot?.date).toBe('20261112')
+
+    // 期間の中の日付なら、編集後を渡しても動かさない
+    store.getState().setEdited(editedOf(base, true, false, { start: '20261110', end: '20261130' }))
+    expect(store.getState().date).toBe('20261112')
+
+    // 編集後が無くなれば、基準の運行期間で選べる
+    store.getState().setEdited(null)
+    expect(selectablePeriod(store.getState())).toEqual({ start: '20261001', end: '20261130' })
+    expect(store.getState().setDate('20261105')).toBeNull()
+  })
+
+  it('読み込み直すと編集後を捨てる', async () => {
+    const { store, compute } = setup()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    store.getState().setEdited(editedOf(base, false))
+    await settle()
+    expect(store.getState().snapshot?.baseline).toBeDefined()
+
+    store.getState().setSource(sourceOf(compareFeed()))
+    expect(store.getState().edited).toBeNull()
+    await settle()
+    // 読み込み直した基準は、同じ条件でも計算し直す(前の基準の結果は使わない)
+    expect(compute).toHaveBeenCalledTimes(3)
+    expect(store.getState().snapshot?.baseline).toBeUndefined()
+    expect(store.getState().snapshot?.comparison).toBeUndefined()
+
+    // 捨てたあとに基準が無ければ、編集後は受け取らない
+    store.getState().setSource(null)
+    store.getState().setEdited(editedOf(base, false))
+    expect(store.getState().edited).toBeNull()
+  })
+
+  it('乗れる行が1つも無い停留所は起点にしない', async () => {
+    const { store, compute } = setup()
+    // P は R1 7:00 の途中だが pickup_type が 1(降車専用)。B はどの便でも終点
+    const feed = compareFeed(
+      [{ stop_id: 'P', stop_name: '降車専用', stop_lat: '43.6690', stop_lon: '142.507' }],
+      [['A', '07:00:00'], ['P', '07:05:00', '1'], ['B', '07:10:00']],
+    )
+    store.getState().setSource(sourceOf(feed))
+    await settle()
+
+    expect(store.getState().origins!.stops.map((s) => s.id)).toEqual(['A', 'C', 'S9', 'D'])
+    expect(compute.mock.calls[0][0].stops).toHaveLength(4)
+    expect(store.getState().snapshot?.origin).toEqual({ origins: 4, unused: 0, nonStop: 0, noBoarding: 2 })
+  })
+
+  it('便を足し戻すと、そのまわりのセルが減便で外れたセルから外れる', async () => {
+    const { store } = setupReal()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+
+    store.getState().setEdited(editedOf(base, false))
+    await settle()
+    const removed = store.getState().snapshot!
+    const around = cellsAroundS9(removed.result.cells)
+    expect(removed.comparison!.bands[0].lostCells).toBe(around.length)
+    expect(around.length).toBeGreaterThan(0)
+
+    // R3_0730_WK を足し戻す
+    store.getState().setEdited(editedOf(base, true))
+    await settle()
+    const restored = store.getState().snapshot!
+    expect(restored.comparison!.bands[0].lostCells).toBe(0)
+    for (const i of around) expect(restored.result.reachable[0][i]).toBe(true)
+    // 19:00 の便(A・C)は足し戻していないので、18〜21時の外れたセルは変わらない
+    expect(restored.comparison!.bands[4].lostCells).toBe(removed.comparison!.bands[4].lostCells)
+    expect(restored.comparison!.bands[4].lostCells).toBeGreaterThan(0)
+    expect(restored.zeroStops?.some((z) => z.stopId === 'S9')).toBe(false)
+  })
+
+  it('方針を承認したあと、外れたセルが最も多い時間帯を選ぶ', async () => {
+    const { store } = setupReal()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    expect(store.getState().selectedHour).toBe(6)
+
+    // 下書きの間は動かさない
+    store.getState().setEdited(editedOf(base, false, true))
+    await settle()
+    expect(store.getState().selectedHour).toBe(6)
+
+    // 承認すると、外れたセルが最も多い 18〜21時(A・C の 19:00 が消える)を選ぶ
+    store.getState().setEdited(editedOf(base, false, false))
+    await settle()
+    const lost = store.getState().snapshot!.comparison!.bands.map((b) => b.lostCells)
+    expect(Math.max(...lost)).toBe(lost[4])
+    expect(lost[4]).toBeGreaterThan(lost[0])
+    expect(store.getState().selectedHour).toBe(18)
+  })
+
+  it('外れたセルの数が同じ時間帯が複数あれば、遅い時間帯を選ぶ(夜の空白を見せるため)', async () => {
+    // 偽の計算:その時間帯に出発のある停留所が1つでもあれば1つ目のセルに届く。
+    // 基準は 6〜9時(A 7:00・S9 7:30)・9〜12時(D 9:00)・18〜21時(A・C 19:00)、編集後は 6〜9時(A 8:00)だけ
+    const { store } = setup()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    store.getState().setEdited(editedOf(base, false, false))
+    await settle()
+    expect(store.getState().snapshot!.comparison!.bands.map((b) => b.lostCells)).toEqual([0, 1, 0, 0, 1, 0])
+    expect(store.getState().selectedHour).toBe(18)
+  })
+
+  it('利用者が時間帯を選んだあとは、方針を承認しても時間帯を動かさない', async () => {
+    const { store } = setupReal()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    store.getState().selectHour(9)
+    store.getState().setEdited(editedOf(base, false, false))
+    await settle()
+    expect(store.getState().snapshot?.comparison?.bands[4].lostCells).toBeGreaterThan(0)
+    expect(store.getState().selectedHour).toBe(9)
+  })
+
+  it("全便で乗れる行が無くなった停留所は 'feed'、その日だけ 0 なら 'day' にする", async () => {
+    const { store } = setup()
+    const base = compareFeed()
+    store.getState().setSource(sourceOf(base))
+    await settle()
+    store.getState().setEdited(editedOf(base, false))
+    await settle()
+    // C(19:05)と S9(7:30)は編集後のどの便も通らない。D は日曜の便が残る(水曜だけ 0)。A は 8:00 が残る
+    expect(store.getState().snapshot?.zeroStops).toEqual([
+      { stopId: 'C', name: 'C', beforeDepartures: 1, scope: 'feed' },
+      { stopId: 'S9', name: 'S9', beforeDepartures: 1, scope: 'feed' },
+      { stopId: 'D', name: 'D', beforeDepartures: 1, scope: 'day' },
+    ])
   })
 })

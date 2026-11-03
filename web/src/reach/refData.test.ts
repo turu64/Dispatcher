@@ -229,19 +229,23 @@ const EXPECTED_MESHES = ['6541', '6542', '6543', '6641', '6642', '6643']
 
 async function originsOf(zip: string) {
   const feed = await loadGtfsZip(new Uint8Array(readFileSync(zip)).buffer)
-  return originStops(feed, toStops(feed).stops).stops
+  return originStops(feed, toStops(feed).stops)
 }
 
+// 起点の数は、乗れる行が無い停留所(すべて終点か pickup_type が 1。降車専用。旭川駅前 0010_10・旭川空港 9000_02 など)を
+// 起点にしない規則(docs/interfaces-1104.md §7)で数えたもの。9/17 版・10/29 版とも、この規則で 10 停留所を除く
 describe.skipIf(!existsSync(ZIP))('実データ(道北バス 減便前)', () => {
-  it('起点の停留所の外接矩形を 2,800m(バス停 1,200m + 駅 1,600m)広げた範囲の1次メッシュは 6541〜6643 の6つ', async () => {
-    const origins = await originsOf(ZIP)
-    expect(origins).toHaveLength(1460)
+  it('起点の停留所(乗れる行の無い 10 停留所を除く 1,450)の外接矩形を 2,800m(バス停 1,200m + 駅 1,600m)広げた範囲の1次メッシュは 6541〜6643 の6つ', async () => {
+    const { stops: origins, noBoarding } = await originsOf(ZIP)
+    expect(origins).toHaveLength(1450)
+    expect(noBoarding).toBe(10)
     expect(refMeshesFor(origins, refMarginM(DEFAULT_REACH_PARAMS))).toEqual(EXPECTED_MESHES)
   })
 
-  it.skipIf(!existsSync(ZIP_AFTER))('減便後の起点の停留所では、6541・6542・6641・6642 の4つ(6つに収まる)', async () => {
-    const origins = await originsOf(ZIP_AFTER)
-    expect(origins).toHaveLength(1364)
+  it.skipIf(!existsSync(ZIP_AFTER))('減便後の起点の停留所(乗れる行の無い 10 停留所を除く 1,354)では、6541・6542・6641・6642 の4つ(6つに収まる)', async () => {
+    const { stops: origins, noBoarding } = await originsOf(ZIP_AFTER)
+    expect(origins).toHaveLength(1354)
+    expect(noBoarding).toBe(10)
     const meshes = refMeshesFor(origins, refMarginM(DEFAULT_REACH_PARAMS))
     expect(meshes).toEqual(['6541', '6542', '6641', '6642'])
     expect(meshes.every((m) => EXPECTED_MESHES.includes(m))).toBe(true)

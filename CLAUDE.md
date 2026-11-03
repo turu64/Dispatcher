@@ -22,8 +22,10 @@
 ```
 web/     React + Vite + TypeScript。shadcn/ui + Tailwind、MapLibre GL JS、Zustand、Dexie.js(IndexedDB)、
          JSZip、Papa Parse、kdbush。重い計算は Web Worker
-server/  Python(FastAPI、SQLite)。Claude の中継、利用制限、Web 調査結果の使い回し、参照データとサンプル GTFS の配信だけ
+server/  Python(FastAPI、SQLite)。Claude(Managed Agents のセッション)の中継、利用制限、Web 調査結果の使い回し、参照データとサンプル GTFS の配信だけ
 data/    参照データ(北海道)の加工スクリプト(Python)。data/raw/ → data/out/
+agents/  アプリ内の Claude のエージェントの設定(ant apply で適用。調整役と調査役)
+environments/  エージェントの実行環境の設定(ant apply で適用)
 ```
 
 - Node は pnpm(`packageManager` で 10 系に固定)、Python は uv(3.13)
@@ -59,12 +61,21 @@ cd data && uv run pytest -q
 
 ## アプリ内の Claude
 
-- Messages API、モデルは Sonnet 5.5(`claude-sonnet-5-5`)。返答はストリーミング。システムプロンプトとツール定義はプロンプトキャッシュ
-- ツールは6つ:**方針の適用、便の足し戻し、元に戻す、影響の要約、便の検索、検証**。ツールの実行はブラウザで行い、結果をサーバー経由で Claude に返す
+取り決めは `docs/interfaces-1105.md`。Messages API で作った前の中継は、ブランチ `wip/messages-api` に参考として残している。
+
+- **Managed Agents の1つのセッション**で、会話・6つのツール・前提情報の調査を行う。会話の履歴はセッションが持ち、ブラウザは表示用の発言だけを持つ
+  - 調整役 `agents/coordinator.md`:Sonnet 5.5(`claude-sonnet-5-5`、effort `medium`)。会話と6つのツールと、調査の割り振り。組み込みのツールは持たない
+  - 調査役 `agents/researcher.md`:Haiku 5.5(`claude-haiku-5-5`)。事業者・施設を1つずつ Web で調べる。組み込みのツールは Web 検索と Web の読み込みだけ。bash・ファイル操作は誰にも持たせない
+  - 多数の対象は、調整役がバックグラウンドの workflow run で並行に調べさせる。名簿・run とも調査役だけを使い、`inline_agents` は切る(調整役のツールを受け継がせないため)
+  - 実行環境は `environments/dispatcher.yaml`
+- エージェントと実行環境は、ファイルを `ant apply` で適用する(`--yes` は利用者の承認があるときだけ)。`claude-lock.json` はコミットする。サーバーは `agents.create` を呼ばず、セッションを版を固定して作る(ID と版は環境変数で渡す)
+- ツールは6つ:**方針の適用、便の足し戻し、元に戻す、影響の要約、便の検索、検証**。定義の正は `server/src/dispatcher_server/claude_tools.json` で、`agents/coordinator.md` はその写し(テストで照らす)。カスタムツールとしてブラウザが実行し、結果をサーバー経由でセッションに返す。strict が無いので、入力の型と範囲はブラウザで全部確かめる
+- 調査の結果の保存・参照のツール(3つ)は、サーバーが実行する
 - アプリ内では MCP サーバーを作らない
-- 前提情報の調査は、まず停留所の分布の外周に 2km の余白を足した範囲で、周辺の事業者(国土数値情報のバス停留所 P11)と学校・病院(P29・P04、病院は病床数で入院設備の有無を分ける)を洗い出す。そのうえで Claude の Web 検索を事業者・施設ごとに並行で実行する。結果は出典 URL と確認日時つきで、サーバーの SQLite に一定時間保存して使い回す(公開情報のみ)。1回の調査あたりの検索回数に上限を設ける。デモ用に保存済みの結果も選べる
+- 前提情報の調査は、まず停留所の分布の外周に 2km の余白を足した範囲で、周辺の事業者(国土数値情報のバス停留所 P11)と学校・病院(P29・P04、病院は病床数で入院設備の有無を分ける)を洗い出す。そのうえで調査役の Web 検索を事業者・施設ごとに並行で実行する。結果は出典 URL と確認日時つきで、サーバーの SQLite に一定時間保存して使い回す(公開情報のみ)。Web 検索の回数の上限は設定に無いので、1セッションの料金の上限(3 ドル)と、1回の調査の対象の数の上限で代える。デモ用に保存済みの結果も選べる
+- セッションは GTFS の読み込み直しで終える。最後の操作から 24 時間で、サーバーが消す
 - 計算はコード、解釈と説明は Claude。数字は必ずコードが出す
-- 公開時の対策:合言葉(トークン)必須、IP アドレスごとの回数制限
+- 公開時の対策:合言葉(トークン)必須、署名つきのセッションの取っ手、IP アドレスごとの回数制限、全体の1日の利用額の上限
 
 ## 機能スコープ(11/6 22:00 に機能凍結。Notion の全体スケジュール)
 

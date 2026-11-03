@@ -1,6 +1,6 @@
 import { isValidGtfsDate } from '../calendar'
 import type { GtfsFeed, GtfsRow, GtfsTable } from '../load'
-import { checkPolicy, formatDate, type Form2Plan } from './ops'
+import { checkPolicy, formatDate, type Form2Plan, type PolicySettings } from './ops'
 import { describeServices, feedValidity, indexServiceDays, policyValidity, runsAnyDay } from './services'
 import { compareStrings, stopTimesByTrip, tripSignature } from './signature'
 
@@ -332,59 +332,8 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
     )
   }
 
-  const calendarTable = base.tables.get('calendar')
-  const calendarDatesTable = base.tables.get('calendar_dates')
-  const calendarRows = calendarTable?.rows ?? []
-  const calendarDateRows = calendarDatesTable?.rows ?? []
-
-  const clampedCalendar: GtfsRow[] = []
-  const droppedCalendarServices: string[] = []
-  // 日付が不正な calendar の行は切り詰めず、その service は走るかを判定しない(入力の誤りは validateEdit が出す)
-  const undecidable = new Set<string>()
-  for (const row of calendarRows) {
-    const s = trimmed(row.start_date)
-    const e = trimmed(row.end_date)
-    if (!isValidGtfsDate(s) || !isValidGtfsDate(e)) {
-      undecidable.add(trimmed(row.service_id))
-      clampedCalendar.push(row)
-      continue
-    }
-    const ns = s < validity.start ? validity.start : s
-    const ne = e > validity.end ? validity.end : e
-    if (ns > ne) {
-      droppedCalendarServices.push(trimmed(row.service_id))
-      continue
-    }
-    if (ns === s && ne === e) {
-      clampedCalendar.push(row)
-    } else {
-      const next: GtfsRow = { ...row }
-      if (ns !== s) next.start_date = ns
-      if (ne !== e) next.end_date = ne
-      clampedCalendar.push(next)
-    }
-  }
-  if (droppedCalendarServices.length > 0) {
-    warn(
-      'calendarRowDropped',
-      `calendar の行のうち、新しい有効期間(${formatDate(validity.start)}〜${formatDate(validity.end)})と重ならない ${droppedCalendarServices.length} 行を除きました(service_id:${droppedCalendarServices.join('、')})。`,
-    )
-  }
-
-  const inValidity = (row: GtfsRow) => {
-    const d = trimmed(row.date)
-    return isValidGtfsDate(d) && validity.start <= d && d <= validity.end
-  }
-  const index = indexServiceDays(clampedCalendar, calendarDateRows.filter(inValidity))
-  const defined = new Set<string>()
-  for (const row of calendarRows) defined.add(trimmed(row.service_id))
-  for (const row of calendarDateRows) defined.add(trimmed(row.service_id))
-  defined.delete('')
-  const droppedServiceIds = new Set<string>()
-  for (const sid of sortedIds(defined)) {
-    if (undecidable.has(sid)) continue
-    if (!runsAnyDay(index.get(sid), validity.start, validity.end)) droppedServiceIds.add(sid)
-  }
+  const calendars = clampCalendars(base, validity, warn)
+  const { droppedServiceIds } = calendars
 
   // ---- trips ----
   const keptBase: GtfsRow[] = []
@@ -456,18 +405,6 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
     if (!droppedServiceIds.has(wk)) for (const row of derivedRows) copyRows(row, sourceOf.get(row) as GtfsRow, outStopTimes)
   }
 
-  // ---- calendar・calendar_dates の残り ----
-  const outCalendar = clampedCalendar.filter((r) => !droppedServiceIds.has(trimmed(r.service_id)))
-  const outCalendarDates: GtfsRow[] = []
-  const droppedDates: Form2Report['calendarDates']['dropped'] = []
-  for (const row of calendarDateRows) {
-    if (inValidity(row) && !droppedServiceIds.has(trimmed(row.service_id))) {
-      outCalendarDates.push(row)
-    } else {
-      droppedDates.push({ service_id: row.service_id ?? '', date: row.date ?? '', exception_type: row.exception_type ?? '' })
-    }
-  }
-
   // ---- §5.7 feed_info ----
   const feedInfo = feedInfoOf(base, validity, opts.generatedAt, opts.feedVersion?.trim() || undefined, warn)
 
@@ -499,8 +436,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   const tables = new Map(base.tables)
   tables.set('trips', { ...tripsTable, rows: outTrips })
   if (stopTimesTable) tables.set('stop_times', { ...stopTimesTable, rows: outStopTimes })
-  if (calendarTable) tables.set('calendar', { ...calendarTable, rows: outCalendar })
-  if (calendarDatesTable) tables.set('calendar_dates', { ...calendarDatesTable, rows: outCalendarDates })
+  setCalendarTables(tables, calendars)
   tables.set('feed_info', feedInfo.table)
 
   const report: Form2Report = {
@@ -516,13 +452,221 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
       collisions,
     },
     addBack,
-    calendarDates: { kept: outCalendarDates.length, dropped: droppedDates },
+    calendarDates: { kept: calendars.outCalendarDates.length, dropped: calendars.droppedDates },
     droppedServices,
     rowOrder: { trips: tripOrder, stop_times: stopTimesOrder },
     feedVersion: feedInfo.version,
     warnings,
   }
   return { ok: true, result: { feed: { tables, warnings: [] }, plan, report } }
+}
+
+// ---- 減便をやめる版(docs/tasks-1103.md T23、取り決め 1104 §12.1-3 の (a)) ----
+
+export interface RevertOptions extends Form2Options {
+  /** 戻す日('YYYYMMDD')。この日から元のダイヤで走る。出力の有効期間は戻す日〜入力の末日 */
+  restoreFrom: string
+  /**
+   * 検証(validateEdit)が「平日ダイヤ」として見る service(祝日・年末年始の確かめに使う)。
+   * 承認した方針があればその service、無ければ推定した平日の service、それも無ければ省く。便の中身には使わない
+   */
+  services?: Pick<PolicySettings, 'kind' | 'weekdayService' | 'replacementService'>
+}
+
+/**
+ * 減便をやめる版を作る。基準のフィードの便は変えず、有効期間を「戻す日〜入力の末日」に切り詰め(§5.6)、
+ * feed_info の有効期間と feed_version を書き換える(§5.7)。減便の方針と足し戻しは入れない。
+ *
+ * - 結果は Form2Result の形で返す(validateEdit と writeGtfsZip をそのまま使うため)。plan は
+ *   period = { start: 戻す日, end: null }、除外・足し戻しは空。report の tripIds・addBack は空
+ * - trips・stop_times は、新しい有効期間に走らなくなった service が無ければ基準と同じ参照のまま返す
+ *   (ZIP には元のバイト列が入る)。そのような service があれば、その便と stop_times の行だけを除く
+ * - 戻す日が入力の開始日より前なら開始日にそろえて periodStartClamped、入力の末日より後なら ok: false。
+ *   有効期間が 7 日以下なら shortValidity(出力を止めるのは validateEdit)
+ */
+export function applyRevert(base: GtfsFeed, opts: RevertOptions): Form2Outcome {
+  if (!GENERATED_AT.test(opts.generatedAt)) {
+    return { ok: false, message: `作成日時の形が正しくありません(${opts.generatedAt})。YYYYMMDDhhmm の12桁にしてください。` }
+  }
+  const versionProblem = opts.feedVersion === undefined ? null : feedVersionProblem(opts.feedVersion)
+  if (versionProblem) return { ok: false, message: versionProblem }
+  const restoreFrom = opts.restoreFrom.trim()
+  if (!isValidGtfsDate(restoreFrom)) return { ok: false, message: `戻す日の形が正しくありません(${opts.restoreFrom})。` }
+  const tripsTable = base.tables.get('trips')
+  const inputValidity = feedValidity(base)
+  if (!tripsTable || !inputValidity) return { ok: false, message: '減便をやめる版を作れません(trips.txt か入力の有効期間がありません)。' }
+  const validity = policyValidity(inputValidity, { start: restoreFrom, end: null })
+  if (!validity) {
+    return {
+      ok: false,
+      message: `戻す日(${formatDate(restoreFrom)})が入力の有効期間の末日(${formatDate(inputValidity.end)})より後です。入力の有効期間の中の日を選んでください。`,
+    }
+  }
+
+  const warnings: { code: string; message: string }[] = []
+  const warn = (code: string, message: string) => warnings.push({ code, message })
+  if (restoreFrom < inputValidity.start) {
+    warn(
+      'periodStartClamped',
+      `戻す日(${formatDate(restoreFrom)})が入力の開始日より前のため、入力の開始日(${formatDate(inputValidity.start)})にそろえました。`,
+    )
+  }
+  if (validity.days <= 7) {
+    warn(
+      'shortValidity',
+      `有効期間が ${validity.days} 日です。GTFS-JP は有効期間が 7 日以下のデータを作成しないこととしているため、出力できません。戻す日を変えてください。`,
+    )
+  }
+
+  const calendars = clampCalendars(base, validity, warn)
+  const { droppedServiceIds } = calendars
+  const tables = new Map(base.tables)
+  const droppedTripCounts = new Map<string, number>()
+  if (droppedServiceIds.size > 0) {
+    const gone = new Set<string>()
+    const outTrips: GtfsRow[] = []
+    for (const row of tripsTable.rows) {
+      const sid = trimmed(row.service_id)
+      if (droppedServiceIds.has(sid)) {
+        droppedTripCounts.set(sid, (droppedTripCounts.get(sid) ?? 0) + 1)
+        gone.add(trimmed(row.trip_id))
+      } else {
+        outTrips.push(row)
+      }
+    }
+    // 同じ trip_id の便が残る service にもあれば(入力の重複)、その行は残す
+    for (const row of outTrips) gone.delete(trimmed(row.trip_id))
+    tables.set('trips', { ...tripsTable, rows: outTrips })
+    const stopTimesTable = base.tables.get('stop_times')
+    if (stopTimesTable) tables.set('stop_times', { ...stopTimesTable, rows: stopTimesTable.rows.filter((r) => !gone.has(trimmed(r.trip_id))) })
+  }
+  const droppedServices = sortedIds(droppedServiceIds).map((serviceId) => ({ serviceId, trips: droppedTripCounts.get(serviceId) ?? 0 }))
+  if (droppedServices.length > 0) {
+    warn(
+      'servicesDropped',
+      `新しい有効期間のどの日にも走らない service を、便ごと出力から除きました(${droppedServices.map((d) => `${d.serviceId}:${d.trips} 便`).join('、')})。`,
+    )
+  }
+  setCalendarTables(tables, calendars)
+  const feedInfo = feedInfoOf(base, validity, opts.generatedAt, opts.feedVersion?.trim() || undefined, warn)
+  tables.set('feed_info', feedInfo.table)
+
+  const plan: Form2Plan = {
+    kind: opts.services?.kind ?? 'weekdayToSaturday',
+    weekdayService: opts.services?.weekdayService.trim() ?? '',
+    replacementService: opts.services?.replacementService.trim() ?? '',
+    period: { start: restoreFrom, end: null },
+    excludedRoutes: [],
+    addBackTripIds: [],
+  }
+  const report: Form2Report = {
+    inputValidity: { start: inputValidity.start, end: inputValidity.end },
+    validity: { start: validity.start, end: validity.end, days: validity.days },
+    tripIds: { rule: 'append-service', servicePartIndex: null, derived: [], kept: [], addedBack: [], removed: [], collisions: [] },
+    addBack: { requested: 0, accepted: [], ignoredExcludedRoute: [], ignoredAlreadyPresent: [], notWeekday: [], notFound: [], duplicate: [] },
+    calendarDates: { kept: calendars.outCalendarDates.length, dropped: calendars.droppedDates },
+    droppedServices,
+    rowOrder: { trips: 'input', stop_times: 'input' },
+    feedVersion: feedInfo.version,
+    warnings,
+  }
+  return { ok: true, result: { feed: { tables, warnings: [] }, plan, report } }
+}
+
+/** §5.6 の calendar・calendar_dates の切り詰めの結果 */
+interface ClampedCalendars {
+  calendarTable: GtfsTable | undefined
+  calendarDatesTable: GtfsTable | undefined
+  outCalendar: GtfsRow[]
+  outCalendarDates: GtfsRow[]
+  droppedDates: Form2Report['calendarDates']['dropped']
+  /** 新しい有効期間のどの日にも走らなくなった service */
+  droppedServiceIds: Set<string>
+}
+
+/**
+ * 有効期間、calendar、calendar_dates(§5.6)。形2の適用(applyForm2)と減便をやめる版(applyRevert)で共通。
+ * calendar の各行を新しい有効期間に切り詰め(値が変わらない列は元の値のまま、start_date > end_date になる行は除いて
+ * calendarRowDropped の警告)、calendar_dates は有効期間に入る行だけを入力の順で残す。
+ * 切り詰めたあと新しい有効期間のどの日にも走らない service は、calendar の行と calendar_dates の残りの行も除く
+ * (便と stop_times を除くのは呼ぶ側)。日付が不正な calendar の行は切り詰めず、その service は走るかを判定しない
+ */
+function clampCalendars(
+  base: GtfsFeed,
+  validity: { start: string; end: string },
+  warn: (code: string, message: string) => void,
+): ClampedCalendars {
+  const calendarTable = base.tables.get('calendar')
+  const calendarDatesTable = base.tables.get('calendar_dates')
+  const calendarRows = calendarTable?.rows ?? []
+  const calendarDateRows = calendarDatesTable?.rows ?? []
+
+  const clampedCalendar: GtfsRow[] = []
+  const droppedCalendarServices: string[] = []
+  // 日付が不正な calendar の行は切り詰めず、その service は走るかを判定しない(入力の誤りは validateEdit が出す)
+  const undecidable = new Set<string>()
+  for (const row of calendarRows) {
+    const s = trimmed(row.start_date)
+    const e = trimmed(row.end_date)
+    if (!isValidGtfsDate(s) || !isValidGtfsDate(e)) {
+      undecidable.add(trimmed(row.service_id))
+      clampedCalendar.push(row)
+      continue
+    }
+    const ns = s < validity.start ? validity.start : s
+    const ne = e > validity.end ? validity.end : e
+    if (ns > ne) {
+      droppedCalendarServices.push(trimmed(row.service_id))
+      continue
+    }
+    if (ns === s && ne === e) {
+      clampedCalendar.push(row)
+    } else {
+      const next: GtfsRow = { ...row }
+      if (ns !== s) next.start_date = ns
+      if (ne !== e) next.end_date = ne
+      clampedCalendar.push(next)
+    }
+  }
+  if (droppedCalendarServices.length > 0) {
+    warn(
+      'calendarRowDropped',
+      `calendar の行のうち、新しい有効期間(${formatDate(validity.start)}〜${formatDate(validity.end)})と重ならない ${droppedCalendarServices.length} 行を除きました(service_id:${droppedCalendarServices.join('、')})。`,
+    )
+  }
+
+  const inValidity = (row: GtfsRow) => {
+    const d = trimmed(row.date)
+    return isValidGtfsDate(d) && validity.start <= d && d <= validity.end
+  }
+  const index = indexServiceDays(clampedCalendar, calendarDateRows.filter(inValidity))
+  const defined = new Set<string>()
+  for (const row of calendarRows) defined.add(trimmed(row.service_id))
+  for (const row of calendarDateRows) defined.add(trimmed(row.service_id))
+  defined.delete('')
+  const droppedServiceIds = new Set<string>()
+  for (const sid of sortedIds(defined)) {
+    if (undecidable.has(sid)) continue
+    if (!runsAnyDay(index.get(sid), validity.start, validity.end)) droppedServiceIds.add(sid)
+  }
+
+  const outCalendar = clampedCalendar.filter((r) => !droppedServiceIds.has(trimmed(r.service_id)))
+  const outCalendarDates: GtfsRow[] = []
+  const droppedDates: Form2Report['calendarDates']['dropped'] = []
+  for (const row of calendarDateRows) {
+    if (inValidity(row) && !droppedServiceIds.has(trimmed(row.service_id))) {
+      outCalendarDates.push(row)
+    } else {
+      droppedDates.push({ service_id: row.service_id ?? '', date: row.date ?? '', exception_type: row.exception_type ?? '' })
+    }
+  }
+  return { calendarTable, calendarDatesTable, outCalendar, outCalendarDates, droppedDates, droppedServiceIds }
+}
+
+/** 切り詰めた calendar・calendar_dates を、基準にある表だけ新しい表にする(基準に無い表は作らない) */
+function setCalendarTables(tables: Map<string, GtfsTable>, c: ClampedCalendars): void {
+  if (c.calendarTable) tables.set('calendar', { ...c.calendarTable, rows: c.outCalendar })
+  if (c.calendarDatesTable) tables.set('calendar_dates', { ...c.calendarDatesTable, rows: c.outCalendarDates })
 }
 
 const FEED_INFO_DATE_FIELDS = ['feed_start_date', 'feed_end_date', 'feed_version'] as const

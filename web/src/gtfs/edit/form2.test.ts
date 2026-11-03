@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { GtfsFeed, GtfsRow } from '../load'
-import { applyForm2, defaultFeedVersion, feedVersionProblem, type Form2Result } from './form2'
+import type { HolidayList } from '../holidays'
+import { validateEdit } from '../validate/edit'
+import { applyForm2, applyRevert, defaultFeedVersion, feedVersionProblem, type Form2Result, type RevertOptions } from './form2'
 import {
   basePlan,
   dohokuShapedFeed,
@@ -603,5 +605,191 @@ SU,20261108,1`),
     const many = withRows(base, 'stop_times', [...stopTimes, ...['O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O6'].map((id) => ({ ...ghost, trip_id: id }))])
     const message = apply(many, basePlan()).report.warnings.find((w) => w.code === 'orphanStopTimesDropped')?.message
     expect(message).toContain('の 7 行を除きました(trip_id:O1、O2、O3、O4、O5 ほか 1 件)。')
+  })
+})
+
+describe('applyRevert(減便をやめる版)', () => {
+  const SERVICES = { kind: 'weekdayToSaturday', weekdayService: 'WK', replacementService: 'SA' } as const
+
+  function revert(feed: GtfsFeed, restoreFrom: string, extra: Partial<RevertOptions> = {}): Form2Result {
+    const outcome = applyRevert(feed, { ...OPTS, restoreFrom, services: SERVICES, ...extra })
+    if (!outcome.ok) throw new Error(outcome.message)
+    return outcome.result
+  }
+
+  it('便は変えず(trips・stop_times は基準と同じ参照)、有効期間を戻す日〜入力の末日に切り詰めて feed_info を書き換える', () => {
+    const base = smallFeed()
+    const result = revert(base, '20261115')
+    const { feed, report } = result
+    expect(feed.tables.get('trips')).toBe(base.tables.get('trips'))
+    expect(feed.tables.get('stop_times')).toBe(base.tables.get('stop_times'))
+    // ほかの表も同じ参照のまま
+    for (const name of ['agency', 'routes', 'stops']) expect(feed.tables.get(name)).toBe(base.tables.get(name))
+    expect(report.inputValidity).toEqual({ start: '20261001', end: '20261130' })
+    expect(report.validity).toEqual({ start: '20261115', end: '20261130', days: 16 })
+    expect(rows(feed, 'calendar').map((r) => [r.service_id, r.start_date, r.end_date])).toEqual([
+      ['SA', '20261115', '20261130'],
+      ['SU', '20261115', '20261130'],
+      ['WK', '20261115', '20261130'],
+    ])
+    // 20261012・20261103 の例外は新しい有効期間の外なので除く(行の中身は変えない)
+    expect(rows(feed, 'calendar_dates')).toEqual([])
+    expect(report.calendarDates.kept).toBe(0)
+    expect(report.calendarDates.dropped.map((d) => d.date)).toEqual(['20261012', '20261012', '20261012', '20261103', '20261103', '20261103'])
+    const info = rows(feed, 'feed_info')[0]
+    expect([info.feed_start_date, info.feed_end_date, info.feed_version]).toEqual(['20261115', '20261130', '202611041200'])
+    expect(report.feedVersion).toEqual({ before: '202609171038', after: '202611041200' })
+    // 方針・足し戻しは入れない
+    expect(result.plan).toMatchObject({ weekdayService: 'WK', period: { start: '20261115', end: null }, excludedRoutes: [], addBackTripIds: [] })
+    expect(report.tripIds.derived).toEqual([])
+    expect(report.tripIds.removed).toEqual([])
+    expect(report.warnings).toEqual([])
+    // 基準の行は書き換えない
+    expect(rows(base, 'calendar').every((r) => r.start_date === '20261001')).toBe(true)
+    expect(rows(base, 'feed_info')[0].feed_version).toBe('202609171038')
+  })
+
+  it('検証器(validateEdit)で error が無い。祝日の例外は入力のまま残る', () => {
+    const holidays: HolidayList = { names: new Map([['20261103', '文化の日'], ['20261123', '勤労感謝の日']]), first: '19550101', coveredUntil: '20271231', source: 'test' }
+    const base = smallFeed()
+    const result = revert(base, '20261101')
+    expect(rows(result.feed, 'calendar_dates').map((r) => `${r.service_id},${r.date},${r.exception_type}`)).toEqual([
+      'WK,20261103,2',
+      'SA,20261103,2',
+      'SU,20261103,1',
+    ])
+    const issues = validateEdit(base, result, holidays)
+    expect(issues.filter((i) => i.severity === 'error')).toEqual([])
+    // 平日の便は入力のままなので、署名が同じ便の列の違いも、使われなくなる停留所・系統も無い
+    const codes = issues.map((i) => i.code)
+    for (const code of ['signatureColumnMismatch', 'unusedRoutes', 'unusedStops', 'tripIdReused']) expect(codes).not.toContain(code)
+    // 20261123(月・祝)は入力でも例外が無く平日ダイヤで走る(入力の作りのまま)
+    expect(issues.find((i) => i.code === 'holidayWithoutException')?.examples).toEqual(['20261123'])
+  })
+
+  it('有効期間が 7 日以下なら shortValidity の警告を残し、validateEdit が出力を止める', () => {
+    const base = smallFeed()
+    const result = revert(base, '20261124')
+    expect(result.report.validity.days).toBe(7)
+    expect(result.report.warnings.map((w) => w.code)).toEqual(['shortValidity'])
+    expect(validateEdit(base, result, null).find((i) => i.severity === 'error')).toMatchObject({ code: 'shortValidity', exportOnly: true })
+  })
+
+  it('戻す日が入力の開始日より前なら開始日にそろえて警告し、末日より後や不正な日付なら作らない', () => {
+    const early = revert(smallFeed(), '20260901')
+    expect(early.report.validity.start).toBe('20261001')
+    expect(early.report.warnings.map((w) => w.code)).toEqual(['periodStartClamped'])
+    expect(applyRevert(smallFeed(), { ...OPTS, restoreFrom: '20261201' })).toMatchObject({ ok: false })
+    expect(applyRevert(smallFeed(), { ...OPTS, restoreFrom: '20261131' })).toMatchObject({ ok: false })
+    expect(applyRevert(smallFeed(), { generatedAt: '2026-11-04', restoreFrom: '20261115' })).toMatchObject({ ok: false })
+  })
+
+  it('新しい有効期間に走らなくなる service は、その便と stop_times だけを除いて警告する', () => {
+    const base = withSummerService()
+    const result = revert(base, '20261101')
+    const { feed, report } = result
+    expect(report.droppedServices).toEqual([{ serviceId: 'S11', trips: 1 }])
+    expect(report.warnings.map((w) => w.code)).toEqual(['calendarRowDropped', 'servicesDropped'])
+    expect(tripIds(feed)).toEqual(tripIds(base).filter((id) => id !== 'R1_1200_S11'))
+    expect(rows(feed, 'stop_times')).toEqual(rows(base, 'stop_times').filter((r) => r.trip_id !== 'R1_1200_S11'))
+    expect(validateEdit(base, result, null).filter((i) => i.severity === 'error')).toEqual([])
+  })
+
+  it('calendar.txt の無い(calendar_dates だけの)入力:calendar を作らず、calendar_dates を戻す日〜入力の末日の行に絞り、走らなくなる service の便だけを除く', () => {
+    let base = without(smallFeed(), 'calendar')
+    base = withRows(
+      base,
+      'calendar_dates',
+      rowsOf(`
+service_id,date,exception_type
+WK,20261105,1
+WK,20261116,1
+WK,20261117,1
+SA,20261121,1
+SU,20261122,1
+WK,20261124,1
+SA,20261128,1
+OCT,20261015,1`),
+    )
+    base = withRows(base, 'trips', [...rows(base, 'trips'), { route_id: 'R1', service_id: 'OCT', trip_id: 'R1_1200_OCT', trip_headsign: '市役所', block_id: '' }])
+    base = withRows(base, 'stop_times', [
+      ...rows(base, 'stop_times'),
+      { trip_id: 'R1_1200_OCT', arrival_time: '12:00:00', departure_time: '12:00:00', stop_id: 'A', stop_sequence: '1', pickup_type: '0', drop_off_type: '1' },
+      { trip_id: 'R1_1200_OCT', arrival_time: '12:10:00', departure_time: '12:10:00', stop_id: 'B', stop_sequence: '2', pickup_type: '1', drop_off_type: '0' },
+    ])
+    const result = revert(base, '20261116')
+    const { feed, report } = result
+    expect(feed.tables.has('calendar')).toBe(false)
+    expect(report.validity).toEqual({ start: '20261116', end: '20261130', days: 15 })
+    expect(rows(feed, 'calendar_dates').map((r) => `${r.service_id},${r.date}`)).toEqual([
+      'WK,20261116',
+      'WK,20261117',
+      'SA,20261121',
+      'SU,20261122',
+      'WK,20261124',
+      'SA,20261128',
+    ])
+    expect(report.droppedServices).toEqual([{ serviceId: 'OCT', trips: 1 }])
+    expect(report.warnings.map((w) => w.code)).toEqual(['servicesDropped'])
+    expect(tripIds(feed)).toEqual(tripIds(base).filter((id) => id !== 'R1_1200_OCT'))
+    expect(rows(feed, 'stop_times')).toEqual(rows(base, 'stop_times').filter((r) => r.trip_id !== 'R1_1200_OCT'))
+    expect(validateEdit(base, result, null).filter((i) => i.severity === 'error')).toEqual([])
+  })
+
+  it('feed_info.txt の無い入力:feedInfoCreated の警告を出し、feed_info を戻す日〜入力の末日で作る', () => {
+    const base = without(smallFeed(), 'feed_info')
+    const result = revert(base, '20261115')
+    const { feed, report } = result
+    expect(report.inputValidity).toEqual({ start: '20261001', end: '20261130' })
+    expect(report.warnings.map((w) => w.code)).toEqual(['feedInfoCreated'])
+    expect(rows(feed, 'feed_info')).toEqual([
+      {
+        feed_publisher_name: 'テストバス',
+        feed_publisher_url: 'https://example.jp/',
+        feed_lang: 'ja',
+        feed_start_date: '20261115',
+        feed_end_date: '20261130',
+        feed_version: '202611041200',
+      },
+    ])
+    expect(report.feedVersion).toEqual({ before: '', after: '202611041200' })
+    // 便は変えない
+    expect(feed.tables.get('trips')).toBe(base.tables.get('trips'))
+    expect(validateEdit(base, result, null).filter((i) => i.severity === 'error')).toEqual([])
+  })
+
+  it('日付の不正な calendar の行(start_date が 2026XXXX)は切り詰めずに残し、その service の便も除かない。検証では入力からある問題(warning)', () => {
+    let base = smallFeed()
+    base = withRows(base, 'calendar', [
+      ...rows(base, 'calendar'),
+      ...rowsOf(`
+service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
+BAD,1,1,1,1,1,0,0,2026XXXX,20261031`),
+    ])
+    base = withRows(base, 'trips', [...rows(base, 'trips'), { route_id: 'R1', service_id: 'BAD', trip_id: 'R1_1200_BAD', trip_headsign: '市役所', block_id: '' }])
+    base = withRows(base, 'stop_times', [
+      ...rows(base, 'stop_times'),
+      { trip_id: 'R1_1200_BAD', arrival_time: '12:00:00', departure_time: '12:00:00', stop_id: 'A', stop_sequence: '1', pickup_type: '0', drop_off_type: '1' },
+      { trip_id: 'R1_1200_BAD', arrival_time: '12:10:00', departure_time: '12:10:00', stop_id: 'B', stop_sequence: '2', pickup_type: '1', drop_off_type: '0' },
+    ])
+    const result = revert(base, '20261115')
+    const { feed, report } = result
+    // 入力の有効期間は feed_info のまま(不正な日付は使わない)
+    expect(report.inputValidity).toEqual({ start: '20261001', end: '20261130' })
+    const bad = rows(feed, 'calendar').find((r) => r.service_id === 'BAD')
+    expect(bad).toBe(rows(base, 'calendar').find((r) => r.service_id === 'BAD'))
+    expect(report.droppedServices).toEqual([])
+    expect(tripIds(feed)).toContain('R1_1200_BAD')
+    expect(feed.tables.get('stop_times')).toBe(base.tables.get('stop_times'))
+    const issues = validateEdit(base, result, null)
+    expect(issues.filter((i) => i.severity === 'error')).toEqual([])
+    expect(issues.find((i) => i.code === 'badCalendar')).toMatchObject({ severity: 'warning', inherited: true })
+  })
+
+  it('feedVersion を渡すとその値を使い、services を省くと平日の service は空にする', () => {
+    const result = revert(smallFeed(), '20261115', { feedVersion: ' 202611200000 ', services: undefined })
+    expect(rows(result.feed, 'feed_info')[0].feed_version).toBe('202611200000')
+    expect(result.plan.weekdayService).toBe('')
+    expect(applyRevert(smallFeed(), { ...OPTS, restoreFrom: '20261115', feedVersion: 'a\nb' })).toMatchObject({ ok: false })
   })
 })

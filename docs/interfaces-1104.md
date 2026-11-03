@@ -76,7 +76,7 @@
 - 便を消す操作、系統ごとの間引き、ほかの方針(§12.1-10)
 - 祝日の例外を補うこと(§5.8 は警告だけ)
 - transfers・attributions・translations のうち便を指す行の書き換え(11/4 は、その行があれば方針を適用しない。§5.2)
-- 減便をやめるときの版の出力(§12.1-3)
+- 減便をやめるときの版の出力(§12.1-3。11/3 に作った。出力の手順の「減便をやめる版」)
 
 ## 2. 祝日
 
@@ -424,7 +424,7 @@ export interface ValidationIssue {
 export function validateEdit(base: GtfsFeed, result: Form2Result, holidays: HolidayList | null): ValidationIssue[]
 ```
 
-`propose` のたびに呼ぶ。11/4 に入れる規則は次のとおり。全表の検査(fare_rules など)は 11/6 の検証器で足し、同じ `ValidationIssue` を使う。
+`propose` のたびに呼ぶ。規則は次の表のとおり。11/4 に入れた規則に、11/6 の検証器で全表を見る規則(コードは `web/src/gtfs/validate/feed.ts`。表の下の行)を足した。どれも同じ `ValidationIssue` を使う。fare_rules など運賃の表は検査していない。
 
 | 重さ | code | 規則 |
 | --- | --- | --- |
@@ -436,14 +436,25 @@ export function validateEdit(base: GtfsFeed, result: Form2Result, holidays: Holi
 | error | `badCalendar` | calendar の日付が不正、`start_date > end_date` |
 | error | `duplicateCalendarDate` | calendar_dates に同じ service_id・date の行が2つ以上ある |
 | error | `badFeedInfo` | feed_info の `feed_start_date`・`feed_end_date` が不正か逆順、`feed_version` が空か入力と同じ |
+| error | `requiredFileMissing` | GTFS-JP で必須のファイル(agency・stops・routes・trips・stop_times・feed_info、calendar か calendar_dates のどちらか)が無い |
+| error | `badCalendarDate`・`badCalendarWeekday` | calendar_dates の date が不正か exception_type が 1・2 以外。calendar の monday〜sunday が 0・1 以外 |
+| error | `badTimeFormat` | stop_times の arrival_time・departure_time が HH:MM:SS でない(時は 1 桁も可、24 時超えも可) |
+| error | `stopSequenceNotIncreasing`・`stopTimesEndpointBlank`・`stopTimesDecreasing` | 便の stop_sequence が 0 以上の整数でないか重複する。最初か最後の停留所の時刻が空。stop_sequence の順に時刻が戻る(stop_sequence の読めない便は、後の 2 つでは見ない) |
+| error | `stopIdChanged`・`routeIdChanged` | 入力の stop_id・route_id が、出力に無い(基準と編集後を比べる。入力からある問題には分けない) |
 | error(出力だけ止める) | `shortValidity` | 有効期間(`feed_end_date − feed_start_date + 1`)が 7 日以下。GTFS-JP 第4.0版(第1編 p.12)は「有効期間が7日間以下のデータセットは作成しないこととする」としている。`exportOnly: true` |
 | warning | `validityUnder30` | 有効期間が 30 日未満(同じ箇所で「可能であれば30日以上が望ましい」) |
 | info | `validityGapBefore`・`validityGapAfter` | 入力の有効期間のうち、出力から外れる日付の範囲(開始日より前、終了日より後)。形2では期間の外の日を表せないため(§5.6) |
 | info | `tripIdReused` | 編集後の便の trip_id のうち、基準では別の便(署名が違う便)を指していたもの。一覧と件数(§5.4) |
+| warning | `feedInfoRows` | feed_info の行が 1 行でない(複数行なら 1 行目だけを書き換える) |
+| warning | `calendarBeyondFeedInfo` | 入力の calendar・calendar_dates に、入力の feed_info の有効期間の外の日がある(出力は feed_info で切り詰めるので含まれない) |
+| warning | `calendarOutsideValidity` | 出力の calendar・calendar_dates に、出力の有効期間の外の日がある |
+| warning | `timeFormatVariant` | 時刻の書き方が HH:MM:SS とそろわない便(時が 1 桁、前後の空白)。署名は時刻を文字列で比べるため、同じ時刻でも別の便になる |
+| warning | `signatureColumnMismatch` | 編集後の平日便に、入力の平日便と停留所・時刻が同じで、行き先(trip_headsign・stop_headsign)・direction_id・乗降の扱いが違う便がある |
+| info | `unusedRoutes`・`unusedStops` | 入力では便があったのに、出力では便が 1 つも無くなる系統、stop_times に 1 度も出てこなくなる停留所(routes・stops には残す) |
 | warning など | `form2.*` | §5 の警告(`Form2Report.warnings`)をそのまま写す。ただし `form2.shortValidity` は上の `shortValidity` にまとめて出さない |
 | warning・info | `holiday*`・`weekdayNotRunning`・`yearEnd` | §5.8 の祝日・平日・年末年始の確かめ |
 
-- **入力からある問題**:`validateEdit` は、上の error の規則(`shortValidity`・`badFeedInfo` の「入力と同じ」を除く)を基準のフィードにも当てる。同じ code で、同じ対象(examples に出す値。trip_id・stop_id・service_id など)の問題が基準にもあれば、その分を別の issue に分けて `warning`・`inherited: true` にし、文言の頭に「入力からある問題:」を付ける。編集で新しく生じた問題だけを error にする。入力の参照の欠け(stop_times の stop_id が stops に無い行が1つある、など)で方針を適用できなくなるのを防ぐため。道北バスは参照の欠けが 0 件なので、正解データでは表に出ない
+- **入力からある問題**:`validateEdit` は、上の error の規則(`shortValidity`・`badFeedInfo` の「入力と同じ」と、基準と比べる `stopIdChanged`・`routeIdChanged` を除く)を基準のフィードにも当てる。同じ code で、同じ対象(examples に出す値。trip_id・stop_id・service_id など)の問題が基準にもあれば、その分を別の issue に分けて `warning`・`inherited: true` にし、文言の頭に「入力からある問題:」を付ける。編集で新しく生じた問題だけを error にする。入力の参照の欠け(stop_times の stop_id が stops に無い行が1つある、など)で方針を適用できなくなるのを防ぐため。道北バスは参照の欠けが 0 件なので、正解データでは表に出ない
 - `exportOnly` でない error が1件でもあれば、`commit` と出力を止める。`exportOnly` の error は出力だけを止める(承認でき、比較の地図と表は動く。方針の画面で日付を直してもらう)
 - 文言は §5.10
 
@@ -643,7 +654,7 @@ export function tripSignature(routeId: string, rows: readonly GtfsRow[]): string
 - 「出力する GTFS の有効期間は {開始日}〜{終了日}({日数}日)です。」
 - 開始日が入力の開始日より後で、開始日が今日より先のとき:「今日〜{開始日の前日} は、この ZIP を公開すると経路検索に便が出ません。公開は開始日の直前にするか、それまでは今の版を公開したままにしてください(Google は現行の版と将来の版を1つずつ持てます)。」
 - 開始日が入力の開始日より後で、開始日が今日以前のとき:「{入力の開始日}〜{開始日の前日} は出力に含まれません(過ぎた日です)。」
-- 期間の終わりを指定したとき:「{終了日の翌日} 以降は出力に含まれず、経路検索に便が出なくなります。その前に、元のダイヤに戻す版を公開してください。元の ZIP は保存しておいてください(公開先の元データは減便版で置き換わります)。」(戻す版の作り方は §12.1-3)
+- 期間の終わりを指定したとき:「{終了日の翌日} 以降は出力に含まれず、経路検索に便が出なくなります。その前に、元のダイヤに戻す版を公開してください。元の ZIP は保存しておいてください(公開先の元データは減便版で置き換わります)。」(戻す版は出力の手順の「減便をやめる版」で作る。元の ZIP から作るので、元の ZIP を保存しておく。§12.1-3)
 - 当面の間のとき:「出力の有効期間は {入力の末日}(入力の GTFS の末日)までです。減便が続くときは、次の版にも同じ方針を適用してください。」
 - 新しい有効期間の末日が今日から 30 日以内のとき(終わりの指定の有無によらない):「{末日の翌日} から経路検索に便が出なくなります。その前に新しい版を公開してください。」
 - 7 日以下のとき(出力できない):「有効期間が {日数} 日です。GTFS-JP は有効期間が 7 日以下のデータを作成しないこととしているため、出力できません。期間の開始日か終了日を変えてください。」
@@ -1038,7 +1049,7 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
 - 読むだけのツールは `"status": "ok"` と結果。失敗は `"status": "error"` と日本語の `message` で、`is_error: true` を付ける
 - `summarize_impact` の結果:時間帯ごとの減便前・減便後の外れる割合と、外れたセル・推計人口、`dayLostCells`、運行がゼロになる停留所(上位 20 件の名前と件数、'feed' の件数)と系統、足し戻しの集計
 - `search_trips` の結果:`TripBrief` から `signature` を除いたもの(`feed` と `stopNames` を含む。`stopNames` は 20 個を超えたら最初の 10 個と最後の 10 個にし、省いた数を書く)、手がかり、全体の件数(`limit` を超えた分は件数だけ)。同じ trip_id が `removed`(基準の便)と `added`(写した便)に別の便として出ることがあるので、説明文に「trip_id は feed とあわせて読む」と書く
-- 後で前提情報(11/6)の施設を足せるよう、`search_trips` の便ごとの結果に `nearby_facilities`(今は常に `null`)の項目名だけを置いておく
+- `search_trips` の便ごとの `nearby_facilities` は、徒歩圏にあり時間帯の窓に当たる学校・入院設備のある病院の配列(便ごとに 3 件まで)。施設か到達圏の比較が無いときは `null`(施設が無いという意味ではない)。形は `web/src/claude/tools.ts`
 - 1つの結果は 20KB まで。超える一覧は切り、切った件数を書く
 - 送る前と後に、送る内容(利用者の文とツールの結果)を画面の「AI に送る情報」に出す
 
@@ -1243,7 +1254,8 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
    - 選択肢:(a) 外れることを受け入れ、`validityGapBefore`・`validityGapAfter` と §5.10 の文言(公開は開始日の直前に、それまでは今の版を公開したままに)で知らせる(今の取り決め) (b) 開始日を入力の開始日のままにする(開始日より前の平日も減便ダイヤになる)
    - あわせて、期間の開始日が入力の開始日より前のときは、(a) 入力の開始日にそろえて警告する(今の取り決め) (b) エラーにする
    - おすすめ:どちらも (a)。利用者が形2を選んだ帰結で、道北バス自身も 10/29 版で同じ形をとっている
-3. **減便をやめるときの版**。元の ZIP は feed_version が公開済みの減便版より古く、有効期間も古い。公開先の元データは減便版で置き換わっている。今の出力の画面は履歴が空だと出力できない
+3. **減便をやめるときの版**。元の ZIP は feed_version が公開済みの減便版より古く、有効期間も古い。公開先の元データは減便版で置き換わっている。形2の出力は、履歴が空だと出力できない
+   - **決定(11/3)**:(a) を作った(T23)。出力の手順の「減便をやめる版を作る」で、戻す日と feed_version を決める。便は読み込んだ GTFS のまま、有効期間は戻す日〜入力の末日。実装は `applyRevert`(`web/src/gtfs/edit/form2.ts`)と `ExportStep.tsx`
    - 選択肢:(a) 11/6 に「減便をやめる版を出力する」を作る(基準のまま、feed_version を新しくし、有効期間を戻す日〜入力の末日にする。§5.6・§5.7 の切り詰めと feed_info の規則を使い、便は変えない) (b) 作らず、§5.10 の「元の ZIP を保存しておいてください」の案内だけにする (c) 期間の終わりを指定したときに、戻す版も同時に出力する
    - おすすめ:11/6 に時間があれば (a)、無ければ (b)。11/4 は新しい操作を足す余裕が無いので作らない(§1)
 4. **7 日以下の有効期間を、出力できない error にした**(指示役の案は警告)。根拠は GTFS-JP 第4.0版 第1編 p.12「有効期間が7日間以下のデータセットは作成しないこととする」と、gtfs-jp-v4-check の `feed_validity_too_short`(ERROR)
@@ -1303,7 +1315,7 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
 ### 12.2 反映しなかった指摘と理由
 
 - **7 日以下を確認のチェックで出せるようにする**(運行管理者の観点のレビュー):同じ点を GTFS-JP の規定から must とした指摘があり、出力を止める error にした(12.1-4)。日付を直すよう方針の画面で促す(`checkPolicy` の `shortValidity`)
-- **方針なしの版(減便をやめる版)の出力**:新しい操作で、11/4 の半日には入らない。12.1-3 で決める。§5.10 の文言は「元の ZIP を保存しておいてください」に直した
+- **方針なしの版(減便をやめる版)の出力**:新しい操作で、11/4 の半日には入らなかった。12.1-3 で (a) に決め、11/3 に作った。§5.10 の文言は「元の ZIP を保存しておいてください」に直した
 - **足し戻した便が属する運用の数の表示**(任意とされたもの):trip_id から運用を読む規則は道北バスの形に限られ、一般の GTFS では決められない。12.1-6 で trip_id の扱いを決めるときにあわせて検討する
 - **署名の一致を、時刻を秒に直した値で判定する。署名が同じ組の列(pickup_type・drop_off_type・trip_headsign・direction_id)の不一致の件数を出す**:道北バスでは時刻の書き方がそろい、署名が同じ便どうしでほかの列の違いは 0 件。11/4 は正解データとの照合(`signatureDigest`・`sameAs`・重なり)を崩さないことを優先し、署名は文字列のままにした(§5.1)。11/6 の検証器で、時刻の書き方の違い(時が1桁の値など)と列の不一致を warning として足す
 - **平日になかった発車時刻が加わる停留所・発車時刻が消える停留所の件数と、掲示の差し替え・早発の注意**:停留所ごとの一覧(B)と同じ計算なので、B を作るときに件数と注意もあわせて出す。11/4 は §6 の「入る便の系統と時刻を確かめてください」までにする。§5.10 の「平日ダイヤで走る日」の文言の直しは反映した
@@ -1338,5 +1350,5 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
 - **calendar が feed_info の範囲より広い入力**:切り詰めで、入力の feed_info の範囲の外にあった calendar の日が落ちるときは warning `calendarBeyondFeedInfo` を出す。道北バスの 2 版は端が同じ
 - **署名が同じ平日便は平日便の trip_id を残す案**(12.1-6 の (b)):9/17 版の平日便のうち土曜に同じ署名の便がある 150 便で、今の規則では 77 便の trip_id が変わる。GTFS-RT やバスロケのように trip_id で照合する仕組みには (b) が向く。事業者の 10/29 版も id を付け直している
 - **Claude の中継の費用と表示**(11/5 に決める):最後の user の発言にも `cache_control` を置くか、トップレベルの自動キャッシュを使う。`thinking.display` を `summarized` にするか、待っている間に「考えています…」を出す。`eager_input_streaming` を使うなら、ブラウザでツールの入力を必ず確かめる
-- **ほかに決めておくこと**(11/5〜11/6):サンプル GTFS のダウンロードを合言葉の対象に入れるか(Notion §5 で未定)。編集の履歴の IndexedDB への保存と、画面から消す機能を作るか。前提情報(11/6)の学校・病院を足し戻しの手がかりにどうつなぐか(`search_trips` の `nearby_facilities` は項目名だけ置いた)
+- **ほかに決めておくこと**(11/5〜11/6):11/3 に決まった。サンプル GTFS のダウンロードは合言葉の対象にしない(AI も合言葉なしで公開する)。編集の履歴の IndexedDB への保存は作らない(読み込み直すと編集は消える)。前提情報の学校・病院は、足し戻しの手がかり `nearFacility` と `search_trips` の `nearby_facilities` につないだ(§10)
 - **乗降の扱いだけが違う便の分類**:署名に pickup_type・drop_off_type を含めないので、乗降の扱いだけが違う平日便を足し戻そうとすると `ignoredAlreadyPresent` で断られる。別の分類(`differsOnlyInPickup`)にする案

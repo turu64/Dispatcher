@@ -4,6 +4,8 @@ import type { GtfsFeed } from '../load'
 import { stopDiff, type StopChange, type StopDeparture } from './stopDiff'
 import { addBackReasons, type EditRecord, type Form2Plan } from './ops'
 import { compareStrings } from './signature'
+import { isOwnOperator, operatorMovementFacts } from '@/ref/facilities'
+import { nearOtherStops, operatorNameOf, OTHER_STOP_RADIUS_M, type OtherStop } from '@/ref/busstops'
 
 /**
  * 周知文の計算(純粋な関数)。停留所ごとの掲示(系統ごとの期間中の発車時刻)と、代替手段の案内の材料、
@@ -13,7 +15,9 @@ import { compareStrings } from './signature'
  * - 発車時刻は stopDiff.ts(停留所の一覧・到達圏の出発の数と同じ規則)の編集後の側。
  *   形2では平日ダイヤの便が入れ替わるので、期間の中の平日ダイヤが走る日 1 日で数える(pickNoticeDate)
  * - 数字(本数・時刻・距離)はこのファイルが出す。文面の自由記入の部分は、画面で利用者が書く
- * - 他事業者の便は扱わない。代替手段は、同じ停留所と近くの停留所に期間中も残る自社の便と、自由記入で出す
+ * - 他事業者の便は扱わない(国土数値情報の停留所には時刻が無い)。代替手段は、同じ停留所と近くの停留所に期間中も残る自社の便と、
+ *   近くにある他事業者の停留所・系統名(位置は参照データの P11。引数で受ける)と、自由記入で出す
+ * - 他事業者の減便の動きは、前提情報で調べた結果の事実を引用するだけ(要約や推測はしない)。確認日時はいつも添える
  */
 
 /** 頻繁な系統とみなす間隔の上限(分)。隣り合う発車が15分以内なら、1時間に4本以上になる(運輸規則第5条第3項の「頻繁」の目安) */
@@ -314,6 +318,18 @@ export interface NearbyStop {
   lines: RemainingLine[]
 }
 
+/** 近くにある1つの他事業者の停留所と系統(時刻は P11 に無いので持たない) */
+export interface OtherOperatorNear {
+  /** 事業者の target_id(P11:…) */
+  targetId: string
+  /** 事業者名(P11: を除いたもの) */
+  name: string
+  /** 半径内のこの事業者の停留所(近い順。同じ停留所名は近いほう1件。距離は 10 m 単位に四捨五入) */
+  stops: { name: string; distanceM: number }[]
+  /** これらの停留所の系統名(重複なし、順に並べたもの) */
+  routes: string[]
+}
+
 export interface Alternatives {
   /** 同じ停留所に期間中も残る自社の便(系統 × 行き先) */
   sameStop: RemainingLine[]
@@ -321,6 +337,11 @@ export interface Alternatives {
   nearby: NearbyStop[]
   /** 座標が分からず、近くの停留所を探せなかった */
   noCoordinates: boolean
+  /**
+   * 半径内にある他事業者の停留所と系統(事業者ごと。最も近い停留所が近い順)。
+   * 停留所の参照データを渡していないときは null(無い、とは言えない)。座標が無いときは空
+   */
+  otherOperators: OtherOperatorNear[] | null
 }
 
 function remainingOf(stop: StopNotice): RemainingLine[] {
@@ -335,12 +356,55 @@ function remainingOf(stop: StopNotice): RemainingLine[] {
 }
 
 /**
- * 代替手段の案内の材料:同じ停留所と、半径 radiusM(既定 300 m)以内の別の停留所に、期間中も残る自社の便。
- * 他事業者の便は含めない(自由記入で補う)
+ * 半径 radiusM 以内の他事業者の停留所を、事業者ごとにまとめる(ref/busstops.ts の nearOtherStops)。
+ * otherStops は、読み込んだ GTFS の事業者を excludeOwnOperators で除いたものを渡す(自社の停留所を「他社」と数えないため)
  */
-export function alternativesFor(target: StopNotice, all: readonly StopNotice[], radiusM: number = NEARBY_RADIUS_M): Alternatives {
+export function otherOperatorsNear(
+  lat: number,
+  lon: number,
+  otherStops: readonly OtherStop[],
+  radiusM: number = OTHER_STOP_RADIUS_M,
+): OtherOperatorNear[] {
+  const near = nearOtherStops(lat, lon, otherStops, radiusM)
+  const byOperator = new Map<string, { stops: Map<string, number>; routes: Set<string>; nearest: number }>()
+  for (const { stop, distanceM: d } of near.stops) {
+    for (const op of stop.operators) {
+      let e = byOperator.get(op)
+      if (!e) {
+        e = { stops: new Map(), routes: new Set(), nearest: d }
+        byOperator.set(op, e)
+      }
+      const rounded = Math.round(d / 10) * 10
+      // 上り・下りなど同じ名前の停留所は、近いほう(先に出たほう)だけを載せる
+      if (!e.stops.has(stop.name)) e.stops.set(stop.name, rounded)
+      for (const r of stop.routes) e.routes.add(r)
+    }
+  }
+  return [...byOperator.entries()]
+    .sort(([ia, a], [ib, b]) => a.nearest - b.nearest || compareStrings(ia, ib))
+    .map(([targetId, e]) => ({
+      targetId,
+      name: operatorNameOf(targetId),
+      stops: [...e.stops.entries()].map(([name, distanceM]) => ({ name, distanceM })),
+      routes: [...e.routes].sort(compareStrings),
+    }))
+}
+
+/**
+ * 代替手段の案内の材料:同じ停留所と、半径 radiusM(既定 300 m)以内の別の停留所に、期間中も残る自社の便。
+ * otherStops(自社を除いた他事業者の停留所)を渡すと、半径内の他事業者の停留所と系統名も数える。
+ * 他事業者の便の本数・時刻は持たない(P11 に時刻が無い)
+ */
+export function alternativesFor(
+  target: StopNotice,
+  all: readonly StopNotice[],
+  radiusM: number = NEARBY_RADIUS_M,
+  otherStops: readonly OtherStop[] | null = null,
+): Alternatives {
   const sameStop = remainingOf(target)
-  if (target.lat === null || target.lon === null) return { sameStop, nearby: [], noCoordinates: true }
+  if (target.lat === null || target.lon === null) {
+    return { sameStop, nearby: [], noCoordinates: true, otherOperators: otherStops ? [] : null }
+  }
   const here = { lat: target.lat, lon: target.lon }
   const nearby: NearbyStop[] = []
   for (const other of all) {
@@ -350,7 +414,107 @@ export function alternativesFor(target: StopNotice, all: readonly StopNotice[], 
     nearby.push({ stopId: other.stopId, stopName: other.stopName, distanceM: Math.round(d / 10) * 10, lines: remainingOf(other) })
   }
   nearby.sort((a, b) => a.distanceM - b.distanceM || compareStrings(a.stopId, b.stopId))
-  return { sameStop, nearby, noCoordinates: false }
+  const otherOperators = otherStops ? otherOperatorsNear(target.lat, target.lon, otherStops, radiusM) : null
+  return { sameStop, nearby, noCoordinates: false, otherOperators }
+}
+
+// ---- 周辺の事業者の減便の動き(前提情報で調べた結果の引用) ----
+
+/** 調べた結果の確認日時が古いとみなす日数。これを超えたら、出典で確かめるよう添える */
+export const STALE_CHECK_DAYS = 30
+
+/** 確認日時(ISO 8601)が now(ミリ秒)の STALE_CHECK_DAYS 日より前か。日時を読めなければ false(古いとは決めつけない) */
+export function isStaleCheck(checkedAt: string, now: number): boolean {
+  const t = Date.parse(checkedAt)
+  return Number.isFinite(t) && now - t > STALE_CHECK_DAYS * 86_400_000
+}
+
+/** 調べた結果の1件(前提情報の ResearchResult のうち、引用に使う項目) */
+export interface ResearchedOperator {
+  targetId: string
+  name: string
+  facts: readonly { label: string; value: string; source: number }[]
+  sources: readonly { url: string; title: string }[]
+  checkedAt: string
+  origin: 'web' | 'demo'
+}
+
+/** 引用する出典(番号は調べた結果の出典の番号) */
+export interface QuotedSource {
+  no: number
+  title: string
+  url: string
+}
+
+/** 事業者について調べた減便の動きの引用。要約や推測は足さず、調べた事実をそのまま写す */
+export interface MovementQuote {
+  targetId: string
+  operatorName: string
+  facts: { label: string; value: string; sourceNo: number | null }[]
+  /** facts が引いている出典(番号の順) */
+  sources: QuotedSource[]
+  /** 確認日時(ISO 8601) */
+  checkedAt: string
+  origin: 'web' | 'demo'
+  /** 確認日時が STALE_CHECK_DAYS 日より前 */
+  stale: boolean
+}
+
+/**
+ * 調べた結果から、減便・ダイヤ改正・運休・特別ダイヤの事実(operatorMovementFacts)だけを引用にする。
+ * 該当する事実が無ければ null。now は古さの判定に使う時刻(ミリ秒)
+ */
+export function movementQuoteOf(result: ResearchedOperator, now: number): MovementQuote | null {
+  const found = operatorMovementFacts(result.facts)
+  if (found.length === 0) return null
+  const valid = (n: number) => Number.isInteger(n) && n >= 1 && n <= result.sources.length
+  const nos = [...new Set(found.map((f) => f.source).filter(valid))].sort((a, b) => a - b)
+  return {
+    targetId: result.targetId,
+    operatorName: result.name.trim() || operatorNameOf(result.targetId),
+    facts: found.map((f) => ({ label: f.label, value: f.value, sourceNo: valid(f.source) ? f.source : null })),
+    sources: nos.map((no) => ({ no, title: result.sources[no - 1].title, url: result.sources[no - 1].url })),
+    checkedAt: result.checkedAt,
+    origin: result.origin,
+    stale: isStaleCheck(result.checkedAt, now),
+  }
+}
+
+/** 変更指示書の「周辺の事業者の動き」の材料 */
+export interface MovementSummary {
+  /** 調べた事業者(自社を除く)の数。0 なら「調べていません」 */
+  researched: number
+  /** 減便の動きの事実がある事業者の引用(事業者名の順) */
+  quotes: MovementQuote[]
+  /** 調べた事業者の確認日時のうち、最も新しいもの(ISO 8601)。無ければ null */
+  latestCheckedAt: string | null
+}
+
+/**
+ * 調べた結果(事業者のものだけ。自社は agencyNames で除く)から、変更指示書に載せる周辺の事業者の動きを作る。
+ * 学校・病院の結果は使わない
+ */
+export function movementSummary(
+  results: Iterable<ResearchedOperator & { kind: string }>,
+  agencyNames: readonly string[],
+  now: number,
+): MovementSummary {
+  const operators: ResearchedOperator[] = []
+  for (const r of results) {
+    if (r.kind !== 'operator') continue
+    if (isOwnOperator(operatorNameOf(r.targetId), agencyNames)) continue
+    operators.push(r)
+  }
+  const quotes = operators
+    .map((r) => movementQuoteOf(r, now))
+    .filter((q): q is MovementQuote => q !== null)
+    .sort((a, b) => compareStrings(a.operatorName, b.operatorName) || compareStrings(a.targetId, b.targetId))
+  let latest: string | null = null
+  for (const r of operators) {
+    const t = Date.parse(r.checkedAt)
+    if (Number.isFinite(t) && (latest === null || t > Date.parse(latest))) latest = r.checkedAt
+  }
+  return { researched: operators.length, quotes, latestCheckedAt: latest }
 }
 
 // ---- 公示日と実施日 ----

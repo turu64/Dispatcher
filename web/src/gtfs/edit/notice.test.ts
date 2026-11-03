@@ -9,15 +9,21 @@ import {
   buildStopNotices,
   distanceM,
   excludedAtStop,
+  isStaleCheck,
+  movementQuoteOf,
+  movementSummary,
   NOTICE_DISCLAIMER,
+  otherOperatorsNear,
   pickNoticeDate,
   schoolTripIdsOf,
   segmentsOf,
   stopCoordinates,
   underLeadTime,
   type AnnouncementInput,
+  type ResearchedOperator,
   type StopNotice,
 } from './notice'
+import { excludeOwnOperators, type OtherStop } from '@/ref/busstops'
 import type { EditRecord } from './ops'
 import { stopDiff, type StopDeparture } from './stopDiff'
 
@@ -399,5 +405,150 @@ describe('buildStopNotice(単体)', () => {
     const { base, result } = setup()
     const stop = stopDiff(base, result.feed, '20261104').stops[0]
     expect(buildStopNotice(stop, new Set())).toMatchObject({ lat: null, lon: null })
+  })
+})
+
+
+// ---- 近くの他の事業者の停留所と、調べた減便の動き ----
+
+function other(name: string, lat: number, lon: number, operators: string[], routes: string[] = []): OtherStop {
+  return { name, lat, lon, operators, routes }
+}
+
+/** 駅前(A: 43.7600, 142.3600)の周り。緯度 0.0011 度が約 122 m */
+const AROUND_A: OtherStop[] = [
+  other('駅前北', 43.7611, 142.36, ['P11:宗谷バス'], ['稚内線', '名寄線']),
+  other('駅前北', 43.7612, 142.36, ['P11:宗谷バス'], ['稚内線']), // 同じ名前(反対向き)。遠いほうは載せない
+  other('駅前通', 43.7604, 142.36, ['P11:旭川電気軌道'], []), // 約 44 m。系統名なし
+  other('遠い所', 43.766, 142.36, ['P11:宗谷バス'], ['遠方線']), // 約 667 m
+  other('自社の停留所', 43.7601, 142.36, ['P11:テストバス'], ['1']), // 自社(agency_name テストバス)
+]
+
+describe('otherOperatorsNear(半径内の他事業者の停留所を事業者ごとに)', () => {
+  const others = excludeOwnOperators(AROUND_A, ['テストバス'])
+
+  it('300 m の内側だけを、最も近い停留所が近い事業者の順に、系統名の重複なしでまとめる', () => {
+    const near = otherOperatorsNear(43.76, 142.36, others)
+    expect(near.map((o) => o.name)).toEqual(['旭川電気軌道', '宗谷バス'])
+    expect(near[0]).toMatchObject({ targetId: 'P11:旭川電気軌道', stops: [{ name: '駅前通', distanceM: 40 }], routes: [] })
+    // 同じ名前の停留所は近い 1 件。遠い所(約 667 m)は入らない。系統名は重複なし
+    expect(near[1].stops).toEqual([{ name: '駅前北', distanceM: 120 }])
+    expect(near[1].routes).toEqual(['名寄線', '稚内線'])
+  })
+
+  it('自社の事業者は excludeOwnOperators で除かれ、数えない', () => {
+    expect(otherOperatorsNear(43.76, 142.36, others).some((o) => o.name === 'テストバス')).toBe(false)
+    expect(otherOperatorsNear(43.76, 142.36, AROUND_A).some((o) => o.name === 'テストバス')).toBe(true)
+  })
+
+  it('半径を狭めると外れ、広げると入る。範囲に無ければ空', () => {
+    expect(otherOperatorsNear(43.76, 142.36, others, 100).map((o) => o.name)).toEqual(['旭川電気軌道'])
+    expect(otherOperatorsNear(43.76, 142.36, others, 700).map((o) => o.name)).toEqual(['旭川電気軌道', '宗谷バス'])
+    expect(otherOperatorsNear(35, 135, others)).toEqual([])
+  })
+})
+
+describe('alternativesFor(他事業者の停留所)', () => {
+  function a(): { target: StopNotice; all: StopNotice[] } {
+    const base = nearFeed()
+    const outcome = applyForm2(base, basePlan({ replacementService: 'SA' }), { generatedAt: '202611041200' })
+    if (!outcome.ok) throw new Error(outcome.message)
+    const all = buildStopNotices(base, outcome.result.feed, '20261104', new Set()).stops
+    return { target: all.find((s) => s.stopId === 'A')!, all }
+  }
+
+  it('停留所の参照データを渡さなければ otherOperators は null(無い、とは言わない)', () => {
+    const { target, all } = a()
+    expect(alternativesFor(target, all).otherOperators).toBeNull()
+  })
+
+  it('渡すと、半径 300 m の他事業者の停留所と系統が入り、自社の便の案内は変わらない', () => {
+    const { target, all } = a()
+    const alt = alternativesFor(target, all, undefined, excludeOwnOperators(AROUND_A, ['テストバス']))
+    expect(alt.otherOperators?.map((o) => o.name)).toEqual(['旭川電気軌道', '宗谷バス'])
+    expect(alt.nearby.map((n) => n.stopId)).toEqual(['A2'])
+  })
+
+  it('停留所の参照データがあっても、座標が無い停留所では空(座標なしの断りは別に出る)', () => {
+    const { target, all } = a()
+    const alt = alternativesFor({ ...target, lat: null, lon: null }, all, undefined, AROUND_A)
+    expect(alt).toMatchObject({ noCoordinates: true, otherOperators: [] })
+  })
+})
+
+function researched(over: Partial<ResearchedOperator & { kind: string }> = {}): ResearchedOperator & { kind: string } {
+  return {
+    targetId: 'P11:宗谷バス',
+    kind: 'operator',
+    name: '宗谷バス',
+    facts: [
+      { label: '減便の発表', value: '11月1日から平日ダイヤを土曜ダイヤにする', source: 1 },
+      { label: '会社の所在地', value: '稚内市', source: 2 },
+      { label: 'ダイヤ改正', value: '10月1日に実施', source: 2 },
+      { label: '減便の補足', value: '出典の番号なし', source: 0 },
+    ],
+    sources: [
+      { url: 'https://example.jp/a', title: 'お知らせ' },
+      { url: 'https://example.jp/b', title: '時刻表' },
+    ],
+    checkedAt: '2026-11-02T10:30:00+09:00',
+    origin: 'web',
+    ...over,
+  }
+}
+
+describe('movementQuoteOf(調べた減便の動きの引用)', () => {
+  const now = Date.parse('2026-11-03T00:00:00+09:00')
+
+  it('減便・ダイヤ改正・運休・特別ダイヤの事実だけを、出典の番号つきでそのまま写す', () => {
+    const q = movementQuoteOf(researched(), now)
+    expect(q?.facts).toEqual([
+      { label: '減便の発表', value: '11月1日から平日ダイヤを土曜ダイヤにする', sourceNo: 1 },
+      { label: 'ダイヤ改正', value: '10月1日に実施', sourceNo: 2 },
+      { label: '減便の補足', value: '出典の番号なし', sourceNo: null },
+    ])
+    expect(q?.sources).toEqual([
+      { no: 1, title: 'お知らせ', url: 'https://example.jp/a' },
+      { no: 2, title: '時刻表', url: 'https://example.jp/b' },
+    ])
+    expect(q).toMatchObject({ operatorName: '宗谷バス', checkedAt: '2026-11-02T10:30:00+09:00', origin: 'web', stale: false })
+  })
+
+  it('該当する事実が無ければ null', () => {
+    expect(movementQuoteOf(researched({ facts: [{ label: '会社の所在地', value: '稚内市', source: 1 }] }), now)).toBeNull()
+    expect(movementQuoteOf(researched({ facts: [] }), now)).toBeNull()
+  })
+
+  it('確認日時が 30 日より前なら stale(読めない日時は古いと決めつけない)', () => {
+    expect(movementQuoteOf(researched({ checkedAt: '2026-09-30T10:00:00+09:00' }), now)?.stale).toBe(true)
+    expect(isStaleCheck('2026-10-04T00:00:00+09:00', now)).toBe(false)
+    expect(isStaleCheck('2026-10-03T00:00:00+09:00', now)).toBe(true)
+    expect(isStaleCheck('不明', now)).toBe(false)
+  })
+})
+
+describe('movementSummary(変更指示書の周辺の事業者の動き)', () => {
+  const now = Date.parse('2026-11-03T00:00:00+09:00')
+
+  it('結果が無ければ researched は 0(「調べていません」)', () => {
+    expect(movementSummary([], ['テストバス'], now)).toEqual({ researched: 0, quotes: [], latestCheckedAt: null })
+  })
+
+  it('学校・病院の結果と自社の結果は数えない。事業者名の順に引用を並べる', () => {
+    const list = [
+      researched({ targetId: 'P11:宗谷バス', name: '宗谷バス' }),
+      researched({ targetId: 'P11:旭川電気軌道', name: '旭川電気軌道', checkedAt: '2026-11-03T08:00:00+09:00' }),
+      researched({ targetId: 'P11:テストバス', name: 'テストバス' }),
+      researched({ targetId: 'P29:A', kind: 'school', name: '学校' }),
+    ]
+    const s = movementSummary(list, ['テストバス'], now)
+    expect(s.researched).toBe(2)
+    expect(s.quotes.map((q) => q.operatorName)).toEqual(['宗谷バス', '旭川電気軌道'].sort((x, y) => (x < y ? -1 : 1)))
+    expect(s.latestCheckedAt).toBe('2026-11-03T08:00:00+09:00')
+  })
+
+  it('調べても減便の動きの記載が無ければ、researched だけが増え、引用は空', () => {
+    const s = movementSummary([researched({ facts: [] })], [], now)
+    expect(s).toMatchObject({ researched: 1, quotes: [], latestCheckedAt: '2026-11-02T10:30:00+09:00' })
   })
 })

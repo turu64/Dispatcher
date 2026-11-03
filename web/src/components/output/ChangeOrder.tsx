@@ -6,9 +6,13 @@ import { feedVersionProblem, type Form2Result } from '@/gtfs/edit/form2'
 import { addBackReasons, policyReasonOf, type EditRecord } from '@/gtfs/edit/ops'
 import { forEachDay, indexFeedServiceDays, runsOn } from '@/gtfs/edit/services'
 import { stopDiff, type StopDiffResult } from '@/gtfs/edit/stopDiff'
+import { movementSummary } from '@/gtfs/edit/notice'
 import { form2Texts } from '@/gtfs/validate/edit'
 import { formatDateJa, todayInJapan } from '@/lib/dates'
 import { diffOf, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
+import { useResearchStore } from '@/store/research'
+import { checkedAtText } from '@/claude/research'
+import MovementQuoteView from './MovementQuote'
 import {
   periodText,
   POLICY_KIND_LABELS,
@@ -24,6 +28,10 @@ import {
  * 便が多いと A4 縦1枚に収まらず、2枚目に続くことがある
  */
 const TRIP_ROWS_SPLIT = 8
+
+/** 変更指示書の「周辺の事業者の動き」に載せる事業者の数と、1事業者あたりの事実の数(A4 縦1枚に収めるため。残りは件数で示す) */
+const MOVEMENT_MAX_OPERATORS = 4
+const MOVEMENT_MAX_FACTS = 2
 
 /** 勤務の確認欄(研究の資料 docs/research/dia-planning.md の B 変更指示書。数値は目安で、Dispatcher は判定しない) */
 const DUTY_CHECKS = [
@@ -219,6 +227,14 @@ function Sheet({
   const feedVersionText = customFeedVersion !== '' && customProblem === null ? customFeedVersion : null
   const gtfsReminder = texts.changes.find((t) => t.startsWith('次に運行管理システム')) ?? null
   const excluded = plan.excludedRoutes.map((id) => routeNames.get(id.trim()) ?? id)
+
+  // 周辺の事業者の動き(前提情報で調べた結果の引用。調べていなければ「調べていません」)
+  const researchResults = useResearchStore((s) => s.results)
+  const [nowMs] = useState(() => Date.now())
+  const movement = useMemo(() => {
+    const agencyNames = (base.feed.tables.get('agency')?.rows ?? []).map((r) => (r.agency_name ?? '').trim()).filter((n) => n !== '')
+    return movementSummary(researchResults.values(), agencyNames, nowMs)
+  }, [researchResults, base.feed, nowMs])
 
   return (
     <div
@@ -515,6 +531,35 @@ function Sheet({
         </ul>
       </Section>
       </div>
+      <Section title="8. 周辺の事業者の動き(前提情報で調べた結果)">
+        <div data-testid="movement-section" className="flex flex-col gap-1">
+          {movement.researched === 0 ? (
+            <p>調べていません。</p>
+          ) : movement.quotes.length === 0 ? (
+            <p>
+              {/* 見出しで絞った結果だけを言う(廃止など、絞り込みの語に当たらない事実がありうるため) */}
+              調べた {movement.researched} 事業者の結果
+              {movement.latestCheckedAt && `(確認日時 ${checkedAtText(movement.latestCheckedAt)})`}
+              に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、前提情報の手順で確かめてください。
+            </p>
+          ) : (
+            <>
+              {/* 印刷では 2 列に並べて、A4 縦1枚に収める */}
+              <div className="grid grid-cols-1 gap-x-3 gap-y-1 print:grid-cols-2">
+                {movement.quotes.slice(0, MOVEMENT_MAX_OPERATORS).map((q) => (
+                  <MovementQuoteView key={q.targetId} quote={q} maxFacts={MOVEMENT_MAX_FACTS} />
+                ))}
+              </div>
+              {movement.quotes.length > MOVEMENT_MAX_OPERATORS && (
+                <p>ほか {movement.quotes.length - MOVEMENT_MAX_OPERATORS} 事業者の動きは、前提情報の手順で確かめられます。</p>
+              )}
+            </>
+          )}
+          <p className="text-muted-foreground print:text-black">
+            調べた結果の引用です。確認の後に変わっていることがあるため、出典で確かめてください。
+          </p>
+        </div>
+      </Section>
       {gtfsReminder && (
         <p className="break-inside-avoid">
           <span className="font-semibold">GTFS の注意:</span>

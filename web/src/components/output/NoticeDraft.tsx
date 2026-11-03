@@ -7,11 +7,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import MovementQuoteView from './MovementQuote'
 import {
   alternativesFor,
   buildAnnouncement,
   buildStopNotices,
   excludedAtStop,
+  movementQuoteOf,
   NOTICE_DISCLAIMER,
   NOTICE_LEAD_DAYS,
   pickNoticeDate,
@@ -19,13 +21,16 @@ import {
   underLeadTime,
   type Alternatives,
   type LineNotice,
+  type MovementQuote,
   type NoticeSegment,
   type RemainingLine,
   type StopNotice,
   type StopNotices,
 } from '@/gtfs/edit/notice'
 import { policyReasonOf } from '@/gtfs/edit/ops'
+import { excludeOwnOperators, type OtherStop } from '@/ref/busstops'
 import { diffOf, lastVersion, useEditStore } from '@/store/edit'
+import { useResearchStore } from '@/store/research'
 import { formatDateJa, fromInputDate, toInputDate } from '@/lib/dates'
 
 /** 停留所の選択肢を1回に出す数(停留所は千を超えることがあるため。「さらに表示」で足す) */
@@ -77,8 +82,81 @@ function remainingText(line: RemainingLine): string {
   return `系統 ${line.routeName}${line.headsign !== '' ? `(${line.headsign} 行き)` : ''} ${line.count}本(${range})`
 }
 
-/** 代替手段の案内(同じ停留所・近くの停留所に期間中も残る自社の便) */
-function AlternativesBlock({ alt, radiusLabel }: { alt: Alternatives; radiusLabel: string }) {
+/** 国土数値情報の停留所に時刻が無いことの断り。印刷する掲示にも載せる */
+export const OTHER_OPERATOR_TIMETABLE_NOTE = '時刻は各事業者の時刻表で確かめてください。'
+
+/** 他の事業者の停留所の参照データ(国土数値情報 P11)の年度。データの出典の欄(dataSourceRows.ts の FACILITY_SOURCES)と同じ */
+export const OTHER_OPERATOR_DATA_YEAR = '2022年度'
+
+/**
+ * 他の事業者の停留所と系統が古いかもしれないことの断り。印刷する掲示にも載せる
+ * (P11 は 2022年度の版で、その後に廃止・変更された停留所・系統を、乗客向けの掲示で代わりの手段として案内しないように)
+ */
+export const OTHER_OPERATOR_STALE_NOTE = `ほかの事業者の停留所と系統は、${OTHER_OPERATOR_DATA_YEAR}の国土数値情報によるもので、廃止・変更されていることがあります。`
+
+/** 近くにある他の事業者の停留所と系統。時刻は無いので、時刻表で確かめるよう添える */
+function OtherOperatorsBlock({
+  alt,
+  radiusLabel,
+  quotes,
+}: {
+  alt: Alternatives
+  radiusLabel: string
+  quotes: ReadonlyMap<string, MovementQuote>
+}) {
+  const others = alt.otherOperators
+  if (others === null) {
+    return (
+      <p className="print-hide text-xs text-muted-foreground" data-testid="other-operators-missing">
+        周辺の事業者の停留所は、前提情報の手順で参照データを読み込むと表示します。
+      </p>
+    )
+  }
+  if (alt.noCoordinates) return null
+  if (others.length === 0) {
+    return (
+      <p data-testid="other-operators">{radiusLabel}以内に、ほかの事業者の停留所はありません(国土数値情報に載る停留所のみ)。</p>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-1" data-testid="other-operators">
+      <p className="font-medium">{radiusLabel}以内の、ほかの事業者の停留所:</p>
+      <ul className="flex flex-col gap-0.5">
+        {others.map((o) => (
+          <li key={o.targetId} data-testid={`other-operator-${o.targetId}`}>
+            <span className="font-medium">{o.name}</span>:{o.stops.map((s) => `${s.name}(約${s.distanceM}m)`).join('、')}
+            <span className="block">系統:{o.routes.length > 0 ? o.routes.join('、') : '系統名の記載なし'}</span>
+          </li>
+        ))}
+      </ul>
+      <p>{OTHER_OPERATOR_TIMETABLE_NOTE}</p>
+      <p data-testid="other-operators-stale">{OTHER_OPERATOR_STALE_NOTE}</p>
+      <p className="print-hide text-xs text-muted-foreground">
+        国土数値情報の停留所には時刻がないため、本数や時間帯は分かりません。停留所の位置と系統名は、国土数値情報のバス停留所データ(P11、{OTHER_OPERATOR_DATA_YEAR})を加工して作成しています。
+      </p>
+      <p className="hidden text-[10px] print:block" data-testid="other-operators-print-source">
+        出典:国土数値情報(バス停留所データ、{OTHER_OPERATOR_DATA_YEAR})を加工して作成
+      </p>
+      {others
+        .map((o) => quotes.get(o.targetId))
+        .filter((q): q is MovementQuote => q !== undefined)
+        .map((q) => (
+          <MovementQuoteView key={q.targetId} quote={q} />
+        ))}
+    </div>
+  )
+}
+
+/** 代替手段の案内(同じ停留所・近くの停留所に期間中も残る自社の便と、近くの他の事業者の停留所) */
+function AlternativesBlock({
+  alt,
+  radiusLabel,
+  quotes,
+}: {
+  alt: Alternatives
+  radiusLabel: string
+  quotes: ReadonlyMap<string, MovementQuote>
+}) {
   return (
     <div data-testid="alternatives" className="flex flex-col gap-1 text-sm">
       {alt.sameStop.length > 0 && (
@@ -103,6 +181,7 @@ function AlternativesBlock({ alt, radiusLabel }: { alt: Alternatives; radiusLabe
           </ul>
         </>
       )}
+      <OtherOperatorsBlock alt={alt} radiusLabel={radiusLabel} quotes={quotes} />
     </div>
   )
 }
@@ -111,6 +190,8 @@ interface SheetInput {
   agencyName: string
   stop: StopNotice
   alt: Alternatives
+  /** 近くの他の事業者について調べた減便の動き(target_id ごと。調べていない・記載が無い事業者は入らない) */
+  quotes: ReadonlyMap<string, MovementQuote>
   validityStart: string
   periodEnd: string | null
   replacementLabel: string
@@ -186,7 +267,7 @@ function StopSheet({ sheet }: { sheet: SheetInput }) {
 
       <section aria-label="代わりにご利用いただける便" className="flex flex-col gap-1">
         <h4 className="text-sm font-bold">代わりにご利用いただける便</h4>
-        <AlternativesBlock alt={sheet.alt} radiusLabel="半径300m" />
+        <AlternativesBlock alt={sheet.alt} radiusLabel="半径300m" quotes={sheet.quotes} />
         {sheet.freeNote.trim() !== '' && <p className="whitespace-pre-wrap text-sm">{sheet.freeNote}</p>}
       </section>
 
@@ -327,6 +408,10 @@ function NoticeBody({
   const weekday = useMemo(() => diffOf(base, result), [base, result])
 
   const agencyName = (base.tables.get('agency')?.rows[0]?.agency_name ?? '').trim()
+  const agencyNames = useMemo(
+    () => (base.tables.get('agency')?.rows ?? []).map((r) => (r.agency_name ?? '').trim()).filter((n) => n !== ''),
+    [base],
+  )
   const reason = policyReasonOf(history)
   const reasonLabel = reason?.category ? REASON_LABELS[reason.category] : ''
   const replacementLabel = REPLACEMENT_LABELS[result.plan.kind]
@@ -370,7 +455,27 @@ function NoticeBody({
   }, [stops, changedOnly, query])
   const shown = rows.slice(0, limit)
   const selectedStop = selected === null ? null : (stops.find((s) => s.stopId === selected) ?? null)
-  const alt = useMemo(() => (selectedStop ? alternativesFor(selectedStop, stops) : null), [selectedStop, stops])
+  // 近くの他の事業者の停留所(前提情報の手順で読み込んだ参照データ。自社の事業者は除く)と、調べた減便の動き
+  const busstops = useResearchStore((s) => (s.facilities.status === 'ready' ? (s.facilities.busstops ?? null) : null))
+  const researched = useResearchStore((s) => s.results)
+  const otherStops = useMemo<OtherStop[] | null>(
+    () => (busstops ? excludeOwnOperators(busstops, agencyNames) : null),
+    [busstops, agencyNames],
+  )
+  const [now] = useState(() => Date.now())
+  const alt = useMemo(
+    () => (selectedStop ? alternativesFor(selectedStop, stops, undefined, otherStops) : null),
+    [selectedStop, stops, otherStops],
+  )
+  const quotes = useMemo(() => {
+    const map = new Map<string, MovementQuote>()
+    for (const o of alt?.otherOperators ?? []) {
+      const r = researched.get(o.targetId)
+      const q = r ? movementQuoteOf(r, now) : null
+      if (q) map.set(o.targetId, q)
+    }
+    return map
+  }, [alt, researched, now])
 
   const lateWarning = under7 === true
 
@@ -523,6 +628,7 @@ function NoticeBody({
                       agencyName,
                       stop: selectedStop,
                       alt,
+                      quotes,
                       validityStart: result.report.validity.start,
                       periodEnd: result.plan.period.end,
                       replacementLabel,

@@ -9,6 +9,8 @@ import { stopDiff } from '@/gtfs/edit/stopDiff'
 import { lastVersion, useEditStore } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { useReachStore } from '@/store/reach'
+import { useResearchStore } from '@/store/research'
+import type { ResearchResult } from '@/claude/research'
 import ChangeOrder from './ChangeOrder'
 
 // 到達圏の計算は、この画面では走らせない(store の setEdited が呼ぶ)
@@ -41,6 +43,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  act(() => useResearchStore.getState().reset())
   act(() => useEditStore.getState().setBase(null))
   act(() => useReachStore.setState({ date: null }))
   vi.useRealTimers()
@@ -282,5 +285,92 @@ describe('ChangeOrder', () => {
     // 画面だけを指す「ほか N 便」や、行を絞るボタンは無い
     expect(within(protectedSection).queryByText(/ほか \d+ 便/)).toBeNull()
     expect(within(protectedSection).queryByRole('button')).toBeNull()
+  })
+  describe('周辺の事業者の動き(前提情報で調べた結果)', () => {
+    const TITLE = '8. 周辺の事業者の動き(前提情報で調べた結果)'
+
+    function result(over: Partial<ResearchResult> = {}): ResearchResult {
+      return {
+        targetId: 'P11:宗谷バス',
+        kind: 'operator',
+        name: '宗谷バス',
+        status: 'found',
+        facts: [
+          { label: '減便の発表', value: '11月1日から平日ダイヤを土曜ダイヤにする', source: 1 },
+          { label: '運休', value: '12月は土日の一部を運休する', source: 2 },
+          { label: '特別ダイヤ', value: '年末年始は特別ダイヤ', source: 2 },
+          { label: '会社の所在地', value: '稚内市', source: 1 },
+        ],
+        sources: [
+          { url: 'https://example.jp/a', title: 'お知らせ' },
+          { url: 'https://example.jp/b', title: '時刻表' },
+        ],
+        note: '',
+        checkedAt: '2026-10-19T09:00:00+09:00',
+        origin: 'demo',
+        ...over,
+      }
+    }
+
+    it('調べていなければ「調べていません」と出す', () => {
+      commit(policy({ category: 'temporaryShortage', note: '' }))
+      render(<ChangeOrder />)
+      expect(within(section(TITLE)).getByText('調べていません。')).toBeTruthy()
+    })
+
+    it('調べた減便の動きを、事実・出典・確認日時つきで載せる。事実は件数を絞り、残りは件数で示す', () => {
+      commit(policy({ category: 'temporaryShortage', note: '' }))
+      act(() => useResearchStore.getState().mergeResults([result()]))
+      render(<ChangeOrder />)
+      const sec = within(section(TITLE))
+      const quote = sec.getByTestId('movement-quote-P11:宗谷バス')
+      expect(quote.textContent).toContain('減便の発表:11月1日から平日ダイヤを土曜ダイヤにする')
+      expect(quote.textContent).toContain('運休:12月は土日の一部を運休する')
+      // 2 件に絞る。3 件目と、減便の動きではない事実は載せない
+      expect(quote.textContent).not.toContain('年末年始は特別ダイヤ')
+      expect(quote.textContent).not.toContain('会社の所在地')
+      expect(quote.textContent).toContain('ほか 1 件')
+      expect(quote.textContent).toContain('確認日時 2026年10月19日 09:00')
+      expect(quote.textContent).toContain('お知らせ')
+      expect(quote.textContent).toContain('https://example.jp/a')
+      expect(sec.queryByText('調べていません。')).toBeNull()
+    })
+
+    it('調べても減便の動きの記載が無ければ、その旨と確認日時を出す。学校・病院の結果は数えない', () => {
+      commit(policy({ category: 'temporaryShortage', note: '' }))
+      act(() =>
+        useResearchStore.getState().mergeResults([
+          result({ facts: [{ label: '会社の所在地', value: '稚内市', source: 1 }] }),
+          result({ targetId: 'P29:X', kind: 'school', name: '学校' }),
+        ]),
+      )
+      render(<ChangeOrder />)
+      const text = section(TITLE).textContent ?? ''
+      // 見出しで絞った結果だけを言い、「動きがない」とは書かない
+      expect(text).toContain(
+        '調べた 1 事業者の結果(確認日時 2026年10月19日 09:00)に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、前提情報の手順で確かめてください。',
+      )
+      expect(text).not.toContain('記載はありませんでした')
+      expect(text).not.toContain('調べていません')
+    })
+
+    it('載せる事業者は 4 つまで。残りは数で示す', () => {
+      commit(policy({ category: 'temporaryShortage', note: '' }))
+      const list = ['A', 'B', 'C', 'D', 'E', 'F'].map((n) => result({ targetId: `P11:事業者${n}`, name: `事業者${n}` }))
+      act(() => useResearchStore.getState().mergeResults(list))
+      render(<ChangeOrder />)
+      const sec = within(section(TITLE))
+      expect(section(TITLE).querySelectorAll('figure')).toHaveLength(4)
+      expect(sec.getByText(/ほか 2 事業者の動きは/)).toBeTruthy()
+    })
+
+    it('古い確認日時には、出典で確かめるよう添える。欄は印刷から隠さない', () => {
+      commit(policy({ category: 'temporaryShortage', note: '' }))
+      act(() => useResearchStore.getState().mergeResults([result({ checkedAt: '2020-01-01T00:00:00+09:00' })]))
+      render(<ChangeOrder />)
+      const sec = section(TITLE)
+      expect(sec.textContent).toContain('30日より前の確認です。出典で確かめてください。')
+      expect(sec.closest('.print-hide')).toBeNull()
+    })
   })
 })

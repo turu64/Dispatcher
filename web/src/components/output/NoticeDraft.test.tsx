@@ -4,8 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
 import type { EditOp, Form2Plan } from '@/gtfs/edit/ops'
 import { diffOf, lastVersion, useEditStore } from '@/store/edit'
+import type { ResearchResult } from '@/claude/research'
+import type { OtherStop } from '@/ref/busstops'
 import { useHolidayStore } from '@/store/holidays'
-import NoticeDraft from './NoticeDraft'
+import { useResearchStore } from '@/store/research'
+import { FACILITY_SOURCES } from '@/components/dataSourceRows'
+import NoticeDraft, { OTHER_OPERATOR_DATA_YEAR } from './NoticeDraft'
 
 // 到達圏の計算は、この画面では走らせない
 vi.mock('@/reach/workerClient', () => ({ computeReachInWorker: async () => new Promise(() => {}) }))
@@ -37,6 +41,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  act(() => useResearchStore.getState().reset())
   act(() => useEditStore.getState().setBase(null))
   vi.restoreAllMocks()
 })
@@ -222,5 +227,117 @@ describe('NoticeDraft', () => {
     expect(screen.getByText('承認前の下書きがあります。周知文は承認済みの内容で作っています。')).toBeTruthy()
     pick(/学校前/)
     expect(screen.getByTestId('no-departure')).toBeTruthy()
+  })
+  describe('近くの他の事業者の停留所と、調べた減便の動き', () => {
+    // smallFeed の駅前(A)は 43.76, 142.36。緯度 0.0011 度が約 122 m
+    const STOPS: OtherStop[] = [
+      { name: '駅前北', lat: 43.7611, lon: 142.36, operators: ['P11:宗谷バス'], routes: ['稚内線', '名寄線'] },
+      { name: '駅前通', lat: 43.7604, lon: 142.36, operators: ['P11:旭川電気軌道'], routes: [] },
+      { name: '遠い所', lat: 43.766, lon: 142.36, operators: ['P11:北見バス'], routes: ['遠方線'] },
+      { name: '自社の停留所', lat: 43.7601, lon: 142.36, operators: ['P11:テストバス'], routes: ['1'] },
+    ]
+
+    function loadStops(busstops: OtherStop[] | null) {
+      act(() => {
+        useResearchStore.setState({ facilities: { status: 'ready', key: 'k', facilities: [], sources: [], busstops } })
+      })
+    }
+
+    function researchResult(over: Partial<ResearchResult> = {}): ResearchResult {
+      return {
+        targetId: 'P11:宗谷バス',
+        kind: 'operator',
+        name: '宗谷バス',
+        status: 'found',
+        facts: [
+          { label: '減便の発表', value: '11月1日から平日ダイヤを土曜ダイヤにする', source: 1 },
+          { label: '会社の所在地', value: '稚内市', source: 1 },
+        ],
+        sources: [{ url: 'https://example.jp/news', title: '運行のお知らせ' }],
+        note: '',
+        checkedAt: new Date().toISOString(),
+        origin: 'web',
+        ...over,
+      }
+    }
+
+    it('300 m 以内の他の事業者の停留所と系統を出し、時刻は時刻表で確かめるよう添える。自社と遠い停留所は出さない', () => {
+      approve(policy())
+      loadStops(STOPS)
+      render(<NoticeDraft />)
+      pick(/駅前/)
+      const sheet = screen.getByRole('article', { name: '駅前の掲示' })
+      const block = within(sheet).getByTestId('other-operators')
+      expect(block.textContent).toContain('半径300m以内の、ほかの事業者の停留所')
+      const soya = within(block).getByTestId('other-operator-P11:宗谷バス')
+      expect(soya.textContent).toContain('駅前北(約120m)')
+      expect(soya.textContent).toContain('系統:名寄線、稚内線')
+      expect(within(block).getByTestId('other-operator-P11:旭川電気軌道').textContent).toContain('系統:系統名の記載なし')
+      expect(within(block).queryByTestId('other-operator-P11:北見バス')).toBeNull()
+      expect(within(block).queryByTestId('other-operator-P11:テストバス')).toBeNull()
+      expect(block.textContent).toContain('時刻は各事業者の時刻表で確かめてください。')
+      // 国土数値情報の停留所には時刻が無いことの断り(画面)と、印刷にも載る出典
+      expect(block.textContent).toContain('国土数値情報の停留所には時刻がないため、本数や時間帯は分かりません')
+      // データの年度と、廃止・変更されていることがある断りは、印刷する掲示にも載る(print-hide の中に置かない)
+      const stale = within(block).getByTestId('other-operators-stale')
+      expect(stale.textContent).toBe('ほかの事業者の停留所と系統は、2022年度の国土数値情報によるもので、廃止・変更されていることがあります。')
+      expect(stale.closest('.print-hide')).toBeNull()
+      const printed = within(block).getByTestId('other-operators-print-source')
+      expect(printed.textContent).toBe('出典:国土数値情報(バス停留所データ、2022年度)を加工して作成')
+      expect(printed.closest('.print-hide')).toBeNull()
+      expect(printed.className).toContain('print:block')
+    })
+
+    it('掲示に書く他の事業者の停留所の年度は、データの出典の欄(P11 の行)の年度と同じ', () => {
+      const p11 = FACILITY_SOURCES.find((r) => r.data.includes('P11'))
+      expect(p11?.data).toContain(OTHER_OPERATOR_DATA_YEAR)
+    })
+
+    it('調べた減便の動きがある事業者には、事実・出典・確認日時を引用として出す。ほかの事実は載せない', () => {
+      approve(policy())
+      loadStops(STOPS)
+      act(() => useResearchStore.getState().mergeResults([researchResult()]))
+      render(<NoticeDraft />)
+      pick(/駅前/)
+      const quote = within(screen.getByRole('article', { name: '駅前の掲示' })).getByTestId('movement-quote-P11:宗谷バス')
+      expect(quote.textContent).toContain('減便の発表:11月1日から平日ダイヤを土曜ダイヤにする')
+      expect(quote.textContent).not.toContain('会社の所在地')
+      expect(quote.textContent).toContain('確認日時')
+      expect(quote.textContent).toContain('Web で調べた結果')
+      const link = within(quote).getByRole('link')
+      expect(link.getAttribute('href')).toBe('https://example.jp/news')
+      expect(quote.textContent).toContain('運行のお知らせ')
+      expect(quote.textContent).not.toContain('日より前の確認です')
+      // 調べていない事業者(旭川電気軌道)の引用は出ない
+      expect(screen.queryByTestId('movement-quote-P11:旭川電気軌道')).toBeNull()
+    })
+
+    it('確認日時が 30 日より前なら、出典で確かめるよう添える', () => {
+      approve(policy())
+      loadStops(STOPS)
+      act(() => useResearchStore.getState().mergeResults([researchResult({ checkedAt: '2020-01-01T00:00:00+09:00' })]))
+      render(<NoticeDraft />)
+      pick(/駅前/)
+      const quote = screen.getByTestId('movement-quote-P11:宗谷バス')
+      expect(quote.textContent).toContain('30日より前の確認です。出典で確かめてください。')
+      expect(quote.textContent).toContain('2020年1月1日')
+    })
+
+    it('範囲内に停留所が無いときはそう書く。参照データを読み込んでいないときは画面だけに断りを出す', () => {
+      approve(policy())
+      loadStops([{ name: '遠い所', lat: 43.8, lon: 142.4, operators: ['P11:北見バス'], routes: [] }])
+      const { unmount } = render(<NoticeDraft />)
+      pick(/駅前/)
+      expect(screen.getByTestId('other-operators').textContent).toContain('ほかの事業者の停留所はありません')
+      unmount()
+
+      act(() => useResearchStore.getState().reset())
+      render(<NoticeDraft />)
+      pick(/駅前/)
+      const note = screen.getByTestId('other-operators-missing')
+      expect(note.textContent).toContain('前提情報の手順で参照データを読み込むと表示します')
+      expect(note.className).toContain('print-hide')
+      expect(screen.queryByTestId('other-operators')).toBeNull()
+    })
   })
 })

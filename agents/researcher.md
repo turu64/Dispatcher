@@ -13,8 +13,9 @@ tools:
   - type: agent_toolset_20260401
     default_config:
       enabled: false
+      # 読むだけのツールなので、いつも許可する(利用者の決定 11/3。docs/interfaces-1105.md §11 の 4)
       permission_policy:
-        type: auto
+        type: always_allow
     configs:
       - type: web_search
         name: web_search

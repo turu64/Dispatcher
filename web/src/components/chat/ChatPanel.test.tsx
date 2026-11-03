@@ -560,7 +560,7 @@ describe('会話の見た目(吹き出し・入力欄・例文の札)', () => {
     // jsdom は高さを計算しないので、伸びる仕組み(field-sizing: content)と上限・手での変更なしのクラスを確かめる
     const cls = box().className.split(/\s+/)
     expect(cls).toContain('field-sizing-content')
-    expect(cls).toContain('max-h-40')
+    expect(cls).toContain('max-h-[min(10rem,25dvh)]')
     expect(cls).toContain('overflow-y-auto')
     expect(cls).toContain('resize-none')
   })

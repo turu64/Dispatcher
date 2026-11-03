@@ -1,5 +1,6 @@
 import { Loader2 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import ChatPanel from '@/components/chat/ChatPanel'
 import type { ChatStoreHook } from '@/components/chat/chatStatus'
 import { stepLabel } from '@/components/chat/stepLabel'
@@ -120,6 +121,17 @@ export default function SidePanel({ wide, chatStore = useChatStore }: { wide: bo
     const el = scrollRef.current
     if (tab === 'edit' && el) el.scrollTop = savedTop.current
   }, [tab])
+
+  // 「AI に相談」のタブを開いたまま印刷(Ctrl+P)すると、編集の中身(変更指示書・周知文の .print-area)が
+  // 隠れたままでほぼ白紙になるため、印刷の直前に「編集」のタブへ切り替える。
+  // beforeprint の中で描画を終えないと印刷に間に合わないので flushSync で反映する
+  useEffect(() => {
+    const onBeforePrint = () => {
+      if (useSidePanelStore.getState().tab !== 'edit') flushSync(() => useSidePanelStore.getState().show('edit'))
+    }
+    window.addEventListener('beforeprint', onBeforePrint)
+    return () => window.removeEventListener('beforeprint', onBeforePrint)
+  }, [])
 
   // GTFS を読み込むまでは、タブの中身をタブの部品(tabpanel)として名乗らない(タブの列が無いため)
   const panelProps = loaded ? { tabIndex: -1 } : { role: undefined, 'aria-labelledby': undefined, tabIndex: undefined }

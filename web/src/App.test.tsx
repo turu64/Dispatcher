@@ -294,6 +294,18 @@ describe('左の欄のタブ(編集と AI に相談)', () => {
     expect(screen.getByLabelText('AI への指示や質問')).toBe(box)
   })
 
+  it('「AI に相談」のタブを開いたまま印刷すると、印刷の直前に「編集」のタブへ切り替える(白紙にしないため)', () => {
+    load()
+    render(<App />)
+    fireEvent.mouseDown(tab('AI に相談'))
+    expect(useSidePanelStore.getState().tab).toBe('chat')
+    act(() => {
+      window.dispatchEvent(new Event('beforeprint'))
+    })
+    expect(useSidePanelStore.getState().tab).toBe('edit')
+    expect(screen.getByRole('navigation', { name: '手順の切り替え' })).toBeTruthy()
+  })
+
   it('GTFS を読み込み直したら「編集」のタブに戻す', () => {
     load()
     render(<App />)

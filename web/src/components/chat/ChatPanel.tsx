@@ -163,7 +163,9 @@ function ChatPanelBody({ store, active }: { store: ChatStoreHook; active: boolea
           (状態が分かって案内が出たときに、会話の発言として読み上げないため。操作の部品を log の中に入れないため)
         */}
         {empty && (
-          <div className="flex min-h-0 flex-1 flex-col items-center gap-3 overflow-y-auto overscroll-contain px-2 py-4 text-center">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-2 py-4 text-center">
+            {/* 案内は縦の中央に置く(中身が欄より高いときは上から見せるため、justify-center ではなく my-auto) */}
+            <div className="my-auto flex w-full flex-col items-center gap-3">
             <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/15">
               <Sparkles className="size-4" />
             </span>
@@ -187,6 +189,7 @@ function ChatPanelBody({ store, active }: { store: ChatStoreHook; active: boolea
                 </Button>
               ))}
             </div>
+            </div>
           </div>
         )}
         <div
@@ -195,7 +198,7 @@ function ChatPanelBody({ store, active }: { store: ChatStoreHook; active: boolea
           aria-label="AI との会話"
           aria-live="polite"
           tabIndex={-1}
-          className={`${empty ? 'min-h-0 flex-none' : 'min-h-16 flex-1'} overflow-y-auto overscroll-contain rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50`}
+          className={`${empty ? '-mt-3 min-h-0 flex-none' : 'min-h-16 flex-1'} overflow-y-auto overscroll-contain rounded-sm pr-1.5 [scrollbar-gutter:stable] outline-none focus-visible:ring-2 focus-visible:ring-ring/50`}
           onScroll={(e) => {
             if (active) savedTop.current = e.currentTarget.scrollTop
           }}
@@ -314,7 +317,7 @@ function ChatPanelBody({ store, active }: { store: ChatStoreHook; active: boolea
                 <Textarea
                   ref={boxRef}
                   aria-label="AI への指示や質問"
-                  className="field-sizing-content max-h-40 min-h-14 resize-none overflow-y-auto rounded-xl border-0 bg-transparent px-3 pt-2.5 pb-1 text-sm shadow-none focus-visible:ring-0 disabled:bg-transparent md:text-sm dark:bg-transparent dark:disabled:bg-transparent"
+                  className="field-sizing-content max-h-[min(10rem,25dvh)] min-h-14 resize-none overflow-y-auto rounded-xl border-0 bg-transparent px-3 pt-2.5 pb-1 text-sm shadow-none focus-visible:ring-0 disabled:bg-transparent md:text-sm dark:bg-transparent dark:disabled:bg-transparent"
                   rows={2}
                   value={text}
                   disabled={unavailable || statusFailed}

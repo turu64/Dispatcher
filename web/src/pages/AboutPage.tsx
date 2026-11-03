@@ -9,7 +9,9 @@ export const ABOUT_HASH = '#/about'
 export const MAIN_HASH = '#/'
 
 /** お問い合わせ先。連絡先が決まったら、この1か所だけを差し替える */
-export const CONTACT_TEXT = 'お問い合わせ先は準備中です'
+/** お問い合わせ先(利用者の決定 11/3:GitHub の Issues) */
+export const CONTACT_TEXT = 'ご意見・不具合の報告は、GitHub のリポジトリの Issues にお寄せください。'
+export const CONTACT_URL = 'https://github.com/turu64/Dispatcher/issues'
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
@@ -62,6 +64,11 @@ export default function AboutPage() {
 
         <Section id="about-contact" title="お問い合わせ">
           <p>{CONTACT_TEXT}</p>
+          <p>
+            <a className="underline underline-offset-2" href={CONTACT_URL} target="_blank" rel="noreferrer">
+              {CONTACT_URL}
+            </a>
+          </p>
         </Section>
       </article>
     </div>

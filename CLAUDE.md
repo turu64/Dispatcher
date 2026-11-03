@@ -20,7 +20,7 @@
 ## 構成
 
 ```
-web/     React + Vite + TypeScript。shadcn/ui + Tailwind、MapLibre GL JS、Zustand、Dexie.js(IndexedDB)、
+web/     React + Vite + TypeScript。shadcn/ui + Tailwind、MapLibre GL JS、Zustand、
          JSZip、Papa Parse、kdbush。重い計算は Web Worker
 server/  Python(FastAPI、SQLite)。Claude(Managed Agents のセッション)の中継、利用制限、Web 調査結果の使い回し、参照データとサンプル GTFS の配信だけ
 data/    参照データ(北海道)の加工スクリプト(Python)。data/raw/ → data/out/
@@ -75,7 +75,8 @@ cd data && uv run pytest -q
 - 前提情報の調査は、まず停留所の分布の外周に 2km の余白を足した範囲で、周辺の事業者(国土数値情報のバス停留所 P11)と学校・病院(P29・P04、病院は病床数で入院設備の有無を分ける)を洗い出す。そのうえで調査役の Web 検索を事業者・施設ごとに並行で実行する。結果は出典 URL と確認日時つきで、サーバーの SQLite に一定時間保存して使い回す(公開情報のみ)。Web 検索の回数の上限は設定に無いので、1セッションの料金の上限(3 ドル)と、1回の調査の対象の数の上限で代える。デモ用に保存済みの結果も選べる
 - セッションは GTFS の読み込み直しで終える。最後の操作から 24 時間で、サーバーが消す
 - 計算はコード、解釈と説明は Claude。数字は必ずコードが出す
-- 公開時の対策:合言葉(トークン)必須、署名つきのセッションの取っ手、IP アドレスごとの回数制限、全体の1日の利用額の上限
+- 公開時の対策:合言葉は掛けない(AI も含む。2026-11-03 に利用者が決定)。署名つきのセッションの取っ手、IP アドレスごとの回数制限、1セッションの上限額、全体の1日の利用額の上限、Console のワークスペースの月の上限(200 ドル)で費用を守る
+- ブラウザ内の保存(IndexedDB)は作らない(2026-11-03 に利用者が決定)。読み込み直すと編集は消える
 
 ## 機能スコープ(11/6 22:00 に機能凍結。Notion の全体スケジュール)
 

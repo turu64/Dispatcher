@@ -232,9 +232,13 @@ describe('ExportStep', () => {
       return document.getElementById('revert-body')!
     }
 
-    /** 祝日・土曜・日曜のセルは印(祝・土・日)の testid で探す */
-    function markedCell(container: HTMLElement, date: string): HTMLButtonElement {
-      const button = container.querySelector(`[data-testid="mark-${date}"]`)?.closest('button')
+    /**
+     * 日付('YYYYMMDD')のセルを、表示している月の日付の数字で探す(セルには日付の数字だけが入る。
+     * HolidayCalendar は前後の月の日を出さないので、数字は表示している月の中で1つに決まる)
+     */
+    function dayCell(container: HTMLElement, date: string): HTMLButtonElement {
+      const day = String(Number(date.slice(6, 8)))
+      const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-kind]')).find((b) => b.textContent === day)
       if (!button) throw new Error(`${date} のセルが見つかりません`)
       return button
     }
@@ -245,7 +249,7 @@ describe('ExportStep', () => {
       // 既定の戻す日は今日(10/20)
       expect(body.textContent).toContain('有効期間:2026年10月20日(火)〜2026年11月30日(月)(42日)')
       fireEvent.click(screen.getByRole('button', { name: '次の月へ' }))
-      fireEvent.click(markedCell(body, '20261115'))
+      fireEvent.click(dayCell(body, '20261115'))
       expect(body.textContent).toContain('有効期間:2026年11月15日(日)〜2026年11月30日(月)(16日)')
       expect(body.textContent).toContain('2026年10月1日(木)〜2026年11月14日(土) は出力に含まれません')
       expect(body.textContent).toContain('便と時刻は読み込んだ GTFS のままで、減便の方針と足し戻しは入りません')
@@ -298,7 +302,7 @@ describe('ExportStep', () => {
       // 既定の戻す日(今日 10/20)では S11 はまだ走るので、便は除かず注意も出さない
       expect(body.textContent).not.toContain('便の削除')
       fireEvent.click(screen.getByRole('button', { name: '次の月へ' }))
-      fireEvent.click(markedCell(body, '20261115'))
+      fireEvent.click(dayCell(body, '20261115'))
       expect(body.textContent).toContain('S11:1 便')
       const notes = [...body.querySelectorAll('[data-code="publishNotes"]')].map((e) => e.textContent ?? '')
       expect(notes.some((t) => t.includes('便の削除が大きいと、公開先の審査が長引くことがあります。'))).toBe(true)
@@ -342,13 +346,13 @@ describe('ExportStep', () => {
       expect(button).toHaveProperty('disabled', false)
 
       // 11/28(土)からでは 3 日しかなく、出力を止める
-      fireEvent.click(markedCell(body, '20261128'))
+      fireEvent.click(dayCell(body, '20261128'))
       expect(body.querySelector('[data-code="shortValidity"]')?.getAttribute('data-severity')).toBe('error')
       expect(button).toHaveProperty('disabled', true)
 
       // feed_version は自分で入れられる。制御文字は止める
       const field = screen.getByLabelText('減便をやめる版の feed_version')
-      fireEvent.click(markedCell(body, '20261121'))
+      fireEvent.click(dayCell(body, '20261121'))
       fireEvent.change(field, { target: { value: 'a\tb' } })
       expect(button).toHaveProperty('disabled', true)
       fireEvent.change(field, { target: { value: '202611300000' } })

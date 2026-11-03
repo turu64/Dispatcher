@@ -87,11 +87,12 @@ function panel(over: Partial<Parameters<typeof DateBandPanel>[0]> = {}) {
 }
 
 describe('DateBandPanel(影響(到達圏)の手順の上部)', () => {
-  it('比べる日は HolidayCalendar で選び、祝日は赤と「祝」で出す', () => {
+  it('比べる日は HolidayCalendar で選び、祝日は赤で出し、読み上げの名前に祝日と書く', () => {
     const { container } = panel({ date: '20261104' })
-    const holiday = container.querySelector('[data-testid="mark-20261103"]')?.closest('button')
+    const holiday = Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-kind]')).find((b) => b.textContent === '3')
     expect(holiday?.dataset.kind).toBe('holiday')
-    expect(holiday?.textContent).toContain('祝')
+    expect(holiday?.className).toContain('text-red-700')
+    expect(holiday?.getAttribute('aria-label')).toContain('祝日')
     expect(screen.getByTestId('selected-date').textContent).toBe('11月4日(水)')
   })
 

@@ -17,73 +17,94 @@ const holidays: HolidayList = {
   source: 'test',
 }
 
-function cell(container: HTMLElement, date: string): HTMLButtonElement {
-  // 祝日・土曜・日曜のセルは、印(祝・土・日)の span の testid で探す
-  const button = container.querySelector(`[data-testid="mark-${date}"]`)?.closest('button')
-  if (!button) throw new Error(`${date} の印つきのセルが見つかりません`)
-  return button
-}
-
-/** 日付の数字(月内の何日か)でセルを探す(印の有無によらない) */
-function plainCell(container: HTMLElement, day: number): HTMLButtonElement {
+/** 日付の数字(月内の何日か)でセルを探す。セルには日付の数字だけが入る */
+function cell(container: HTMLElement, day: number): HTMLButtonElement {
   const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-kind]'))
-  const found = buttons.find((b) => b.firstChild?.textContent === String(day))
+  const found = buttons.find((b) => b.textContent === String(day))
   if (!found) throw new Error(`${day} 日のセルが見つかりません`)
   return found
 }
 
 describe('日付の種類', () => {
-  it('祝日と重なる土曜・日曜は祝日(赤、「祝」)にする', () => {
+  it('祝日と重なる土曜・日曜は祝日(赤)にする', () => {
     const overlap: HolidayList = { ...holidays, names: new Map([['20261107', '仮の祝日'], ['20261108', '仮の祝日']]) }
     const { container } = render(<HolidayCalendar value="20261104" onChange={() => {}} holidays={overlap} />)
-    expect(cell(container, '20261107').dataset.kind).toBe('holiday')
-    expect(cell(container, '20261107').textContent).toContain('祝')
-    expect(cell(container, '20261108').dataset.kind).toBe('holiday')
+    expect(cell(container, 7).dataset.kind).toBe('holiday')
+    expect(cell(container, 7).className).toContain('text-red-700')
+    expect(cell(container, 7).getAttribute('aria-label')).toBe('2026年11月7日 土曜日、祝日 仮の祝日')
+    expect(cell(container, 8).dataset.kind).toBe('holiday')
   })
 })
 
 describe('HolidayCalendar', () => {
-  it('祝日のセルは赤の印(data-kind=holiday と赤の色)と「祝」の文字、祝日名の title が付く', () => {
+  it('祝日のセルは赤(data-kind=holiday)で、祝日名が title と読み上げの名前に入る', () => {
     const { container } = render(<HolidayCalendar value="20261104" onChange={() => {}} holidays={holidays} />)
-    const button = cell(container, '20261103')
+    const button = cell(container, 3)
     expect(button.dataset.kind).toBe('holiday')
     expect(button.title).toBe('文化の日')
     expect(button.className).toContain('text-red-700')
-    expect(button.textContent).toContain('祝')
-    expect(button.getAttribute('aria-label')).toContain('文化の日')
+    expect(button.getAttribute('aria-label')).toBe('2026年11月3日 火曜日、祝日 文化の日')
   })
 
-  it('土曜は青と「土」、日曜は赤と「日」。平日には印が無い', () => {
+  it('土曜は青、日曜は赤で、読み上げの名前に「土曜」「日曜」が入る。平日は色も種類の語も付かない', () => {
     const { container } = render(<HolidayCalendar value="20261104" onChange={() => {}} holidays={holidays} />)
-    const sat = cell(container, '20261107')
+    const sat = cell(container, 7)
     expect(sat.dataset.kind).toBe('saturday')
     expect(sat.className).toContain('text-blue-700')
-    expect(sat.textContent).toContain('土')
-    const sun = cell(container, '20261108')
+    expect(sat.getAttribute('aria-label')).toBe('2026年11月7日 土曜日、土曜')
+    const sun = cell(container, 8)
     expect(sun.dataset.kind).toBe('sunday')
     expect(sun.className).toContain('text-red-700')
-    expect(sun.textContent).toContain('日')
-    const weekday = plainCell(container, 4)
+    expect(sun.getAttribute('aria-label')).toBe('2026年11月8日 日曜日、日曜')
+    const weekday = cell(container, 5)
     expect(weekday.dataset.kind).toBe('weekday')
-    expect(weekday.textContent).toBe('4')
+    expect(weekday.getAttribute('aria-label')).toBe('2026年11月5日 木曜日')
+    expect(weekday.title).toBe('')
     expect(weekday.className).not.toContain('text-red-700')
     expect(weekday.className).not.toContain('text-blue-700')
   })
 
-  it('min・max の外の日は選べず(disabled)、中の日は選べる', () => {
+  it('セルに「祝」「土」「日」の文字は出さない(日付の数字だけ)', () => {
+    const { container } = render(<HolidayCalendar value="20261104" onChange={() => {}} holidays={holidays} />)
+    const cells = Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-kind]'))
+    expect(cells.length).toBe(30)
+    for (const b of cells) expect(b.textContent).toMatch(/^\d+$/)
+    expect(container.querySelector('[data-testid^="mark-"]')).toBeNull()
+  })
+
+  it('選んだ日は赤・青の文字色を使わない(主色の上の文字色で読ませる)', () => {
+    const { container, rerender } = render(<HolidayCalendar value="20261103" onChange={() => {}} holidays={holidays} />)
+    expect(cell(container, 3).dataset.kind).toBe('holiday')
+    expect(cell(container, 3).className).not.toContain('text-red-700')
+    expect(cell(container, 3).className).toContain('data-[selected-single=true]:text-primary-foreground')
+    rerender(<HolidayCalendar value="20261107" onChange={() => {}} holidays={holidays} />)
+    expect(cell(container, 7).className).not.toContain('text-blue-700')
+    expect(cell(container, 3).className).toContain('text-red-700')
+  })
+
+  it('曜日の列は、日曜(左端)が赤、土曜(右端)が青', () => {
+    const { container } = render(<HolidayCalendar value="20261104" onChange={() => {}} holidays={holidays} />)
+    const heads = Array.from(container.querySelectorAll('th')).map((th) => th.textContent)
+    expect(heads[0]).toBe('日')
+    expect(heads[6]).toBe('土')
+    expect(container.querySelector('th')?.className).toContain('first:text-red-700')
+    expect(container.querySelector('th')?.className).toContain('last:text-blue-700')
+  })
+
+it('min・max の外の日は選べず(disabled)、中の日は選べる', () => {
     const onChange = vi.fn()
     const { container } = render(
       <HolidayCalendar value="20261104" onChange={onChange} min="20261102" max="20261120" holidays={holidays} />,
     )
     // 1日(日)は min の前、23日(月)は max の後
-    expect(plainCell(container, 1).disabled).toBe(true)
-    expect(cell(container, '20261123').disabled).toBe(true)
-    expect(plainCell(container, 2).disabled).toBe(false)
-    expect(plainCell(container, 20).disabled).toBe(false)
-    expect(plainCell(container, 21).disabled).toBe(true)
-    fireEvent.click(cell(container, '20261123'))
+    expect(cell(container, 1).disabled).toBe(true)
+    expect(cell(container, 23).disabled).toBe(true)
+    expect(cell(container, 2).disabled).toBe(false)
+    expect(cell(container, 20).disabled).toBe(false)
+    expect(cell(container, 21).disabled).toBe(true)
+    fireEvent.click(cell(container, 23))
     expect(onChange).not.toHaveBeenCalled()
-    fireEvent.click(plainCell(container, 10))
+    fireEvent.click(cell(container, 10))
     expect(onChange).toHaveBeenCalledWith('20261110')
   })
 
@@ -101,9 +122,9 @@ describe('HolidayCalendar', () => {
 
   it('祝日一覧が null のときは祝日の印を出さず、その旨を添える', () => {
     const { container } = render(<HolidayCalendar value="20261104" onChange={() => {}} holidays={null} />)
-    expect(cell(container, '20261108').dataset.kind).toBe('sunday')
-    expect(plainCell(container, 3).dataset.kind).toBe('weekday')
-    expect(plainCell(container, 3).title).toBe('')
+    expect(cell(container, 8).dataset.kind).toBe('sunday')
+    expect(cell(container, 3).dataset.kind).toBe('weekday')
+    expect(cell(container, 3).title).toBe('')
     expect(screen.getByText(/祝日一覧を読めないため/)).toBeTruthy()
     cleanup()
     render(<HolidayCalendar value="20261103" onChange={() => {}} holidays={null} />)

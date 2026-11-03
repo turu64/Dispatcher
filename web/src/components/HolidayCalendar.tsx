@@ -2,7 +2,8 @@
  * 日付を選ぶカレンダー。日曜と祝日を赤、土曜を青で出し、祝日の名前を出す。範囲(min〜max)の外の日は選べない。
  *
  * - 日付は GTFS と同じ 'YYYYMMDD' の文字列で受け渡す(画面のほかの部分と同じ)
- * - 色だけに頼らない:日付の下に「祝」「土」「日」の文字を付ける。祝日名はマウスを載せたとき(title)と、選んだ日の下の文で出す
+ * - セルに「祝」「土」「日」の文字は出さず、色だけで示す。色の見分けがつきにくい人には、読み上げの名前(aria-label に祝日名・土曜・日曜)、
+ *   マウスを載せたときの祝日名(title)、選んだ日の下の文、曜日の列の位置(日曜は左端、土曜は右端)で伝える
  * - 祝日が日曜・土曜と重なる日は祝日として扱う(赤)。日付の判定は gtfs/calendar.ts の weekdayIndex に任せる
  * - 祝日一覧(holidays)が null のときは祝日を出さず、その旨を一行添える
  */
@@ -39,8 +40,16 @@ function dayKind(date: string, holidays: HolidayList | null): DayKind {
   return 'weekday'
 }
 
-/** 日付の下に付ける1文字 */
-const KIND_MARK: Record<Exclude<DayKind, 'weekday'>, string> = { holiday: '祝', sunday: '日', saturday: '土' }
+const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土']
+
+/** 読み上げの名前。「2026年11月3日 火曜日、祝日 文化の日」「2026年11月8日 日曜日、日曜」「2026年11月7日 土曜日、土曜」 */
+function dayLabel(d: Date, kind: DayKind, holidayName: string | undefined): string {
+  const base = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAY_JA[d.getDay()]}曜日`
+  if (kind === 'holiday') return holidayName ? `${base}、祝日 ${holidayName}` : `${base}、祝日`
+  if (kind === 'sunday') return `${base}、日曜`
+  if (kind === 'saturday') return `${base}、土曜`
+  return base
+}
 
 /** Date(パソコンの時刻での年月日)→ 'YYYYMMDD' */
 function dateToGtfs(d: Date): string {
@@ -102,26 +111,22 @@ export default function HolidayCalendar({ value, onChange, min, max, holidays, c
   const lastOfShownMonth = addDays(`${nextMonth}01`, -1)
   const beyondCoverage = holidays !== null && lastOfShownMonth > holidays.coveredUntil
 
-  const DayButtonWithMark = useMemo(
+  const KindDayButton = useMemo(
     () =>
-      function DayButtonWithMark(props: React.ComponentProps<typeof DayButton>) {
+      function KindDayButton(props: React.ComponentProps<typeof DayButton>) {
         const date = dateToGtfs(props.day.date)
         const kind = dayKind(date, holidays)
         const name = holidays?.names.get(date)
-        const mark = kind === 'weekday' ? null : KIND_MARK[kind]
-        const { children, ...rest } = props
         return (
           <CalendarDayButton
-            {...rest}
+            {...props}
             data-kind={kind}
             title={name ?? undefined}
-            aria-label={name ? `${props['aria-label'] ?? date}、${name}` : props['aria-label']}
-            className={KIND_CLASS[kind]}
+            aria-label={dayLabel(props.day.date, kind, name)}
+            // 選んだ日は主色の背景なので、赤・青の文字色は使わず、主色の上の文字色で読ませる
+            className={props.modifiers.selected ? undefined : KIND_CLASS[kind]}
             locale={ja}
-          >
-            {children}
-            {mark && <span data-testid={`mark-${date}`}>{mark}</span>}
-          </CalendarDayButton>
+          />
         )
       },
     [holidays],
@@ -155,7 +160,7 @@ export default function HolidayCalendar({ value, onChange, min, max, holidays, c
             'flex-1 text-[0.8rem] font-normal select-none text-muted-foreground first:text-red-700 last:text-blue-700 dark:first:text-red-400 dark:last:text-blue-400',
         }}
         className="[--cell-size:--spacing(9)]"
-        components={{ DayButton: DayButtonWithMark }}
+        components={{ DayButton: KindDayButton }}
       />
       <p data-testid="selected-date" aria-live="polite" className="mt-1 min-h-5 px-2 text-sm">
         {selectedStr ? describeSelected(selectedStr, holidays) : '日付を選んでください'}

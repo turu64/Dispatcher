@@ -249,7 +249,11 @@ describe('AI に相談の欄', () => {
       return realPost(...args)
     })
     await typeAndSend('続けて')
-    expect(screen.getByText(SENDING)).toBeTruthy()
+    // 送信の間は送るボタンが処理中の形になり、「送っています…」の文は出さない
+    const busy = screen.getByRole('button', { name: '送信中' }) as HTMLButtonElement
+    expect(busy.disabled).toBe(true)
+    expect(busy.getAttribute('aria-busy')).toBe('true')
+    expect(screen.queryByText(SENDING)).toBeNull()
     expect(screen.queryByText(PREPARING)).toBeNull()
     await act(async () => release())
     expect(fake.api.create).toHaveBeenCalledTimes(1)
@@ -451,6 +455,91 @@ describe('AI に候補を聞く', () => {
     act(() => ready.store.setState({ toolRunning: false, budgetReached: true }))
     expect(button.disabled).toBe(true)
     expect(screen.getByText(/上限/)).toBeTruthy()
+  })
+
+  it('送信の間は処理中のボタンになり、「送っています…」の文を出さない。送り終えたら元の名前に戻る', async () => {
+    const { store, fake } = setup()
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((r) => (release = r))
+    const realPost = fake.api.post
+    fake.api.post = vi.fn(async (...args: Parameters<typeof realPost>) => {
+      await gate
+      return realPost(...args)
+    })
+    render(<AskRestoreButton store={store} />)
+    const button = screen.getByRole('button', { name: 'AI に候補を聞く' }) as HTMLButtonElement
+    await waitFor(() => expect(button.disabled).toBe(false))
+    await act(async () => {
+      fireEvent.click(button)
+    })
+    const busy = screen.getByRole('button', { name: '送信中' }) as HTMLButtonElement
+    expect(busy.disabled).toBe(true)
+    expect(busy.getAttribute('aria-busy')).toBe('true')
+    expect(screen.queryByText(SENDING)).toBeNull()
+    await act(async () => release())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'AI に候補を聞く' })).toBeTruthy())
+    expect(fake.posts.some((p) => p.body.kind === 'message')).toBe(true)
+  })
+
+  it('押したボタンだけを処理中にする。「送る」で送っている間、「AI に候補を聞く」は押せないが処理中の形にはしない(逆も同じ)', async () => {
+    const { store, fake } = setup()
+    let release: () => void = () => undefined
+    let gate = new Promise<void>((r) => (release = r))
+    const realPost = fake.api.post
+    fake.api.post = vi.fn(async (...args: Parameters<typeof realPost>) => {
+      await gate
+      return realPost(...args)
+    })
+    render(
+      <>
+        <ChatPanel store={store} />
+        <AskRestoreButton store={store} />
+      </>,
+    )
+    const ask = screen.getByRole('button', { name: 'AI に候補を聞く' }) as HTMLButtonElement
+    await waitFor(() => expect(ask.disabled).toBe(false))
+
+    // 「送る」で送る:押した「送る」だけが処理中になる
+    await typeAndSend('続けて')
+    expect(screen.getByRole('button', { name: '送信中' }).getAttribute('aria-busy')).toBe('true')
+    expect(ask.disabled).toBe(true)
+    expect(ask.getAttribute('aria-busy')).toBeNull()
+    expect(screen.getByRole('button', { name: 'AI に候補を聞く' })).toBe(ask)
+    // 押せない理由(送っている)は「AI に候補を聞く」の下に出す
+    expect(screen.getByText(SENDING)).toBeTruthy()
+    await act(async () => release())
+    await waitFor(() => expect(ask.disabled).toBe(false))
+    expect(screen.queryByRole('button', { name: '送信中' })).toBeNull()
+
+    // 「AI に候補を聞く」で送る:「送る」は処理中の形にしない
+    gate = new Promise<void>((r) => (release = r))
+    await act(async () => {
+      fireEvent.click(ask)
+    })
+    expect(ask.getAttribute('aria-busy')).toBe('true')
+    expect(sendButton().getAttribute('aria-busy')).toBeNull()
+    expect(sendButton().disabled).toBe(true)
+    await act(async () => release())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'AI に候補を聞く' }).getAttribute('aria-busy')).toBeNull())
+  })
+
+  it('ほかの処理(前提情報の調査など)で送っている間は、2つのボタンとも押せないが処理中の形にはしない', async () => {
+    const { store } = setup()
+    render(
+      <>
+        <ChatPanel store={store} />
+        <AskRestoreButton store={store} />
+      </>,
+    )
+    const ask = screen.getByRole('button', { name: 'AI に候補を聞く' }) as HTMLButtonElement
+    await waitFor(() => expect(ask.disabled).toBe(false))
+    fireEvent.change(box(), { target: { value: '質問です' } })
+    act(() => store.setState({ sending: true }))
+    expect(ask.disabled).toBe(true)
+    expect(ask.getAttribute('aria-busy')).toBeNull()
+    expect(sendButton().disabled).toBe(true)
+    expect(sendButton().getAttribute('aria-busy')).toBeNull()
+    expect(screen.queryByRole('button', { name: '送信中' })).toBeNull()
   })
 
   it('外から渡した理由(方針の下書きの確認中など)でも押せなくする', async () => {

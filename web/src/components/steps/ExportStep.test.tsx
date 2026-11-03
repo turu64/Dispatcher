@@ -125,6 +125,27 @@ describe('ExportStep', () => {
     expect(screen.getByText('出力の途中で編集の内容が変わったため、出力をやめました。もう一度押してください。')).toBeTruthy()
   })
 
+  it('ZIP を書いている間は、押した出力のボタンだけが処理中の形になり、文字の「出力中…」は出さない', async () => {
+    act(() => {
+      useEditStore.getState().propose(policy(), 'user')
+      useEditStore.getState().commit()
+      useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '', schoolDaysOnly: false }] }, 'user')
+      useEditStore.getState().commit()
+    })
+    let finish!: (blob: Blob) => void
+    writeGtfsZip.mockImplementationOnce(() => new Promise<Blob>((resolve) => (finish = resolve)))
+    render(<ExportStep />)
+    fireEvent.click(screen.getByRole('button', { name: 'GTFS を出力する' }))
+    await waitFor(() => expect(writeGtfsZip).toHaveBeenCalledTimes(1))
+    const busy = screen.getByRole('button', { name: '出力中' }) as HTMLButtonElement
+    expect(busy.disabled).toBe(true)
+    expect(busy.getAttribute('aria-busy')).toBe('true')
+    expect(screen.queryByText('出力中…')).toBeNull()
+    await act(async () => finish(new Blob(['zip'])))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'GTFS を出力する' })).toBeTruthy())
+    expect(screen.getByRole('button', { name: 'GTFS を出力する' }).hasAttribute('aria-busy')).toBe(false)
+  })
+
   it('履歴が空なら出力を押せない', () => {
     render(<ExportStep />)
     expect(screen.getByRole('button', { name: 'GTFS を出力する' })).toHaveProperty('disabled', true)

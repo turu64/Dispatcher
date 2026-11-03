@@ -83,11 +83,16 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
   const stoppable = canStop(s)
   const preparing = isPreparing(s)
 
+  // 「送る」を押して送っている間(送信の POST が終わるまで)だけ、このボタンを処理中の形にする。
+  // store の sending は前提情報の調査・「AI に候補を聞く」の送信でも立つので、押していないボタンを処理中にしないよう、ここで持つ
+  const [submitting, setSubmitting] = useState(false)
+
   function submit() {
     const t = text.trim()
     if (t === '' || blocked !== null) return
     setText('')
-    void s.send(t)
+    setSubmitting(true)
+    void s.send(t).finally(() => setSubmitting(false))
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -222,7 +227,8 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
                 onKeyDown={onKeyDown}
               />
               <div className="flex flex-wrap items-center gap-2">
-                <Button type="submit" size="sm" disabled={blocked !== null || text.trim() === ''}>
+                {/* 「送る」で送っている間は送るボタンを処理中の形にし、「送っています…」の文は出さない(処理中の知らせはボタンだけ) */}
+                <Button type="submit" size="sm" disabled={blocked !== null || text.trim() === ''} loading={submitting} loadingLabel="送信中">
                   送る
                 </Button>
                 {stoppable && (
@@ -230,8 +236,8 @@ function ChatPanelBody({ store }: { store: ChatStoreHook }) {
                     止める
                   </Button>
                 )}
-                {/* 準備中は上の「AI を準備しています…」を出すので、「送っています…」を重ねない */}
-                {blocked && blocked !== 'unavailable' && !(preparing && blocked === SENDING) && (
+                {/* 準備中の「AI を準備しています…」と、「送る」で送っている間の処理中のボタンのほかは、理由の文を出す */}
+                {blocked && blocked !== 'unavailable' && !(blocked === SENDING && (submitting || preparing)) && (
                   <span role="status" className="text-xs text-muted-foreground">
                     {blocked}
                   </span>

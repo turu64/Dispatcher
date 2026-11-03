@@ -181,8 +181,8 @@ export default function ExportStep() {
           </p>
           <IssueList issues={preview} title="出力の前の検証" />
           {blocked && <p className="text-sm text-muted-foreground">{blocked}</p>}
-          <Button type="button" className="self-start" disabled={blocked !== null || busy} onClick={() => void onExport()}>
-            {busy ? '出力中…' : 'GTFS を出力する'}
+          <Button type="button" className="self-start" disabled={blocked !== null} loading={busy} loadingLabel="出力中" onClick={() => void onExport()}>
+            GTFS を出力する
           </Button>
           {error && (
             <Alert variant="destructive">
@@ -583,8 +583,8 @@ function RevertBody({ base, plan, holidays }: { base: BaseGtfs; plan: Form2Plan 
         </>
       )}
       {blocked && <p className="text-sm text-muted-foreground">{blocked}</p>}
-      <Button type="button" className="self-start" disabled={blocked !== null || busy} onClick={() => void onExport()}>
-        {busy ? '出力中…' : '減便をやめる版を出力する'}
+      <Button type="button" className="self-start" disabled={blocked !== null} loading={busy} loadingLabel="出力中" onClick={() => void onExport()}>
+        減便をやめる版を出力する
       </Button>
       {error && (
         <Alert variant="destructive">

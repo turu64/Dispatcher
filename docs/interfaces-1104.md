@@ -85,6 +85,7 @@
 - 置き場所:`data/raw/holidays/syukujitsu.csv`
 - 入手元:https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv(配布ページ https://www8.cao.go.jp/chosei/shukujitsu/gaiyou.html )。ダウンロードしてよい参照データとして扱う
 - 入手した担当は、入手した日時(日本時間)・URL・大きさを `data/raw/README.md` の「入手の記録」に、置き場所と利用条件を同じファイルの表に足す。利用条件の表記は、入手するときに配布ページの記載で確かめる
+- 利用条件(2026-11-03 に確かめた):配布ページに記載は無く、内閣府ホームページ利用規約(令和7年3月25日現在)が、権利表記の無いコンテンツに**公共データ利用規約(第1.0版)**(デジタル庁、CC BY 4.0 互換)を適用する。政府標準利用規約(第2.0版)ではない。出典の記載と、加工したときは加工した旨の記載が要る
 - CSV の形(`docs/research/dia-planning.md` 438 行):文字コードは Shift_JIS、見出しは「国民の祝日・休日月日,国民の祝日・休日名称」、日付は `2027/1/1` のようにゼロを詰めない、収録は 1955-01-01〜2027-11-23(1,067 行)、振替休日と国民の休日の名称は「休日」
 
 ### 変換(data/)
@@ -236,13 +237,15 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
   - 日付が不正、`end < start`
   - `weekdayService` と `replacementService` が同じ、どちらかに便が無い
   - `period.start` が入力の有効期間の末日より後(新しい有効期間が空)
-  - 平日の service に calendar の行があり、その行の期間が新しい有効期間と1日も重ならない
+  - `weekdayCalendarOutside`:平日の service に calendar の行があり、**その service のどの行の期間も**新しい有効期間と1日も重ならない(行が2つ以上あるときは、1つでも重なればよい)
+  - `weekdayNotActive`:`weekdayService` が新しい有効期間の中で1日も走らない(calendar と calendar_dates の両方で判定する `activeDaysIn` が 0)。calendar に行が無く calendar_dates だけで日を決める service でも止める。止めないと、§5.6 の規則で平日の service が便ごと出力から消え、方針が何も変えない出力になる
   - `replacementNotActive`:`replacementService` が新しい有効期間の中で1日も走らない(`activeDaysIn` が 0)。写した便が、走らない service の時刻表のまま平日に入るのを防ぐ(例:夏の土曜 `03` を、11/1 からの期間に写す)
   - `frequencies.txt` に行がある(§5.9)
   - `tripReferences`:transfers・attributions・translations に、平日の service の便を指す行がある(§5.2)
+- 上の一覧で名前の無い error の code は、実装で `badPeriod`(日付が不正、`end < start`)・`sameService`・`noWeekdayTrips`・`noReplacementTrips`・`noValidity`・`emptyValidity`(新しい有効期間が空。`period.end` が入力の開始日より前も含む)・`frequencies` とした
 - `checkPolicy` の警告:
   - `period.start` が入力の開始日より前(入力の開始日にそろえる)、`period.end` が入力の末日より後(入力の末日にそろえる)
-  - `excludedRoutes` に routes.txt に無い route_id、平日便の無い route_id がある
+  - `excludedRoutes` に routes.txt に無い route_id(`unknownExcludedRoute`)、平日便の無い route_id(`excludedRouteWithoutWeekdayTrips`)がある
   - `replacementPartial`:`replacementService` の calendar の期間(calendar に行が無ければ、走る日の最初〜最後)が、新しい有効期間の全体を覆わない。期間の一部の平日で、写した便が走らない時刻表になりうる
   - `shortValidity`:新しい有効期間が 7 日以下。方針の画面で開始日か終了日を変えるよう促す(この方針のままでは出力できない。§4.5)
   - `validityUnder30`:新しい有効期間が 30 日未満(GTFS-JP は可能であれば 30 日以上を望ましいとしている)
@@ -488,6 +491,7 @@ export interface Form2Report {
 
 - `tripIds`(`rule` と `servicePartIndex` を除く)・`addBack`・`calendarDates`・`rowOrder` は、参照実装 `form2_ref.py` の `summary.json` と同じ名前・同じ並びにしてあり、そのまま比べられる。`inputValidity`・`validity`・`feedVersion` は `summary.json` の `input`・`output` の値を組み直したもの、`droppedServices` は参照実装に無い(§11)
 - 参照実装と違うのは、キーの空白を取って照合すること(道北バスには空白が無いので結果は同じ)と、§5.6 の `droppedServices`・§5.7 の feed_info を作る場合・§5.9 の frequencies の扱い(いずれも正解データには出てこない)
+- 11/3 のランダムな突き合わせ(1,517 件)で分かった参照実装との違い(どれも道北バスの正解データには出てこない):§5.4 の見つけ方(参照実装は便ごとに5部分の正規表現で判定し、TS はすべての便の形がそろうときだけ置き換える)、feed_info に列を足すこと(`feedInfoColumnsAdded`)、§3 の `checkPolicy` の error(参照実装は止めずに進む)、参照実装に無い警告(`otherWeekdayServices`・`blockIdCopied`)、§9 の書き出し(元の見出しの文字列と最後の改行を入力に合わせる)、不正な日付の扱い(TS は日付として確かめる。参照実装は文字列で比べる)、警告の数え方(§5.8)、§5.1 の読めない `stop_sequence`。参照実装は 0 バイトの表・不正な日付・見出しの空白などで止まるので、道北バスより広い入力の基準にはしない
 
 ### 5.1 便の署名
 
@@ -497,6 +501,7 @@ export function tripSignature(routeId: string, rows: readonly GtfsRow[]): string
 ```
 
 - `route_id + "\t" + 行ごとの "stop_id,arrival_time,departure_time" を ";" でつないだもの`。行は `stop_sequence` の数値の昇順(読めない値の行は入力の順で後ろ)。値は空白を取る
+- 読める `stop_sequence` は、空白を取って `/^\d+$/` に合う値(0 以上の 10 進の整数。GTFS の規定どおり)。`-1`・`+3`・`2.0`・空は読めない値(参照実装は `int()` で読むので `-1` を読む)
 - 便どうしを比べる単位。trip_id は比べない。足し戻しの「既にある便」(§5.3)、平日便の差(§6)、正解データの `signatureDigest` に使う
 - 時刻は文字列のまま比べる(`7:05:00` と `07:05:00` は別の便になる)。乗降の区分(`pickup_type`・`drop_off_type`)・`stop_headsign`・`trip_headsign` は含めない。道北バスでは時刻の書き方がそろっており、署名が一致した便どうしでほかの列に違いが無いことを確かめてある。時刻を秒に直して比べる案は §12.2
 - `signatureDigest`:対象の便の署名を重複も含めて並べ替え、`"\n"` でつないだ UTF-8 の SHA-256(末尾に改行を付けない)
@@ -561,6 +566,7 @@ export function tripSignature(routeId: string, rows: readonly GtfsRow[]): string
 
 - trips:入力が `(service_id, trip_id)` の昇順なら、出力もその順(道北バスは両版ともこの順)。そうでなく `trip_id` の昇順ならその順。どちらでもなければ入力の順のまま、写した便を割り当ての順で後ろに足す。並びの判定と並べ替えは空白を取ったキーで行う
 - stop_times:入力が便ごとにまとまり、その便の並びが trips の並び(stop_times に出てくる便だけを見た順)と同じなら、出力も出力の trips の順に並べ、便の中は入力の行の順。そうでなければ入力の順のまま(消した便の行を除き)、写した便の行を後ろに足す
+- **孤立した行**:基準の trips に無い trip_id の stop_times の行は、どちらの並びでも出力から除き、件数と例を warning `orphanStopTimesDropped` に出す(参照実装も除く)。残すと、その trip_id が写した便の新しい trip_id と同じとき、写した便の停車に混ざる。基準では `validateEdit` の `stopTimesUnknownTrip`(入力からある問題)にも出る
 - `Form2Report.rowOrder` に判定の結果を入れる
 
 ### 5.6 有効期間、calendar、calendar_dates
@@ -598,9 +604,11 @@ export function tripSignature(routeId: string, rows: readonly GtfsRow[]): string
 | `unknownExcludedRoute` | `excludedRoutes` に routes.txt に無い route_id がある |
 | `otherWeekdayServices` | 平日の役割の service がほかにもあり、入れ替えていない |
 | `blockIdCopied` | 写した便に空でない block_id がある(運用が重なるかは確かめていない) |
+| `orphanStopTimesDropped` | 基準の trips に無い trip_id の stop_times の行を除いた(§5.5) |
 
 - 便を指すほかの表の行は、11/4 は `checkPolicy` のエラー(`tripReferences`)で止めるので、ここには出ない(§5.2)
-- 新しい確かめ(`tripIdReused`・`validityUnder30` など)は `Form2Report.warnings` に入れず、`validateEdit` で出す。正解データの `summary` の警告の件数と比べるため、`Form2Report.warnings` の code は上の表のものに限る
+- 新しい確かめ(`tripIdReused`・`validityUnder30` など)は `Form2Report.warnings` に入れず、`validateEdit` で出す。`Form2Report.warnings` の code は上の表のものに限る
+- 警告は code ごとに1件にまとめ、対象(除いた calendar の行、無い系統など)は文言に並べる。参照実装は行・系統ごとに1件ずつ出すので、§11 の照合は件数ではなく code の集合で比べる
 
 祝日・平日・年末年始は `applyForm2` では見ない(祝日一覧に頼らない純粋な関数にするため)。`validateEdit` が編集後のフィードで確かめる。
 
@@ -745,7 +753,8 @@ export function diffWeekdayTrips(base: GtfsFeed, edited: GtfsFeed, weekdayServic
 ### 起点(追記3の候補を採る)
 
 - `docs/interfaces-1103.md` 追記3の「候補」を採る:**乗れる行が1つも無い停留所は起点にしない。** 乗れる行は、`pickup_type` が `'1'` でなく、その便の最後の停留所(`stop_sequence` の数値が最大)でない stop_times の行。基準の GTFS の全便で判定する(日付に関係なく、一度だけ)
-- 理由:降車専用の停留所(旭川駅前 0010_10、旭川空港 9000_02 など 10 件)のまわりのセル(124)が、ダイヤと関係なくいつも外れる側に数えられているため。採ると、これらは coverable でなくなり、分母から外れて「ダイヤと関係なく外れるセル」に数えられる
+- 理由:降車専用の停留所(旭川駅前 0010_10、旭川空港 9000_02 など 10 件)のまわりのセル(124)が、ダイヤと関係なくいつも外れる側に数えられているため
+- 採った結果(11/3 に実データで確かめた。当初の「分母から外れて『ダイヤと関係なく外れるセル』に数えられる」は誤りだった):調べるセルは起点から決まる(追記2)ので、124 セルのうち 113 は、ほかの起点の距離の中に無く、**調べるセルそのものから外れて表のどの行にも出ない**。coverable でないセルに移るのは 11 だけ。減便前の 11/2 で、調べるセル 18,951 → 18,795、coverable 17,200 → 17,061、ダイヤと関係なく外れるセル 1,751 → 1,734、調べるセル全体の推計人口は 2,774.75 人減る。降車専用の停留所では乗れないので、このまま採る(乗れない停留所をセルを集める点としてだけ渡す案は、`computeReach` の入力が変わるので採らない)
 - `OriginStops` と `OriginCounts` に `noBoarding: number`(乗れる行が無いので除いた停留所の数)を足し、到達圏の表に出す
 - 起点・調べるセル・coverable・区分は、これまでどおり基準の GTFS から `setSource` で一度だけ決める(追記3)
 
@@ -836,7 +845,7 @@ export function zeroServiceRoutes(base: GtfsFeed, edited: GtfsFeed, date: string
 
 - 表の下に「一日を通して乗れなくなる場所」(`dayLostCells`・推計人口)、運行がゼロになる停留所(最大 20 件と全体の件数。'feed' の件数を先に出す)、運行がゼロになる系統を出す
 - 下書きのときは表の見出しに「下書き」と出す
-- **時間帯の選び直し**:方針を承認した(`commit` が ok)あと、最初の比較の結果が出たら、`lostCells` が最も多い時間帯を選ぶ(`selectHour`)。既定の 6時のままだと夜の空白が見えないため。利用者が時間帯を選んだあとは動かさない
+- **時間帯の選び直し**:方針を承認した(`commit` が ok)あと、最初の比較の結果が出たら、`lostCells` が最も多い時間帯を選ぶ(`selectHour`)。既定の 6時のままだと夜の空白が見えないため。利用者が時間帯を選んだあとは動かさない。`lostCells` が同数なら遅い時間帯を選ぶ(夜の空白を見せる目的に合わせる。デモの流れ「0051・0151 を除外して承認、足し戻しはまだ」では 6〜9時と 18〜21時が 860 で同数になり、18時を選ぶ)。`lostCells` がすべて 0 なら動かさない。選び直しは読み込みごとに1回だけ(すべて戻してから承認し直しても動かさない)
 
 ### 地図
 
@@ -967,7 +976,7 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
 - **出力しない表が無いこと**:基準にある表は、すべて出力にある(テストで確かめる)
 - 圧縮は DEFLATE。同じ入力から同じバイト列にする
 - **エントリの日時**:`generatedAt` の数字から `new Date(Date.UTC(年, 月 − 1, 日, 時, 分))` で作り、すべてのエントリに `date` として渡す。JSZip 3.10 は ZIP の日時(DOS の日時)を `getUTCHours`・`getUTCFullYear` などで書くので、UTC の値に日本時間の数字を入れておくと、ZIP には日本時間の壁時計の日時が入り、機械の時刻帯(CI は UTC、手元の Mac は日本時間)によらず同じバイト列になる。`new Date(年, 月 − 1, …)`(機械の時刻帯)で作らない
-- ファイル名:`{入力の ZIP 名から .zip を除いたもの}_dispatcher_{generatedAt}.zip`
+- ファイル名:`{入力の ZIP 名から .zip を除いたもの}_dispatcher_{generatedAt}.zip`。サンプルは、サーバーが返す表示名(`道北バス`)を ZIP 名の代わりに使う(`道北バス_dispatcher_202611041200.zip`)
 
 ### 出力の画面(ExportStep)
 
@@ -1185,7 +1194,7 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
   - `describe.skipIf(!existsSync(ZIP))`(ZIP は `data/raw/gtfs/dohoku_bus_減便前.zip`)
   - ZIP の SHA-256 が正解データの `input.sha256`(`d81998880e2141d0f405c65fd2b2e5e2c9516842b94d61dd59f1cc54cf451abb`)と違えば、`console.warn` して照合を飛ばす
   - 5 つの場面(main・addBack24・replaceOnly・periodEnd・edgeCases)それぞれで、`loadGtfsZip` → `applyForm2(feed, { kind: 'weekdayToSaturday', ...policy }, { generatedAt: '202611041200' })` → 5 つの表を `serializeTable` し、SHA-256 と行数が `summary.files` と一致する
-  - `Form2Report` の `tripIds`(`rule` を除く)・`addBack`・`calendarDates`・`validity`(`summary.output` の `feedStartDate`・`feedEndDate`・`validityDays`)・`rowOrder`・警告の件数が `summary` と一致する
+  - `Form2Report` の `tripIds`(`rule` を除く)・`addBack`・`calendarDates`・`validity`(`summary.output` の `feedStartDate`・`feedEndDate`・`validityDays`)・`rowOrder`・警告の code の集合が `summary` と一致する(§5.8。正解データの5場面はどれも警告が 0 件)
   - 平日の便について、便数、`signatureDigest`、公示第47号の時間帯の便数、3時間ごとの出発のある停留所の数を、テストの中で出力から数え直して `summary.output.weekday` と照らす(main は 382 便、`c76a2bb4…caf5`、111/141/114/16)
     - 公示第47号の時間帯の便数は `diffWeekdayTrips` の `byNotice47Band` を系統について足し合わせた値とも照らす
     - 3時間ごとの出発のある停留所の数は、正解データの README の定義で数え直す:`pickup_type` が `1` でない行(空は 0)、`departure_time` の時、半開区間。各便の最後の停留所は除かない。アプリの `departureCountsByBand` は最後の停留所も除くので定義が違い、道北バスで一致するのは全 1,169 便の最後の停留所が `pickup_type=1` だから(テストに注記する)
@@ -1269,6 +1278,7 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
 16. **追記3の候補(乗れる行の無い停留所を起点にしない)を §7 で採った**。到達圏の数が変わる
     - 選択肢:(a) 採る(今の取り決め) (b) 採らない
     - おすすめ:(a)。降車専用の停留所のまわりがダイヤと関係なく外れる側に数えられるのを防ぐ
+    - 11/3 の検証で、まわりのセルの多くは「ダイヤと関係なく外れるセル」ではなく調べるセルから外れると分かった(§7)。それでも (a) のままにする
 17. **方針を変えたときに足し戻しの一覧を残すか**
     - 選択肢:(a) 残す(今の取り決め。適用できない便は §5.3 の分類で知らせる) (b) 捨てる
     - おすすめ:(a)
@@ -1290,6 +1300,19 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
 - **足し戻した便が属する運用の数の表示**(任意とされたもの):trip_id から運用を読む規則は道北バスの形に限られ、一般の GTFS では決められない。12.1-6 で trip_id の扱いを決めるときにあわせて検討する
 - **署名の一致を、時刻を秒に直した値で判定する。署名が同じ組の列(pickup_type・drop_off_type・trip_headsign・direction_id)の不一致の件数を出す**:道北バスでは時刻の書き方がそろい、署名が同じ便どうしでほかの列の違いは 0 件。11/4 は正解データとの照合(`signatureDigest`・`sameAs`・重なり)を崩さないことを優先し、署名は文字列のままにした(§5.1)。11/6 の検証器で、時刻の書き方の違い(時が1桁の値など)と列の不一致を warning として足す
 - **平日になかった発車時刻が加わる停留所・発車時刻が消える停留所の件数と、掲示の差し替え・早発の注意**:停留所ごとの一覧(B)と同じ計算なので、B を作るときに件数と注意もあわせて出す。11/4 は §6 の「入る便の系統と時刻を確かめてください」までにする。§5.10 の「平日ダイヤで走る日」の文言の直しは反映した
+
+### 12.3 11/3 の検証のあとの決定(指示役)
+
+実装を正解データ・独立の Python・ブラウザ・ランダムな突き合わせで確かめたあと、次のように決めた。
+
+1. 祝日の利用条件は公共データ利用規約(第1.0版)(§2。CLAUDE.md も直した)
+2. 降車専用の停留所を起点にしない規則はそのまま。§7 の説明の誤りを直した
+3. 承認後の時間帯の選び直しは、同数なら遅い時間帯(§7)
+4. サンプルの出力 ZIP 名は表示名を使う(§9)
+5. 孤立した stop_times の行は除いて警告する(§5.5・§5.8 の `orphanStopTimesDropped`)
+6. `checkPolicy` に `weekdayNotActive` を足し、`weekdayCalendarOutside` は service のどの行も重ならないときだけにする(§3)
+7. 読める `stop_sequence` の定義(§5.1)と、警告の照合を code の集合にすること(§5.8・§11)
+8. 11/4 の後始末として直す(11/4 中):期間の入力欄のブラウザ標準の範囲検証を外し、§3 の「そろえる」警告を画面から出せるようにする。実施日を過ぎたときの文言。「すべて戻す」などの確認をブラウザ標準のダイアログから画面の部品にする。380px での折り返し。祝日一覧があとから読めたときの確かめの出し直し。§11 のテスト名
 
 ## 13. 後でよい
 

@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fetchSampleGtfs, fetchSampleGtfsInfo, type SampleGtfsInfo } from '@/gtfs/sample'
 import { loadGtfsInWorker } from '@/gtfs/workerClient'
+import { useEditStore } from '@/store/edit'
 import { useGtfsStore } from '@/store/gtfs'
 import { useReachStore } from '@/store/reach'
 
@@ -35,16 +36,23 @@ export default function LoadStep() {
   async function open(getData: () => Promise<Blob>, name: string, sampleInfo?: SampleGtfsInfo) {
     const { clear, setLoaded } = useGtfsStore.getState()
     const reach = useReachStore.getState()
+    const edit = useEditStore.getState()
     setBusy(true)
     setError(null)
     clear()
     reach.setSource(null)
+    // 前の GTFS の編集の履歴と下書きも捨てる
+    edit.setBase(null)
     try {
-      const loaded = await loadGtfsInWorker(await getData())
+      // 元の ZIP のバイト列は、出力のとき(変えない表をそのまま写す)にも使う。Worker へは複製で渡るので、手元のものは使えるまま残る
+      const zip = await (await getData()).arrayBuffer()
+      const loaded = await loadGtfsInWorker(zip)
       setLoaded({ label: name, feed: loaded, sample: sampleInfo })
       // 停留所と運行期間は setLoaded で求めてある。到達圏の手順に渡し、既定の日付で計算を始める
       const { stops, servicePeriod } = useGtfsStore.getState()
       reach.setSource({ feed: loaded, stops, period: servicePeriod })
+      // 編集の基準にする(編集後のフィードは、毎回この基準から作り直す)
+      edit.setBase({ feed: loaded, zip, label: name, sample: sampleInfo ?? null })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

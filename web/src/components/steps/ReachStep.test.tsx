@@ -4,8 +4,9 @@ import { makeBands } from '@/gtfs/departures'
 import { cloneParams } from '@/reach/input'
 import { DEFAULT_REACH_PARAMS, type ReachResult } from '@/reach/reach'
 import { summarizeReach } from '@/reach/summary'
+import { compareReach } from '@/reach/compare'
 import type { ReachSnapshot, RefState } from '@/store/reach'
-import { ReachConditions, ReachNotes, ReachSummaryTable, RefStatus } from './ReachStep'
+import { ReachConditions, ReachNotes, ReachSummaryTable, RefStatus, ZeroServiceSummary } from './ReachStep'
 
 // react-dom/server で描画する(useEffect は走らない)。store を使わない表示の部品に、値を直接渡して確かめる
 
@@ -25,7 +26,7 @@ function snapshotOf(result: ReachResult, extra: Partial<ReachSnapshot['departure
     result,
     summary: summarizeReach(result),
     params: cloneParams(DEFAULT_REACH_PARAMS),
-    origin: { origins: 1460, unused: 122, nonStop: 0 },
+    origin: { origins: 1460, unused: 122, nonStop: 0, noBoarding: 10 },
   }
 }
 
@@ -59,7 +60,6 @@ describe('ReachSummaryTable', () => {
   it('時間帯ごとの外れるセルと推計人口を出し、割合の分母は到達できる見込みのあるセルにする', () => {
     const text = textOf(renderToString(<ReachSummaryTable snapshot={snapshotOf({ ...RESULT, excludedStops: 2 })} selectedHour={9} invalidStops={1} />))
     expect(text).toContain('2026年11月4日(水)、3時間ごと')
-    expect(text).toContain('除いた停留所 3 件')
     // 分母は見込みのある 3 セル(推計人口 180 人)。4つ目のセルは分子にも分母にも入れない
     expect(text).toContain('|6〜9時|1|(33.3%)|30人|(16.7%)|')
     expect(text).toContain('|9〜12時|2|(66.7%)|80人|(44.4%)|')
@@ -79,17 +79,33 @@ describe('ReachSummaryTable', () => {
 
   it('調べたセルの内訳(区分、到達できる見込みのあるセル、ダイヤと関係なく外れるセル)と起点の停留所の数を出す', () => {
     const text = textOf(renderToString(<ReachSummaryTable snapshot={snapshotOf(RESULT)} selectedHour={6} invalidStops={0} />))
-    expect(text).toContain('起点の停留所 |1,460| 件(stop_times.txt に出てこない 122 件は除く)')
+    expect(text).toContain('起点の停留所 |1,460| 件。')
+    expect(text).toContain('起点にしなかった停留所:stop_times.txt に出てこない 122 件、乗れる行が無い(すべて終点か pickup_type が 1。降車専用)10 件。')
     expect(text).not.toContain('駅舎・出入口')
     expect(text).toContain('|調べたセル(125m):|4(都市部 1・郊外 1・中山間・地方 2)、推計人口 200 人|')
     expect(text).toContain('|到達できる見込みのあるセル:|3、推計人口 180 人(表の割合の分母)|')
     expect(text).toContain('|ダイヤと関係なく外れるセル:|1、推計人口 20 人|')
   })
 
-  it('駅舎・出入口などを除いたときは、その数も出す', () => {
-    const snapshot = { ...snapshotOf(RESULT), origin: { origins: 10, unused: 0, nonStop: 3 } }
+  it('除いた停留所は、何を除いたのかを分けて書く(0 件のものは書かない)', () => {
+    const snapshot = { ...snapshotOf({ ...RESULT, excludedStops: 2 }), origin: { origins: 10, unused: 0, nonStop: 3, noBoarding: 0 } }
+    const text = textOf(renderToString(<ReachSummaryTable snapshot={snapshot} selectedHour={6} invalidStops={1} />))
+    expect(text).toContain('起点の停留所 |10| 件(うち、緯度経度が地域メッシュの範囲外((0, 0) など)で計算から除いた 2 件)。')
+    expect(text).toContain('起点にしなかった停留所:駅舎・出入口など(location_type が 0・空以外)3 件、stops.txt の緯度経度が読めない 1 件。')
+    expect(text).not.toContain('stop_times.txt に出てこない')
+    expect(text).not.toContain('乗れる行が無い')
+  })
+
+  it('除いた停留所が無ければ、そう書く', () => {
+    const snapshot = { ...snapshotOf(RESULT), origin: { origins: 10, unused: 0, nonStop: 0, noBoarding: 0 } }
     const text = textOf(renderToString(<ReachSummaryTable snapshot={snapshot} selectedHour={6} invalidStops={0} />))
-    expect(text).toContain('stop_times.txt に出てこない 0 件と、駅舎・出入口などの 3 件は除く')
+    expect(text).toContain('起点にしなかった停留所はありません。')
+  })
+
+  it('割合と推計人口は、数の下の行に出す(行によって折り返しが変わらないように)', () => {
+    const html = renderToString(<ReachSummaryTable snapshot={snapshotOf(RESULT)} selectedHour={6} invalidStops={0} />).replace(/<!-- -->/g, '')
+    expect(html).toMatch(/<span class="block[^"]*">\(33\.3%\)<\/span>/)
+    expect(html).toMatch(/<span class="block[^"]*">\(16\.7%\)<\/span>/)
   })
 
   it('地図に出している時間帯の行を強調する', () => {
@@ -100,40 +116,110 @@ describe('ReachSummaryTable', () => {
     expect(html).toContain('aria-current="true"')
   })
 
-  it('参照データが無い(fallback)ときは、推計人口の列を出さない', () => {
-    const fallback = { ...RESULT, usedFallback: true, cellPopulation: [0, 0, 0, 0] }
-    const text = textOf(renderToString(<ReachSummaryTable snapshot={snapshotOf(fallback)} selectedHour={6} invalidStops={0} />))
+  it('参照データが無い(fallback)ときは、推計人口の列と、ダイヤと関係なく外れるセルの行・内訳・説明を出さない', () => {
+    const fallback = { ...RESULT, usedFallback: true, cellPopulation: [0, 0, 0, 0], coverable: [true, true, true, true] }
+    const html = renderToString(<ReachSummaryTable snapshot={snapshotOf(fallback)} selectedHour={6} invalidStops={0} />)
+    const text = textOf(html)
     expect(text).not.toContain('推計人口')
-    expect(text).toContain('|6〜9時|1|(33.3%)|')
-    expect(text).toContain('|ダイヤと関係なく外れる|1|')
+    expect(text).toContain('|6〜9時|2|(50.0%)|')
+    expect(text).not.toContain('ダイヤと関係なく外れる')
+    expect(html).not.toContain('<tfoot')
     expect(text).not.toContain('人|(')
   })
 })
 
 describe('ReachNotes', () => {
-  it('除いた停留所、空・読めない departure_time、frequencies.txt を知らせる', () => {
+  it('空・読めない departure_time、frequencies.txt を知らせる', () => {
     const html = renderToString(
-      <ReachNotes
-        snapshot={snapshotOf({ ...RESULT, excludedStops: 2 }, { skippedBlankTime: 3, skippedInvalidTime: 4, hasFrequencies: true })}
-        invalidStops={1}
-      />,
+      <ReachNotes snapshot={snapshotOf(RESULT, { skippedBlankTime: 3, skippedInvalidTime: 4, hasFrequencies: true })} />,
     )
     const text = textOf(html)
-    expect(text).toContain('緯度経度が読めない停留所 1 件を除きました')
-    expect(text).toContain('地域メッシュの範囲外((0, 0) など)の停留所 2 件を除きました')
     expect(text).toContain('departure_time が空の行 3 件')
     expect(text).toContain('departure_time が時刻として読めない行 4 件')
     expect(text).toContain('frequencies.txt があります')
   })
 
   it('知らせることが無ければ何も出さない', () => {
-    expect(renderToString(<ReachNotes snapshot={snapshotOf(RESULT)} invalidStops={0} />)).toBe('')
+    expect(renderToString(<ReachNotes snapshot={snapshotOf(RESULT)} />)).toBe('')
   })
 
   it('出発がある停留所が無い日はそう出す', () => {
     const snapshot = snapshotOf(RESULT)
     snapshot.departures.counts = new Map()
-    expect(textOf(renderToString(<ReachNotes snapshot={snapshot} invalidStops={0} />))).toContain('出発がある停留所はありません')
+    expect(textOf(renderToString(<ReachNotes snapshot={snapshot} />))).toContain('出発がある停留所はありません')
+  })
+
+  it('参照データは読めたが、範囲の人口が空で調べるセルが 0 のときは、その理由を出す', () => {
+    const empty: ReachResult = { ...RESULT, cells: [], classes: [], reachable: Array.from({ length: 6 }, () => []), coverable: [], cellPopulation: [] }
+    const text = textOf(renderToString(<ReachNotes snapshot={snapshotOf(empty)} />))
+    expect(text).toContain('250m メッシュの人口がすべて 0 人')
+    expect(text).toContain('調べるセルがありません')
+    // 参照データが無い(fallback)ときは、この理由ではない
+    const fallback = textOf(renderToString(<ReachNotes snapshot={snapshotOf({ ...empty, usedFallback: true })} />))
+    expect(fallback).not.toContain('250m メッシュの人口')
+  })
+})
+
+describe('減便の前後の比較', () => {
+  // 基準:6〜9時は 1 セル外れる。編集後:6〜9時は 2 セル外れ(1 セルが減便で外れた)、9〜12時は 1 セルが新たに到達
+  const AFTER: ReachResult = {
+    ...RESULT,
+    reachable: [
+      [true, false, false, false],
+      [true, true, false, false],
+      [true, true, true, false],
+      [false, false, false, false],
+      [true, true, true, false],
+      [false, false, false, false],
+    ],
+  }
+  function compared(draft: boolean): ReachSnapshot {
+    const before = snapshotOf(RESULT)
+    const after = snapshotOf(AFTER)
+    return {
+      ...after,
+      baseline: { departures: before.departures, result: RESULT, summary: before.summary },
+      comparison: compareReach(RESULT, AFTER),
+      zeroStops: [
+        { stopId: 'S9', name: '学校前', beforeDepartures: 1, scope: 'feed' },
+        { stopId: 'A', name: '駅前', beforeDepartures: 5, scope: 'day' },
+      ],
+      zeroRoutes: [{ routeId: 'R3', name: '3', beforeTrips: 4, scope: 'feed' }],
+      draft,
+    }
+  }
+
+  it('減便前・減便後の外れる割合、増減(ポイント)、減便で外れたセルと新たに到達したセルを出す', () => {
+    const text = textOf(renderToString(<ReachSummaryTable snapshot={compared(false)} selectedHour={6} invalidStops={0} />))
+    for (const h of ['減便前の外れる割合', '減便後の外れる割合', '増減(ポイント)', '減便で外れたセル(推計人口)', '新たに到達(推計人口)']) {
+      expect(text).toContain(h)
+    }
+    // 分母は基準の見込みのあるセル 3
+    // 増減は表に並べた割合(小数1桁)の差
+    expect(text).toContain('|6〜9時|33.3%|66.7%|+33.4|1|(50人)|0|(0人)|')
+    expect(text).toContain('|9〜12時|66.7%|33.3%|−33.4|0|(0人)|1|(50人)|')
+    expect(text).not.toContain('下書き')
+  })
+
+  it('下書きのときは、表の見出しに「下書き」と出す', () => {
+    const text = textOf(renderToString(<ReachSummaryTable snapshot={compared(true)} selectedHour={6} invalidStops={0} />))
+    expect(text).toContain('減便の前後|下書き|')
+  })
+
+  it('一日を通して乗れなくなる場所と、運行がゼロになる停留所・系統を出す(全日の件数を先に)', () => {
+    const text = textOf(renderToString(<ZeroServiceSummary snapshot={compared(false)} />))
+    expect(text).toContain('一日を通して乗れなくなる場所:|0| セル(推計人口 0 人)')
+    expect(text).toContain('運行がゼロになる停留所:|2| 件(うち、出力のどの日にも便が来ない停留所 1 件)')
+    expect(text).toContain('掲示の撤去と、休止の届出に当たるかを確かめてください')
+    expect(text).toContain('|全日| 学校前|S9|(減便前のこの日の出発 1 本)')
+    expect(text).toContain('|この日| 駅前|A|(減便前のこの日の出発 5 本)')
+    expect(text).toContain('運行がゼロになる系統:|1| 系統(うち、全曜日で便がなくなる系統 1)')
+    expect(text).toContain('路線の休止の届出に当たるかを運輸支局に確認してください')
+    expect(text).toContain('(基準の全便 4 本)')
+  })
+
+  it('減便後の GTFS が無ければ、運行がゼロになる場所は出さない', () => {
+    expect(renderToString(<ZeroServiceSummary snapshot={snapshotOf(RESULT)} />)).toBe('')
   })
 })
 

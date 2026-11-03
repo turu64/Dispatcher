@@ -10,12 +10,16 @@ import { formatDateJa, fromInputDate, toInputDate } from '@/lib/dates'
 import { describeServiceDay, type ServiceDay } from '@/lib/serviceDay'
 import { bandIndexForHour } from '@/reach/input'
 import { useGtfsStore } from '@/store/gtfs'
-import { useReachStore, type StepHours } from '@/store/reach'
+import { selectablePeriod, useReachStore, type StepHours } from '@/store/reach'
 
-/** 手順2:日付と時間帯。選んだ条件は useReachStore に入り、到達圏の計算と地図の表示に使われる */
+/**
+ * 手順3:日付と時間帯。選んだ条件は useReachStore に入り、到達圏の計算と地図の表示に使われる。
+ * 選べる日付の範囲は到達圏の store から読む(減便後の GTFS があれば、その有効期間の中だけ。docs/interfaces-1104.md §7)
+ */
 export default function DateBandStep() {
   const feed = useGtfsStore((s) => s.feed)
-  const period = useGtfsStore((s) => s.servicePeriod)
+  const period = useReachStore(selectablePeriod)
+  const comparing = useReachStore((s) => s.edited !== null)
   const date = useReachStore((s) => s.date)
   const stepHours = useReachStore((s) => s.stepHours)
   const selectedHour = useReachStore((s) => s.selectedHour)
@@ -23,16 +27,20 @@ export default function DateBandStep() {
   const bands = useMemo(() => makeBands(stepHours), [stepHours])
 
   return (
-    <StepSection title="2. 日付と時間帯">
+    <StepSection title="3. 日付と時間帯">
       {!feed ? (
         <p className="text-sm text-muted-foreground">手順1で GTFS を読み込むと選べます。</p>
       ) : !period || !date ? (
         <Alert variant="destructive">
-          <AlertDescription>この GTFS には運行日がありません(calendar.txt・calendar_dates.txt を確かめてください)。</AlertDescription>
+          <AlertDescription>
+            {comparing
+              ? '減便後の GTFS に運行日がありません(方針の期間を確かめてください)。'
+              : 'この GTFS には運行日がありません(calendar.txt・calendar_dates.txt を確かめてください)。'}
+          </AlertDescription>
         </Alert>
       ) : (
         <>
-          <DateField date={date} period={period} onCommit={(d) => useReachStore.getState().setDate(d)} />
+          <DateField date={date} period={period} comparing={comparing} onCommit={(d) => useReachStore.getState().setDate(d)} />
           {day && <ServiceDayInfo day={day} />}
           <StepPicker value={stepHours} onChange={(v) => useReachStore.getState().setStepHours(v)} />
           <BandPicker bands={bands} selectedHour={selectedHour} onSelect={(h) => useReachStore.getState().selectHour(h)} />
@@ -46,13 +54,16 @@ export default function DateBandStep() {
  * 日付の入力。打っている途中の値(年の桁を打ち直している間など)で選択が戻らないよう、入力欄の文字は手元に持ち、
  * 正しい日付になったときだけ store に渡す。store の日付が外から変わったら(GTFS を読み直したときなど)、入力欄も合わせる。
  */
-function DateField({
+export function DateField({
   date,
   period,
+  comparing,
   onCommit,
 }: {
   date: string
   period: { start: string; end: string }
+  /** 減便後の GTFS と比べている(範囲は出力の有効期間) */
+  comparing: boolean
   onCommit: (date: string) => string | null
 }) {
   const [text, setText] = useState(toInputDate(date))
@@ -89,7 +100,9 @@ function DateField({
         }}
       />
       <p id="reach-date-help" className="text-xs text-muted-foreground">
-        運行期間:{formatDateJa(period.start)}〜{formatDateJa(period.end)}
+        {comparing
+          ? `比べられるのは出力の有効期間(${formatDateJa(period.start)}〜${formatDateJa(period.end)})です`
+          : `運行期間:${formatDateJa(period.start)}〜${formatDateJa(period.end)}`}
       </p>
       {error && <p className="text-sm text-destructive">{error}</p>}
     </div>

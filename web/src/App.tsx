@@ -1,13 +1,18 @@
 import DataSources from '@/components/DataSources'
 import DateBandStep from '@/components/steps/DateBandStep'
+import ExportStep from '@/components/steps/ExportStep'
 import LoadStep from '@/components/steps/LoadStep'
+import PolicyStep from '@/components/steps/PolicyStep'
 import ReachStep from '@/components/steps/ReachStep'
+import RestoreStep from '@/components/steps/RestoreStep'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import BaseMap from '@/map/BaseMap'
 import ReachLayers from '@/map/ReachLayers'
 
 // 1画面構成:左に手順のパネル、右に地図。
 // 手順の中身は components/steps/ の1手順1ファイル。左パネルの一番下はデータの出典。
+// 手順の並びは「読み込み → 方針 → 日付と時間帯 → 到達圏(前後) → 足し戻し → 出力」(docs/interfaces-1104.md §7)。
+// 日付と到達圏は、方針の結果を見る場所として方針のあとに置く。前提情報(11/6)は 1 と 2 の間に入る。
 export default function App() {
   return (
     <TooltipProvider>
@@ -21,8 +26,11 @@ export default function App() {
             </header>
 
             <LoadStep />
+            <PolicyStep />
             <DateBandStep />
             <ReachStep />
+            <RestoreStep />
+            <ExportStep />
 
             <div className="mt-auto">
               <DataSources />

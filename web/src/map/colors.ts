@@ -30,6 +30,36 @@ export const REACH_FILL_OPACITY = 0.55
 export const REACH_FILL_OPACITY_REACHABLE = 0.25
 
 /**
+ * 減便の前後の差の4色(docs/interfaces-1104.md §7。地図の塗り分けが 'diff' のとき)。
+ * - 減便で外れた(前は到達、後は外れる):今の橙を、外れるセルと同じ濃さで。いちばん見てほしいセル
+ * - 両方で外れる:灰(暗めにして、薄い青の「両方で到達」とも見分けられるようにする)
+ * - 両方で到達:今の青を薄く
+ * - 新たに到達(前は外れ、後は到達):青を濃く
+ * 灰は地域の区分の灰(REGION_COLORS)と紛れるので、同時には出さない。
+ * 色の差は colors.test.ts で、背景(白)に重ねた見え方に色覚シミュレーションをかけて確かめている。凡例には件数と文字も出す。
+ */
+export const REACH_DIFF_COLORS = {
+  lost: REACH_COLORS.unreachable,
+  bothUnreachable: '#666666',
+  bothReachable: REACH_COLORS.reachable,
+  gained: REACH_COLORS.reachable,
+} as const
+
+/** 4色の塗りの不透明度 */
+export const REACH_DIFF_OPACITY = {
+  lost: REACH_FILL_OPACITY,
+  bothUnreachable: 0.5,
+  bothReachable: REACH_FILL_OPACITY_REACHABLE,
+  gained: 0.8,
+} as const
+
+/** 運行がゼロになる停留所の印(×)の色。停留所の丸・駅の四角と形で区別する */
+export const ZERO_STOP_COLORS = {
+  mark: '#1A1A1A',
+  halo: '#FFFFFF',
+} as const
+
+/**
  * 地域の区分(都市部・郊外・中山間・地方)。
  * 順序のある区分なので、色相ではなく明るさで区別する(都市部が最も暗い)。
  * 区分の種類は reach/reach.ts の RegionClass と同じ(依存を避けるため、ここでは書き写している)。

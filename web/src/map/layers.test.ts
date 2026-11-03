@@ -1,7 +1,14 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { REACH_COLORS, REACH_FILL_OPACITY, REACH_FILL_OPACITY_REACHABLE, STOP_COLORS } from './colors'
+import {
+  REACH_COLORS,
+  REACH_DIFF_COLORS,
+  REACH_DIFF_OPACITY,
+  REACH_FILL_OPACITY,
+  REACH_FILL_OPACITY_REACHABLE,
+  STOP_COLORS,
+} from './colors'
 import {
   addReachLayers,
   CELLS_LAYER,
@@ -19,6 +26,10 @@ import {
   stopCircleColor,
   STOPS_LAYER,
   STOPS_SOURCE,
+  ZERO_STOP_ICON,
+  ZERO_STOPS_LAYER,
+  ZERO_STOPS_SOURCE,
+  zeroStopIcon,
   type LayerMap,
 } from './layers'
 
@@ -135,21 +146,22 @@ describe('stationIcon', () => {
 })
 
 describe('addReachLayers・removeReachLayers', () => {
-  it('ソース3つ、レイヤー3つ、駅の記号を足す。セルは背景の地図の文字の下に入れる', () => {
+  it('ソース4つ、レイヤー4つ、駅と運行がゼロになる停留所の記号を足す。セルは背景の地図の文字の下に入れる', () => {
     const { map, sources, layers, images } = fakeMap()
     addReachLayers(map)
-    expect([...sources.keys()]).toEqual([CELLS_SOURCE, STOPS_SOURCE, STATIONS_SOURCE])
-    expect(layers.map((l) => l.layer.id)).toEqual([CELLS_LAYER, STOPS_LAYER, STATIONS_LAYER])
+    expect([...sources.keys()]).toEqual([CELLS_SOURCE, STOPS_SOURCE, STATIONS_SOURCE, ZERO_STOPS_SOURCE])
+    expect(layers.map((l) => l.layer.id)).toEqual([CELLS_LAYER, STOPS_LAYER, STATIONS_LAYER, ZERO_STOPS_LAYER])
     expect(layers[0].beforeId).toBe('place-label')
     expect(layers[1].beforeId).toBeUndefined()
     expect(images.has(STATION_ICON)).toBe(true)
+    expect(images.has(ZERO_STOP_ICON)).toBe(true)
   })
 
   it('2回呼んでも(StrictMode)、同じものを2つ足さない', () => {
     const { map, layers } = fakeMap()
     addReachLayers(map)
     expect(() => addReachLayers(map)).not.toThrow()
-    expect(layers).toHaveLength(3)
+    expect(layers).toHaveLength(4)
   })
 
   it('背景の地図に文字のレイヤーが無ければ、いちばん上に足す', () => {
@@ -167,7 +179,7 @@ describe('addReachLayers・removeReachLayers', () => {
     expect(images.size).toBe(0)
     // 外したあとにもう一度足せる
     addReachLayers(map)
-    expect(layers).toHaveLength(3)
+    expect(layers).toHaveLength(4)
   })
 
   it('地図が先に壊されていても、片付けで例外を出さない', () => {
@@ -203,6 +215,56 @@ describe('setGeoJson・setReachBand', () => {
     const { map, paint } = fakeMap()
     setReachBand(map, 0)
     expect(paint).toEqual([])
+  })
+
+  it('塗り分けを渡すと、その塗り分けの式に差し替える', () => {
+    const { map, paint } = fakeMap()
+    addReachLayers(map)
+    setReachBand(map, 2, 'diff')
+    expect(paint.slice(0, 2)).toEqual([
+      [CELLS_LAYER, 'fill-color', cellFillColor(2, 'diff')],
+      [CELLS_LAYER, 'fill-opacity', cellFillOpacity(2, 'diff')],
+    ])
+  })
+})
+
+describe('減便の前後の塗り分け', () => {
+  it("'before' は基準の可否(m0)、'after' と省略は表示する側の可否(m)で2色にする", () => {
+    expect(cellBandBit(1, 'm0')).toEqual(['%', ['floor', ['/', ['get', 'm0'], 2]], 2])
+    expect(cellFillColor(1, 'before')).toEqual(['case', ['==', cellBandBit(1, 'm0'), 1], REACH_COLORS.reachable, REACH_COLORS.unreachable])
+    expect(cellFillColor(1, 'after')).toEqual(cellFillColor(1))
+    expect(cellFillOpacity(1, 'after')).toEqual(cellFillOpacity(1))
+  })
+
+  it("'diff' は、減便で外れた・両方で外れる・新たに到達・両方で到達の4つに塗り分ける", () => {
+    const was = ['==', cellBandBit(0, 'm0'), 1]
+    const now = ['==', cellBandBit(0, 'm'), 1]
+    expect(cellFillColor(0, 'diff')).toEqual([
+      'case',
+      ['all', was, ['!', now]],
+      REACH_DIFF_COLORS.lost,
+      ['all', ['!', was], ['!', now]],
+      REACH_DIFF_COLORS.bothUnreachable,
+      ['all', ['!', was], now],
+      REACH_DIFF_COLORS.gained,
+      REACH_DIFF_COLORS.bothReachable,
+    ])
+    expect(cellFillOpacity(0, 'diff')[2]).toBe(REACH_DIFF_OPACITY.lost)
+  })
+})
+
+describe('zeroStopIcon', () => {
+  const icon = zeroStopIcon(28)
+  const px = (x: number, y: number) => [...icon.data.slice((y * 28 + x) * 4, (y * 28 + x) * 4 + 4)]
+
+  it('背景は透明で、真ん中と対角線の上は黒(×の形)。四辺の真ん中は描かない', () => {
+    expect(icon.data.length).toBe(28 * 28 * 4)
+    expect(px(0, 0)[3]).toBe(0)
+    expect(px(14, 14)).toEqual([0x1a, 0x1a, 0x1a, 255])
+    expect(px(8, 8)).toEqual([0x1a, 0x1a, 0x1a, 255])
+    expect(px(19, 8)).toEqual([0x1a, 0x1a, 0x1a, 255])
+    expect(px(14, 1)[3]).toBe(0)
+    expect(px(1, 14)[3]).toBe(0)
   })
 })
 
@@ -241,12 +303,14 @@ describe.skipIf(!STYLE_SPEC || !existsSync(STYLE_SPEC))('MapLibre のスタイ�
     expect(spec.validateStyleMin(style).map((e) => e.message)).toEqual([])
 
     for (const band of [-1, 0, 5, 17]) {
-      const switched = structuredClone(style)
-      const paintOf = (id: string) => (switched.layers.find((l) => l.id === id) as { paint: Record<string, unknown> }).paint
-      paintOf(CELLS_LAYER)['fill-color'] = cellFillColor(band)
-      paintOf(CELLS_LAYER)['fill-opacity'] = cellFillOpacity(band)
-      paintOf(STOPS_LAYER)['circle-color'] = stopCircleColor(band)
-      expect(spec.validateStyleMin(switched).map((e) => e.message)).toEqual([])
+      for (const mode of ['before', 'after', 'diff'] as const) {
+        const switched = structuredClone(style)
+        const paintOf = (id: string) => (switched.layers.find((l) => l.id === id) as { paint: Record<string, unknown> }).paint
+        paintOf(CELLS_LAYER)['fill-color'] = cellFillColor(band, mode)
+        paintOf(CELLS_LAYER)['fill-opacity'] = cellFillOpacity(band, mode)
+        paintOf(STOPS_LAYER)['circle-color'] = stopCircleColor(band)
+        expect(spec.validateStyleMin(switched).map((e) => e.message)).toEqual([])
+      }
     }
   })
 
@@ -267,5 +331,25 @@ describe.skipIf(!STYLE_SPEC || !existsSync(STYLE_SPEC))('MapLibre のスタイ�
     const none = spec.createExpression(cellFillOpacity(-1), spec.latest.paint_fill['fill-opacity'])
     if (none.result !== 'success') throw new Error('式を作れません')
     expect(none.value.evaluate({ zoom: 10 }, { type: 'Polygon', properties: { m: 2 ** 18 - 1 } })).toBe(REACH_FILL_OPACITY)
+  })
+
+  it("MapLibre の式の評価で、'diff' の4つの場合を m0 と m から塗り分ける", async () => {
+    const spec = await loadSpec()
+    const color = spec.createExpression(cellFillColor(1, 'diff'), spec.latest.paint_fill['fill-color'])
+    const opacity = spec.createExpression(cellFillOpacity(1, 'diff'), spec.latest.paint_fill['fill-opacity'])
+    if (color.result !== 'success' || opacity.result !== 'success') throw new Error('式を作れません')
+    // 時間帯 1 のビット(2)。前 m0、後 m の組 → 期待する不透明度
+    const cases: [number, number, number][] = [
+      [2, 0, REACH_DIFF_OPACITY.lost],
+      [0, 0, REACH_DIFF_OPACITY.bothUnreachable],
+      [0, 2, REACH_DIFF_OPACITY.gained],
+      [2, 2, REACH_DIFF_OPACITY.bothReachable],
+      // ほかの時間帯のビットは関係しない
+      [2 + 1, 4, REACH_DIFF_OPACITY.lost],
+    ]
+    for (const [m0, m, expected] of cases) {
+      expect(opacity.value.evaluate({ zoom: 10 }, { type: 'Polygon', properties: { m0, m } })).toBe(expected)
+      expect(color.value.evaluate({ zoom: 10 }, { type: 'Polygon', properties: { m0, m } })).toBeTruthy()
+    }
   })
 })

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { REACH_COLORS, REACH_FILL_OPACITY, REACH_FILL_OPACITY_REACHABLE, REGION_COLORS } from './colors'
+import {
+  REACH_COLORS,
+  REACH_DIFF_COLORS,
+  REACH_DIFF_OPACITY,
+  REACH_FILL_OPACITY,
+  REACH_FILL_OPACITY_REACHABLE,
+  REGION_COLORS,
+} from './colors'
 
 // 色覚シミュレーション(Machado, Oliveira, Fernandes, 2009 の重大度 1.0)。線形 RGB に掛ける。
 const SIMULATIONS = {
@@ -85,5 +92,44 @@ describe('到達圏の色', () => {
   it('徒歩圏内は、外れるセルより薄く塗る(見えなくなるほど薄くはしない)', () => {
     expect(REACH_FILL_OPACITY_REACHABLE).toBeGreaterThanOrEqual(0.15)
     expect(REACH_FILL_OPACITY_REACHABLE).toBeLessThan(REACH_FILL_OPACITY)
+  })
+})
+
+/** 白い背景に不透明度 opacity で重ねたときの色(地図の上の見え方に近い) */
+function overWhite(hex: string, opacity: number): string {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  return `#${c.map((v) => Math.round(opacity * v + (1 - opacity) * 255).toString(16).padStart(2, '0')).join('')}`
+}
+
+describe('減便の前後の差の4色', () => {
+  const shown = {
+    lost: overWhite(REACH_DIFF_COLORS.lost, REACH_DIFF_OPACITY.lost),
+    bothUnreachable: overWhite(REACH_DIFF_COLORS.bothUnreachable, REACH_DIFF_OPACITY.bothUnreachable),
+    bothReachable: overWhite(REACH_DIFF_COLORS.bothReachable, REACH_DIFF_OPACITY.bothReachable),
+    gained: overWhite(REACH_DIFF_COLORS.gained, REACH_DIFF_OPACITY.gained),
+  }
+
+  for (const [name, m] of Object.entries(SIMULATIONS)) {
+    it(`「減便で外れた」は、「両方で外れる」「新たに到達」と${name}でも区別できる`, () => {
+      expect(deltaE(shown.lost, shown.bothUnreachable, m)).toBeGreaterThan(25)
+      expect(deltaE(shown.lost, shown.gained, m)).toBeGreaterThan(25)
+    })
+
+    it(`「両方で外れる」は、「新たに到達」「両方で到達」と${name}でも見分けられる`, () => {
+      expect(deltaE(shown.bothUnreachable, shown.gained, m)).toBeGreaterThan(25)
+      expect(deltaE(shown.bothUnreachable, shown.bothReachable, m)).toBeGreaterThan(12)
+    })
+  }
+
+  it('「減便で外れた」は今の外れるセルの色と濃さ、「新たに到達」は「両方で到達」より濃い青', () => {
+    expect(REACH_DIFF_COLORS.lost).toBe(REACH_COLORS.unreachable)
+    expect(REACH_DIFF_OPACITY.lost).toBe(REACH_FILL_OPACITY)
+    expect(REACH_DIFF_COLORS.gained).toBe(REACH_COLORS.reachable)
+    expect(REACH_DIFF_OPACITY.bothReachable).toBe(REACH_FILL_OPACITY_REACHABLE)
+    expect(REACH_DIFF_OPACITY.gained).toBeGreaterThan(REACH_DIFF_OPACITY.bothReachable)
+  })
+
+  it('「両方で外れる」の灰は、地域の区分の灰と同じ色にしない', () => {
+    expect(Object.values(REGION_COLORS)).not.toContain(REACH_DIFF_COLORS.bothUnreachable)
   })
 })

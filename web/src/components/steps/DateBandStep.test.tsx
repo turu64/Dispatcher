@@ -1,7 +1,7 @@
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { makeBands } from '@/gtfs/departures'
-import { BandPicker, ServiceDayInfo } from './DateBandStep'
+import { BandPicker, DateField, ServiceDayInfo } from './DateBandStep'
 
 function textOf(html: string): string {
   return html
@@ -67,5 +67,19 @@ describe('BandPicker', () => {
     const html = renderToString(<BandPicker bands={makeBands(1)} selectedHour={10} onSelect={() => {}} />)
     expect(html.match(/role="radio"/g)).toHaveLength(18)
     expect(html).toMatch(/aria-checked="true"[^>]*>10〜11時</)
+  })
+})
+
+describe('DateField', () => {
+  it('減便後の GTFS が無いときは、運行期間を範囲にする', () => {
+    const html = renderToString(<DateField date="20261104" period={{ start: '20261001', end: '20261130' }} comparing={false} onCommit={() => null} />)
+    expect(html).toMatch(/min="2026-10-01"/)
+    expect(textOf(html)).toContain('運行期間:2026年10月1日(木)〜2026年11月30日(月)')
+  })
+
+  it('減便後の GTFS と比べているときは、出力の有効期間だけを選べると出す', () => {
+    const html = renderToString(<DateField date="20261104" period={{ start: '20261101', end: '20261130' }} comparing onCommit={() => null} />)
+    expect(html).toMatch(/min="2026-11-01"/)
+    expect(textOf(html)).toContain('比べられるのは出力の有効期間(2026年11月1日(日)〜2026年11月30日(月))です')
   })
 })

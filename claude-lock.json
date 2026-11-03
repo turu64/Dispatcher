@@ -9,9 +9,9 @@
     "./agents/coordinator.md": {
       "kind": "agent",
       "id": "agent_013ycyoYo5CcDwC7cyWaZGDP",
-      "version": "2",
-      "hash": "826cafff8b23f3b6a350bdddbccd0897",
-      "remote_hash": "a5b7fe2fcd1d6803de92e7e793bf5c5d"
+      "version": "3",
+      "hash": "17763553e6f2047494c5a393e5f2479d",
+      "remote_hash": "17906987d07eb6e6e735efaf7da8b345"
     },
     "./agents/researcher.md": {
       "kind": "agent",

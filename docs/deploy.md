@@ -206,7 +206,7 @@ ${EDITOR:-nano} .env
 | `DISPATCHER_PUBLIC` | `1`(認証コードなしで公開する) |
 | `DISPATCHER_TOKEN` | 空のまま(認証コードを使うときだけ設定) |
 | `DISPATCHER_AGENT_ID` | `claude-lock.json` の `.resources["./agents/coordinator.md"].id` |
-| `DISPATCHER_AGENT_VERSION` | `2`(`claude-lock.json` の同じ項目の `version`。`ant apply` で上がったら直す) |
+| `DISPATCHER_AGENT_VERSION` | `3`(`claude-lock.json` の同じ項目の `version`。`ant apply` で上がったら直す) |
 | `DISPATCHER_ENVIRONMENT_ID` | `claude-lock.json` の `.resources["./environments/dispatcher.yaml"].id` |
 | `DISPATCHER_SESSION_SECRET` | 32 バイト以上の乱数(下のコマンド) |
 | `ANTHROPIC_WORKSPACE_ID` | 空のまま(ワークスペース単位のキーでは要りません) |
@@ -392,7 +392,7 @@ VPS の上で、コンテナの中から日本語のファイル名が読める�
 cd /srv/dispatcher
 docker compose exec server id                          # uid=10001(dispatcher)
 docker compose exec server ls -l /data/sample /data/ref | head
-docker compose exec server env | grep -E '^DISPATCHER_(PUBLIC|TRUST_PROXY|AGENT_VERSION|DEV)='   # PUBLIC=1・TRUST_PROXY=1・AGENT_VERSION=2 が出て、DEV は出ないこと
+docker compose exec server env | grep -E '^DISPATCHER_(PUBLIC|TRUST_PROXY|AGENT_VERSION|DEV)='   # PUBLIC=1・TRUST_PROXY=1・AGENT_VERSION=3 が出て、DEV は出ないこと
 ```
 
 `env` を全部出さないでください(API キーが画面に出ます)。

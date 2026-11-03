@@ -1,0 +1,9 @@
+{"type":"FeatureCollection","name":"P04-20_01","crs":{"type":"name","properties":{"name":"urn:ogc:def:crs:EPSG::6668"}},"features":[
+{"type":"Feature","properties":{"P04_001":1,"P04_002":"旭川テスト病院","P04_003":"旭川市1条通1丁目","P04_004":"内　外","P04_005":null,"P04_006":null,"P04_007":4,"P04_008":60,"P04_009":1,"P04_010":2},"geometry":{"type":"Point","coordinates":[142.361,43.771]}},
+{"type":"Feature","properties":{"P04_001":2,"P04_002":"東川テスト医院","P04_003":"上川郡東川町北町1丁目","P04_004":"内","P04_005":null,"P04_006":null,"P04_007":null,"P04_008":19,"P04_009":9,"P04_010":9},"geometry":{"type":"Point","coordinates":[142.50,43.70]}},
+{"type":"Feature","properties":{"P04_001":2,"P04_002":"余市テスト医院","P04_003":"余市郡余市町黒川町1丁目","P04_004":"内","P04_005":null,"P04_006":null,"P04_007":null,"P04_008":0,"P04_009":9,"P04_010":9},"geometry":{"type":"Point","coordinates":[140.80,43.19]}},
+{"type":"Feature","properties":{"P04_001":3,"P04_002":"旭川テスト歯科","P04_003":"旭川市4条通4丁目","P04_004":"歯","P04_005":null,"P04_006":null,"P04_007":null,"P04_008":0,"P04_009":9,"P04_010":9},"geometry":{"type":"Point","coordinates":[142.362,43.772]}},
+{"type":"Feature","properties":{"P04_001":2,"P04_002":"札幌テスト内科","P04_003":"札幌市中央区南2条西2丁目","P04_004":"内","P04_005":null,"P04_006":null,"P04_007":null,"P04_008":0,"P04_009":9,"P04_010":9},"geometry":{"type":"Point","coordinates":[141.351,43.061]}},
+{"type":"Feature","properties":{"P04_001":2,"P04_002":"所在地に市が無い医院","P04_003":"谷地頭町27番18号","P04_004":"内","P04_005":null,"P04_006":null,"P04_007":null,"P04_008":0,"P04_009":9,"P04_010":9},"geometry":{"type":"Point","coordinates":[140.72,41.76]}},
+{"type":"Feature","properties":{"P04_001":2,"P04_002":"旭川テスト病院","P04_003":"旭川市１条通１丁目","P04_004":"内","P04_005":null,"P04_006":null,"P04_007":null,"P04_008":0,"P04_009":9,"P04_010":9},"geometry":{"type":"Point","coordinates":[142.361,43.771]}}
+]}

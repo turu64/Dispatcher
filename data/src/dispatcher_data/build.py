@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import facilities
 from .did import DidArea, did_cells, load_did_geojson
 from .estat import PopulationTable, read_population
 from .mesh import mesh_code
@@ -42,6 +43,8 @@ DID_GLOB = "did/**/A16-*_DID.geojson"
 STATION_GLOB = "rail/**/UTF-8/N02-*_Station.geojson"
 
 COORD_DIGITS = 6
+# 調査の対象の参照データを置く、out_dir の下の場所(DISPATCHER_REF_DIR/facilities/{1次メッシュ}.json)
+FACILITIES_DIRNAME = "facilities"
 
 
 class MissingSourceError(Exception):
@@ -68,6 +71,8 @@ class BuildReport:
     # 指定されたが、人口の元データに1行も無かった1次メッシュ(海だけ・範囲外など)。pop250 を空にして書く
     no_population: list[str] = field(default_factory=list)
     files: list[tuple[str, Path, int, dict[str, int]]] = field(default_factory=list)
+    # 調査の対象(事業者・学校・病院・診療所)の参照データ。out_dir/facilities/ に書く。元データが無ければ sources が空
+    facility_report: facilities.FacilityReport | None = None
 
 
 def _latest(paths: list[Path]) -> Path | None:
@@ -194,4 +199,6 @@ def run(
             "stations": len(ref["stations"]),
         }
         report.files.append((mesh1, path, size, counts))
+    # 施設の元データ(school・medical・busstop)は無くてもよい。あるものだけ out_dir/facilities/{1次メッシュ}.json にする
+    report.facility_report = facilities.run(raw, out_dir / FACILITIES_DIRNAME, mesh1_list)
     return report

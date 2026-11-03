@@ -1,7 +1,7 @@
 """Dispatcher のサーバー。
 
 役割は次の4つだけに限る(計算はすべてブラウザで行う)。
-- Claude(Messages API)の中継。APIキーをブラウザに渡さない
+- Claude(Managed Agents のセッション)の中継。APIキーをブラウザに渡さない
 - 利用制限(合言葉と IP アドレスごとの回数)
 - Web 調査結果の使い回し(SQLite)
 - 北海道の参照データとサンプル GTFS(道北バス)の配信

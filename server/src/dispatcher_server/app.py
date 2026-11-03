@@ -1,12 +1,37 @@
+import asyncio
+import contextlib
 import os
 import re
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from starlette.convertors import Convertor, register_url_convertor
 
-app = FastAPI(title="Dispatcher server")
+from . import agent_session
+from .agent_relay import router as agent_router
+from .settings import load_env
+
+# 開発ではリポジトリ直下の .env を読む(既にある環境変数は上書きしない。ファイルが無ければ何もしない)。
+# Claude の中継の設定(API キー・エージェントの ID・合言葉など)は、要求のたびに環境変数から読む
+load_env()
+
+
+@contextlib.asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # セッションの掃除(起動時と 15 分ごと。docs/interfaces-1105.md §4.10)。終わるときに止める
+    task = asyncio.create_task(agent_session.sweep_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(title="Dispatcher server", lifespan=lifespan)
+app.include_router(agent_router)
 
 # リポジトリの最上位(server/src/dispatcher_server/app.py から3つ上)。
 # 開発時(uv の editable インストール)だけ正しい。本番は環境変数で場所を渡す。

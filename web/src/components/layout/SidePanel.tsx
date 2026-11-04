@@ -1,10 +1,11 @@
-import { Loader2 } from 'lucide-react'
+import { Loader2, Sparkles } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import ChatPanel from '@/components/chat/ChatPanel'
 import type { ChatStoreHook } from '@/components/chat/chatStatus'
 import { stepLabel } from '@/components/chat/stepLabel'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useChatStore, type ChatItem } from '@/store/chat'
 import { draftName, useEditStore } from '@/store/edit'
@@ -96,7 +97,7 @@ function ChatAnnouncer({ store, open }: { store: ChatStoreHook; open: boolean })
 
 /**
  * 左の欄。上の端のタブで「編集」(手順の見出し・開いている手順の中身・下の「戻る」「次へ」)と「AI に相談」を切り替える。
- * GTFS を読み込むまではタブを出さず、編集の中身だけを出す。どちらのタブの中身も消さずに隠す
+ * GTFS を読み込む前からタブを出す(「AI に相談」は、読み込むまでは案内と読み込みの手順へのボタンだけ)。どちらのタブの中身も消さずに隠す
  * (入力中の文、会話と手順のスクロールの位置、手順の入力中の値を残すため)。
  * wide は、地図を隠して左の欄を広げている手順か(中身の幅を抑えて中央にそろえる)。
  * chatStore はテストで別の store を渡すためのもの
@@ -105,7 +106,7 @@ export default function SidePanel({ wide, chatStore = useChatStore }: { wide: bo
   const loaded = useEditStore((s) => s.base !== null)
   const pendingDraft = useEditStore((s) => s.draft !== null)
   const selected = useSidePanelStore((s) => s.tab)
-  const tab: SidePanelTab = loaded ? selected : 'edit'
+  const tab: SidePanelTab = selected
   const current = useStepStore((s) => s.current)
 
   // 手順を切り替えたら、左の欄の先頭から見せる
@@ -133,13 +134,13 @@ export default function SidePanel({ wide, chatStore = useChatStore }: { wide: bo
     return () => window.removeEventListener('beforeprint', onBeforePrint)
   }, [])
 
-  // GTFS を読み込むまでは、タブの中身をタブの部品(tabpanel)として名乗らない(タブの列が無いため)
-  const panelProps = loaded ? { tabIndex: -1 } : { role: undefined, 'aria-labelledby': undefined, tabIndex: undefined }
+  // タブの中身(tabpanel)には Tab キーで止まらない(Radix の既定の 0 だと、手順の見出しの前に余分な止まりができるため)
+  const panelProps = { tabIndex: -1 }
 
   return (
     <aside className="flex h-full flex-col bg-muted/30" aria-label="手順と AI に相談">
       <Tabs value={tab} onValueChange={(v) => useSidePanelStore.getState().show(v as SidePanelTab)} className="flex min-h-0 flex-1 flex-col gap-0">
-        <div hidden={!loaded} className="print-hide shrink-0 border-b bg-background px-3 py-2">
+        <div className="print-hide shrink-0 border-b bg-background px-3 py-2">
           {/*
             タブの列の位置は、どちらのタブを開いていても同じにする(押したタブがポインターの下から動かないように)。
             地図を隠す広い手順では、中身(編集は max-w-5xl、会話は max-w-3xl)の幅が違うので、タブの列を中央にそろえる。
@@ -182,9 +183,41 @@ export default function SidePanel({ wide, chatStore = useChatStore }: { wide: bo
         </TabsContent>
 
         <TabsContent value="chat" forceMount hidden={tab !== 'chat'} className="flex min-h-0 flex-1 flex-col bg-background" {...panelProps}>
-          <ChatPanel store={chatStore} active={tab === 'chat'} />
+          {loaded ? <ChatPanel store={chatStore} active={tab === 'chat'} /> : <ChatBeforeLoad />}
         </TabsContent>
       </Tabs>
     </aside>
+  )
+}
+
+/**
+ * GTFS を読み込む前の「AI に相談」のタブ。会話は GTFS の読み込みで始まり、読み込み直しで終わる(docs/interfaces-1105.md)ので、
+ * 読み込むまでは会話の欄を出さず、読み込みの手順へ移るボタンだけを出す
+ */
+function ChatBeforeLoad() {
+  return (
+    <section aria-label="AI に相談" className="print-hide flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4">
+      <div className="mx-auto my-auto flex w-full max-w-md flex-col items-center gap-3 text-center">
+        <span aria-hidden="true" className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/15">
+          <Sparkles className="size-4" />
+        </span>
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium">GTFS を読み込むと、AI に相談できます</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            AI は読み込んだ GTFS をもとに、減便の方針の下書きや、平日に戻す便の候補を出します。
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => {
+            useSidePanelStore.getState().show('edit')
+            useStepStore.getState().go('load')
+          }}
+        >
+          手順「読み込み」を開く
+        </Button>
+      </div>
+    </section>
   )
 }

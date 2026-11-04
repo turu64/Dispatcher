@@ -106,7 +106,7 @@ describe('画面の骨組み', () => {
     expect(useStepStore.getState().order).toEqual(STEP_KEYS)
   })
 
-  it('GTFS を読み込む前は、読み込みより先の手順を開けず、左の欄のタブと「AI に相談」も出さない', () => {
+  it('GTFS を読み込む前は、読み込みより先の手順を開けない。左の欄のタブは出すが、「AI に相談」は案内だけ', () => {
     render(<App />)
     expect(stepButton('1. 読み込み').getAttribute('aria-current')).toBe('step')
     expect(stepButton('3. 減便の方針').disabled).toBe(true)
@@ -117,11 +117,19 @@ describe('画面の骨組み', () => {
     expect(screen.getByRole('heading', { name: '1. GTFS を読み込む' })).toBeTruthy()
     // 方針の手順は描いてあるが隠れている
     expect(screen.queryByRole('heading', { name: '3. 減便の方針' })).toBeNull()
-    expect(screen.queryByRole('region', { name: 'AI に相談' })).toBeNull()
-    expect(screen.queryByRole('tablist', { name: '左の欄の表示' })).toBeNull()
-    expect(screen.queryByRole('tab', { name: '編集' })).toBeNull()
-    // タブの列が無い間は、編集の中身をタブの中身(tabpanel)として名乗らない
-    expect(screen.queryByRole('tabpanel')).toBeNull()
+    expect(screen.queryByRole('log', { name: 'AI との会話', hidden: true })).toBeNull()
+    expect(within(screen.getByRole('tablist', { name: '左の欄の表示' })).getAllByRole('tab').map((t) => t.textContent)).toEqual(['編集', 'AI に相談'])
+    expect(tab('編集').getAttribute('aria-selected')).toBe('true')
+
+    // 「AI に相談」を開くと、会話の欄ではなく案内と、手順「読み込み」を開くボタンが出る
+    fireEvent.mouseDown(tab('AI に相談'))
+    const panel = screen.getByRole('tabpanel', { name: 'AI に相談' })
+    expect(within(panel).getByText('GTFS を読み込むと、AI に相談できます')).toBeTruthy()
+    expect(within(panel).queryByRole('textbox')).toBeNull()
+    fireEvent.click(within(panel).getByRole('button', { name: '手順「読み込み」を開く' }))
+    expect(useSidePanelStore.getState().tab).toBe('edit')
+    expect(useStepStore.getState().current).toBe('load')
+    expect(screen.getByRole('heading', { name: '1. GTFS を読み込む' })).toBeTruthy()
   })
 
   it('読み込んだあとは見出しからどの手順へも移れ、見出しの番号は一覧の並びになる。次へ・戻るでも移る', () => {

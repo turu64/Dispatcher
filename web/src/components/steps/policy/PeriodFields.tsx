@@ -22,36 +22,54 @@ const TARGET_OPTIONS: ReadonlyArray<{ kind: PolicyKind; label: string }> = [
  * 変更するダイヤは今は平日だけ(方針の種類が平日の入れ替えだけのため)。セレクトの形は、変更後のダイヤとそろえて文として読めるようにする。
  * 文の中に置くので、枠(fieldset)は持たない。土曜と日祝が同じ時刻表の案内は、文の下の確認の結果に出す
  */
-export function PolicyKindField({ kind, onChange }: { kind: PolicyKind; onChange: (k: PolicyKind) => void }) {
+export function PolicyKindField({
+  kind,
+  onChange,
+  labels,
+}: {
+  kind: PolicyKind
+  onChange: (k: PolicyKind) => void
+  /**
+   * ダイヤの語の選択肢(確定したグループ分けがあるとき。docs/design-service-groups.md §5.2)。
+   * 「[平日のダイヤ(01001 ほか 8)] を [土曜のダイヤ(03001 ほか 4)] に変更する。」の形にする。省くと「[平日] を [土曜] ダイヤに変更する。」
+   */
+  labels?: { weekday: string; targets: Record<PolicyKind, string> }
+}) {
+  // 選択肢が長い(グループの語)ときは、狭い欄で横にはみ出さないよう、枠の幅を欄に収めて文字を省く
+  const triggerClass = labels ? 'min-w-18 max-w-full [&>span]:truncate' : 'min-w-18'
   return (
     <>
       <Select value="weekday">
-        <SelectTrigger size="sm" aria-label="変更するダイヤ" className="min-w-18">
+        <SelectTrigger size="sm" aria-label="変更するダイヤ" className={triggerClass}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="weekday">平日</SelectItem>
+          <SelectItem value="weekday">{labels ? labels.weekday : '平日'}</SelectItem>
         </SelectContent>
       </Select>
       <span>を</span>
       <Select value={kind} onValueChange={(v) => onChange(v as PolicyKind)}>
-        <SelectTrigger size="sm" aria-label="変更後のダイヤ" className="min-w-18">
+        <SelectTrigger size="sm" aria-label="変更後のダイヤ" className={triggerClass}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {TARGET_OPTIONS.map((o) => (
             <SelectItem key={o.kind} value={o.kind}>
-              {o.label}
+              {labels ? labels.targets[o.kind] : o.label}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
-      {/* 狭い欄で「ダイヤに変更する。」がまとめて次の行に送られて前の行の右が大きく空かないよう、<wbr> で折り返せる所を作る(1つの span にして、間に空きを出さない) */}
-      <span>
-        ダイヤに
-        <wbr />
-        変更する。
-      </span>
+      {labels ? (
+        <span>に変更する。</span>
+      ) : (
+        // 狭い欄で「ダイヤに変更する。」がまとめて次の行に送られて前の行の右が大きく空かないよう、<wbr> で折り返せる所を作る(1つの span にして、間に空きを出さない)
+        <span>
+          ダイヤに
+          <wbr />
+          変更する。
+        </span>
+      )}
     </>
   )
 }

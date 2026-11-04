@@ -2,7 +2,7 @@ import { forEachDay, indexFeedServiceDays, runsOn, dayNumber } from './services'
 import { addDays, isValidGtfsDate } from '../calendar'
 import type { GtfsFeed } from '../load'
 import { stopDiff, type StopChange, type StopDeparture } from './stopDiff'
-import { addBackReasons, type EditRecord, type Form2Plan } from './ops'
+import { addBackReasons, weekdayServicesOf, type EditRecord, type Form2Plan } from './ops'
 import { compareStrings } from './signature'
 import { isOwnOperator, operatorMovementFacts } from '@/ref/facilities'
 import { nearOtherStops, operatorNameOf, OTHER_STOP_RADIUS_M, type OtherStop } from '@/ref/busstops'
@@ -276,26 +276,54 @@ export function schoolTripIdsOf(history: readonly EditRecord[], acceptedAddBack:
   return school
 }
 
+/** pickNoticeDate に渡す版(Form2Result の一部) */
+export interface NoticeDateSource {
+  plan: Pick<Form2Plan, 'weekdayService' | 'replacementService' | 'pairs'>
+  report: { validity: { start: string; end: string }; droppedServices?: readonly { serviceId: string }[] }
+}
+
 /**
- * 掲示の時刻を数える日。方針の期間(新しい有効期間の中)のうち、基準の平日の service が走る最初の日。
- * 形2では、その日は編集後の平日ダイヤ(土曜・日祝の便に入れ替えた便と、足し戻した便)で走る。
+ * 掲示の時刻を数える日(周知文・変更指示書・調査の停留所で同じ日を使う)。方針の期間(新しい有効期間の中)のうち、
+ * 主の組の平日の service が走る日から選ぶ。形2では、その日は編集後の平日ダイヤ(土曜・日祝の便に入れ替えた便と、足し戻した便)で走る。
+ *
+ * 組が複数のときは、主の組が走る日のうち、期間に走る組の平日の service(期間に走らないため除いた組は引く)の
+ * 走り方がいちばん多い日の形(ふつうの平日)を選び、その最初の日にする。迂回の版の service だけが走る特別な日
+ * (京都の 01001_A が運休し 01001_C が走る 11/2 など)を選ばないため。1組のときは主の組が最初に走る日と同じ。
  * 見つからなければ null(期間に平日ダイヤが走る日が無い)
  */
-export function pickNoticeDate(
-  base: GtfsFeed,
-  plan: Pick<Form2Plan, 'weekdayService'>,
-  validity: { start: string; end: string },
-): string | null {
-  const days = indexFeedServiceDays(base).get(plan.weekdayService.trim())
-  if (!days) return null
-  let found: string | null = null
-  forEachDay(validity.start, validity.end, (date, weekday) => {
-    if (runsOn(days, date, weekday)) {
-      found = date
-      return true
-    }
+export function pickNoticeDate(base: GtfsFeed, source: NoticeDateSource): string | null {
+  const index = indexFeedServiceDays(base)
+  const main = source.plan.weekdayService.trim()
+  const mainDays = index.get(main)
+  if (!mainDays) return null
+  const dropped = new Set((source.report.droppedServices ?? []).map((d) => d.serviceId))
+  const others = [...weekdayServicesOf(source.plan)]
+    .filter((id) => id !== main && !dropped.has(id))
+    .sort(compareStrings)
+    .flatMap((id) => {
+      const days = index.get(id)
+      return days ? [{ id, days }] : []
+    })
+  // 走る service の組み合わせごとの、日数と最初の日
+  const patterns = new Map<string, { count: number; first: string }>()
+  const { start, end } = source.report.validity
+  forEachDay(start, end, (date, weekday) => {
+    if (!runsOn(mainDays, date, weekday)) return
+    const key = others
+      .filter((o) => runsOn(o.days, date, weekday))
+      .map((o) => o.id)
+      .join('\u001f')
+    const p = patterns.get(key)
+    if (p) p.count += 1
+    else patterns.set(key, { count: 1, first: date })
+    // 1組のときは最初の日で決まる
+    if (others.length === 0) return true
   })
-  return found
+  let best: { count: number; first: string } | null = null
+  for (const p of patterns.values()) {
+    if (best === null || p.count > best.count || (p.count === best.count && p.first < best.first)) best = p
+  }
+  return best?.first ?? null
 }
 
 // ---- 代替手段 ----

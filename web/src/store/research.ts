@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { fetchDemoResults, type DemoResult, type ResearchResult, type ResearchTarget } from '@/claude/research'
-import { pickNoticeDate } from '@/gtfs/edit/notice'
+import { pickNoticeDate, type NoticeDateSource } from '@/gtfs/edit/notice'
 import { stopDiff } from '@/gtfs/edit/stopDiff'
 import type { Stop } from '@/gtfs/parse'
 import { originStops } from '@/reach/input'
@@ -235,9 +235,9 @@ export interface ReducedStops {
 /** 停留所ごとの前後の発車(stopDiff)から、発車が減る・なくなる停留所を出す。日が決まらなければ null */
 export function reducedStopsOf(
   base: Parameters<typeof stopDiff>[0],
-  version: { feed: Parameters<typeof stopDiff>[1]; plan: { weekdayService: string }; report: { validity: { start: string; end: string } } },
+  version: NoticeDateSource & { feed: Parameters<typeof stopDiff>[1] },
 ): ReducedStops | null {
-  const date = pickNoticeDate(base, version.plan, version.report.validity)
+  const date = pickNoticeDate(base, version)
   if (!date) return null
   const ids = new Set<string>()
   for (const s of stopDiff(base, version.feed, date).stops) if (s.after.count < s.before.count) ids.add(s.stopId)

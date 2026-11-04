@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
 import { facilitiesInUse, useResearchStore } from '@/store/research'
+import { useServiceGroupsStore } from '@/store/serviceGroups'
+import { JEV_FALLBACK_NOTE, JEV_SENT_SCOPE } from '@/components/steps/load/serviceGroupsText'
 import { dataSourceRows, type DataSourceUsage } from './dataSourceRows'
 
 /** 出典の一覧の表示(状態は引数で受ける。画面の部品 DataSources が store から渡す) */
@@ -20,6 +22,29 @@ export function DataSourcesView({ holidays, usage }: { holidays: HolidayState; u
           </li>
         ))}
       </ul>
+      {usage?.jevSent && <JevDestination />}
+    </section>
+  )
+}
+
+/**
+ * 「データの送り先」。ダイヤのグループ分けの確かめで Jev に送ったときだけ出す(docs/design-service-groups.md §5.4)。
+ * 送る中身と送らないもの、Vercel が別の会社に回すことがある点は、読み込みの手順のスイッチの下と同じ文
+ */
+export function JevDestination() {
+  return (
+    <section className="flex flex-col gap-1" aria-labelledby="data-destination-heading">
+      <h3 id="data-destination-heading" className="font-medium">
+        データの送り先
+      </h3>
+      <p>
+        ダイヤのグループ分けの確かめ:TypeSafe AI Jev。Vercel AI Gateway を経由します。AI(Claude)とは別の AI
+        で、service の分け方を確かめるだけに使います。
+      </p>
+      <p className="text-muted-foreground">{JEV_SENT_SCOPE}</p>
+      <p className="text-muted-foreground">
+        {JEV_FALLBACK_NOTE}データの保持は、Vercel と TypeSafe AI の規約によります。
+      </p>
     </section>
   )
 }
@@ -39,5 +64,9 @@ export default function DataSources() {
     if (holidays.status === 'idle') void loadHolidays()
   }, [holidays.status, loadHolidays])
 
-  return <DataSourcesView holidays={holidays} usage={{ facilities }} />
+  // ダイヤのグループ分けで判断材料をサーバーに送ったとき(sending まで進んだとき)だけ、送り先を出す。
+  // 使えるかを確かめている間に止めた・送らない設定だった・使えなかったときは出さない
+  const jevSent = useServiceGroupsStore((s) => s.jev.sent)
+
+  return <DataSourcesView holidays={holidays} usage={{ facilities, jevSent }} />
 }

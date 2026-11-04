@@ -407,7 +407,7 @@ function NoticeBody({
   const [announceNote, setAnnounceNote] = useState('')
   const [stopNotes, setStopNotes] = useState<Record<string, string>>({})
 
-  const date = useMemo(() => pickNoticeDate(base, result.plan, result.report.validity), [base, result])
+  const date = useMemo(() => pickNoticeDate(base, result), [base, result])
   const school = useMemo(() => schoolTripIdsOf(history, result.report.addBack.accepted), [history, result])
   const notices = useMemo<StopNotices | null>(
     () => (date ? buildStopNotices(base, result.feed, date, school) : null),

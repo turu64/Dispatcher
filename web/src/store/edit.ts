@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { feedServicePeriod } from '../gtfs/calendar'
 import { diffWeekdayTrips, type WeekdayDiff } from '../gtfs/edit/diff'
-import { applyForm2, type Form2Outcome, type Form2Result } from '../gtfs/edit/form2'
+import { activeWeekdayServicesOf, applyForm2, type Form2Outcome, type Form2Result } from '../gtfs/edit/form2'
 import { planOf, type EditActor, type EditOp, type EditRecord } from '../gtfs/edit/ops'
 import type { HolidayList } from '../gtfs/holidays'
 import type { GtfsFeed } from '../gtfs/load'
@@ -171,11 +171,15 @@ function sourceOf(feed: GtfsFeed, draft: boolean): EditedSource {
 // 版ごとの平日便の差(方針・足し戻し・出力の画面が同じ版の差を使うので、1回だけ計算する)
 const diffCache = new WeakMap<Form2Result, { base: GtfsFeed; diff: WeekdayDiff }>()
 
-/** 基準と版の平日便の差(diffWeekdayTrips)。同じ版なら計算し直さない */
+/**
+ * 基準と版の平日便の差(diffWeekdayTrips)。同じ版なら計算し直さない。
+ * 平日の側は、すべての組の平日の service から、期間に走らないため組ごと除いた service を引いたもの(activeWeekdayServicesOf)。
+ * 除いた service の便は期間に1日も走らないので、なくなる便・平日に戻す候補に数えない(docs/design-service-groups.md §4.6)
+ */
 export function diffOf(base: GtfsFeed, result: Form2Result): WeekdayDiff {
   const cached = diffCache.get(result)
   if (cached && cached.base === base) return cached.diff
-  const diff = diffWeekdayTrips(base, result.feed, result.plan.weekdayService, result.plan.excludedRoutes)
+  const diff = diffWeekdayTrips(base, result.feed, activeWeekdayServicesOf(result), result.plan.excludedRoutes)
   diffCache.set(result, { base, diff })
   return diff
 }

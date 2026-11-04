@@ -19,6 +19,7 @@ import {
   sameTimetable,
   type ServiceChoice,
 } from '@/gtfs/edit/services'
+import { choicePairs, droppedPairWeekdays, groupedPolicyServices, groupSettings, POLICY_KINDS, sentenceServices, type GroupChoice } from '@/gtfs/groups/view'
 import type { HolidayList } from '@/gtfs/holidays'
 import type { ValidationIssue } from '@/gtfs/validate/edit'
 import { todayInJapan } from '@/lib/dates'
@@ -26,13 +27,16 @@ import { cn } from '@/lib/utils'
 import { setChatToolProviders } from '@/store/chat'
 import { useEditStore, type BaseGtfs } from '@/store/edit'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
+import { useServiceGroupsStore } from '@/store/serviceGroups'
 import { draftActor, proposeAsUser, replaceClaudeDraftMessage } from '../editActions'
 import { InlineConfirm, IssueList, NoteList } from '../editParts'
-import { invalidCalendarNote, REASON_LABELS, REPLACEMENT_LABELS } from '../editText'
+import { diaLabel, invalidCalendarNote, REASON_LABELS, REPLACEMENT_LABELS } from '../editText'
+import { jumpToServiceGroups } from '../stepIds'
 import { ExcludedRoutes } from './DiffTables'
+import { PairList } from './PairList'
 import { EMPTY_HOLE_CLASS, PERIOD_PROBLEM_CODES, PeriodChecks, PeriodHoles, PolicyKindField } from './PeriodFields'
 import { ServiceDetails, ServiceSelect } from './ServiceFields'
-import { routeTripCounts } from './stats'
+import { routeTripCounts, sameGroupTimetable } from './stats'
 import type { ChoiceRole, Override } from './types'
 
 // ---- 方針の入力 ----
@@ -58,6 +62,12 @@ export function PolicyForm({
   const holidays = holidayListOf(holidayState)
   const input = useMemo(() => feedValidity(feed), [feed])
   const services = useMemo(() => describeServices(feed, holidays), [feed, holidays])
+  // 読み込みの手順で確定したダイヤのグループ分け(docs/design-service-groups.md §5.2)。単純な GTFS で1組の形で足りるときは null
+  // (今の service の選び方のまま)。単純でない GTFS で確定していなければ unconfirmed(今の選び方のまま、確定を促す)
+  const groups = useServiceGroupsStore((s) => s.groups)
+  const groupsConfirmed = useServiceGroupsStore((s) => s.confirmed)
+  const grouped = useMemo(() => groupedPolicyServices(groups, groupsConfirmed), [groups, groupsConfirmed])
+  const groupTrips = useMemo(() => new Map((groups?.features.services ?? []).map((f) => [f.serviceId, f.tripCount])), [groups])
 
   const [kind, setKind] = useState<PolicyKind>(initial?.kind ?? 'weekdayToSaturday')
   // 期間の日付は GTFS と同じ 'YYYYMMDD'(まだ決まっていなければ '')
@@ -104,6 +114,11 @@ export function PolicyForm({
   )
 
   const replacementRole: ChoiceRole = kind === 'weekdayToSaturday' ? 'saturday' : 'sundayHoliday'
+  // ダイヤ単位で選ぶとき(グループ分けが確定している)の、この種類の値。作れなければ error
+  const groupChoice = grouped?.status === 'confirmed' ? grouped.byKind[kind] : null
+  const groupMode = groupChoice !== null
+  const groupValue = groupChoice && !('error' in groupChoice) ? groupChoice : null
+  const groupErrors = groupChoice && 'error' in groupChoice ? groupChoice.error : null
   const weekday = overrides.weekday?.value ?? guess?.weekday ?? null
   const saturday = overrides.saturday?.value ?? guess?.saturday ?? null
   const sundayHoliday = overrides.sundayHoliday?.value ?? guess?.sundayHoliday ?? null
@@ -119,19 +134,19 @@ export function PolicyForm({
           weekday: overrides.weekday?.value ?? g?.weekday ?? null,
           saturday: overrides.saturday?.value ?? g?.saturday ?? null,
           sundayHoliday: overrides.sundayHoliday?.value ?? g?.sundayHoliday ?? null,
+          // 確定したグループ分けがあれば、AI のツールもダイヤ単位で減便の方針を作る
+          ...(grouped ? { groups: grouped } : {}),
         }
       },
     })
     return () => setChatToolProviders({ policyServices: null })
-  }, [feed, services, guess, overrides])
+  }, [feed, services, guess, overrides, grouped])
 
-  const settings: PolicySettings | null = useMemo(
-    () =>
-      weekday && replacement && period
-        ? { kind, weekdayService: weekday, replacementService: replacement, period, excludedRoutes: excluded }
-        : null,
-    [kind, weekday, replacement, period, excluded],
-  )
+  const settings: PolicySettings | null = useMemo(() => {
+    if (!period) return null
+    if (groupMode) return groupValue ? groupSettings(groupValue, period, excluded) : null
+    return weekday && replacement ? { kind, weekdayService: weekday, replacementService: replacement, period, excludedRoutes: excluded } : null
+  }, [kind, weekday, replacement, period, excluded, groupMode, groupValue])
   // service がまだ決まらなくても、期間の誤り(badPeriod・emptyValidity)は確かめて期間の欄の下に出す
   // (service が空のままの確かめが出す、service に関する誤りは出さない)
   const allProblems = useMemo(
@@ -149,7 +164,8 @@ export function PolicyForm({
   // 期間の誤りは期間の欄の下に出すので、「方針の確かめ」には重ねて出さない
   const problems = useMemo(() => allProblems.filter((p) => !PERIOD_PROBLEM_CODES.has(p.code)), [allProblems])
   // 平日の service の calendar に日付の正しくない行があって、期間の中で1日も走らないとき、その行は数えていないと添える
-  const weekdayCalendarNote = useMemo(() => (weekday ? invalidCalendarNote(feed, weekday) : null), [feed, weekday])
+  const mainWeekday = groupMode ? (groupValue?.weekdayService ?? null) : weekday
+  const weekdayCalendarNote = useMemo(() => (mainWeekday ? invalidCalendarNote(feed, mainWeekday) : null), [feed, mainWeekday])
   // 土曜と日祝が同じ時刻表かは、入力の GTFS の有効期間で推定した service で決める。期間で推定した guess は期間がそろうまで
   // 無いので、それに頼ると期間を選ぶ途中(1回目と2回目の押下の間)で案内が出たり消えたりして、下のカレンダーが上下に動く
   const inputGuess: ServiceChoice | null = useMemo(
@@ -157,13 +173,33 @@ export function PolicyForm({
     [feed, services, input],
   )
   const sameSatSun = useMemo(() => {
+    if (grouped?.status === 'confirmed') return sameGroupTimetable(feed, grouped.byKind)
     const sat = overrides.saturday?.value ?? inputGuess?.saturday ?? null
     const sun = overrides.sundayHoliday?.value ?? inputGuess?.sundayHoliday ?? null
     return sat && sun && sat !== sun ? sameTimetable(feed, sat, sun) : false
-  }, [feed, overrides.saturday, overrides.sundayHoliday, inputGuess])
-  const routeStats = useMemo(() => routeTripCounts(feed, weekday, replacement), [feed, weekday, replacement])
+  }, [feed, overrides.saturday, overrides.sundayHoliday, inputGuess, grouped])
+  // 期間に走らないため組ごと除く平日の service(方針の種類ごと)。承認の前から、組の内訳・文・系統の便数で数えない
+  const droppedByKind = useMemo(() => {
+    const of = (k: PolicyKind) => {
+      const c = grouped?.status === 'confirmed' ? grouped.byKind[k] : null
+      return c && !('error' in c) ? droppedPairWeekdays(feed, c, validity) : new Set<string>()
+    }
+    return { weekdayToSaturday: of('weekdayToSaturday'), weekdayToSundayHoliday: of('weekdayToSundayHoliday') }
+  }, [feed, grouped, validity])
+  const dropped = droppedByKind[kind]
+  const routeStats = useMemo(() => {
+    if (!groupMode) return routeTripCounts(feed, weekday, replacement)
+    if (!groupValue) return []
+    const pairs = choicePairs(groupValue).filter((p) => !dropped.has(p.weekday))
+    return routeTripCounts(
+      feed,
+      pairs.map((p) => p.weekday),
+      pairs.flatMap((p) => p.replacements),
+    )
+  }, [feed, weekday, replacement, groupMode, groupValue, dropped])
   // 入れ替えに使うダイヤの便が無い系統のうち、除外していないもの(入れ替えると全曜日で便がなくなる)
-  const vanishingRoutes = replacement === null ? 0 : routeStats.filter((r) => r.replacement === 0 && !excluded.includes(r.routeId)).length
+  const vanishingRoutes =
+    !groupMode && replacement === null ? 0 : routeStats.filter((r) => r.replacement === 0 && !excluded.includes(r.routeId)).length
   const [routesOpen, setRoutesOpen] = useState(false)
 
   const pick = (role: ChoiceRole, value: string) => {
@@ -174,6 +210,7 @@ export function PolicyForm({
   // service の推定に問題があるとき(推定できない・選んだあとに推定が変わった)は、詳しい設定を開いて選び直してもらう。
   // 期間が決まるまでは推定しないので、問題としない
   const serviceProblem =
+    !groupMode &&
     validity !== null &&
     (weekday === null ||
       replacement === null ||
@@ -244,7 +281,7 @@ export function PolicyForm({
             onIndefiniteChange={setIndefinite}
             holidayState={holidayState}
           />
-          <PolicyKindField kind={kind} onChange={setKind} />
+          <PolicyKindField kind={kind} onChange={setKind} labels={grouped?.status === 'confirmed' ? groupLabels(grouped.byKind, kind, droppedByKind) : undefined} />
         </div>
         {reasonChoice !== null && reasonChoice !== 'other' && (
           <div className="flex flex-col gap-1">
@@ -280,6 +317,37 @@ export function PolicyForm({
         )}
         {sameSatSun && (
           <p className="text-xs text-muted-foreground">この GTFS では土曜と日祝が同じ時刻表のため、どちらに変更しても同じ結果になります。</p>
+        )}
+        {groupValue && sentenceServices(groupValue, dropped).replacements.length === 0 && (
+          <p className="text-xs font-semibold text-amber-900 dark:text-amber-300" data-testid="groups-erase-only">
+            <span aria-hidden="true">! </span>
+            {REPLACEMENT_LABELS[kind]}のダイヤに入れ替える便がないため、{diaLabel('平日', sentenceServices(groupValue, dropped).weekdays)}
+            の便は、期間の間すべてなくなります(土曜・日祝の便には入れ替わりません)。
+          </p>
+        )}
+        {grouped?.status === 'unconfirmed' && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-amber-900 dark:text-amber-300" data-testid="groups-unconfirmed">
+            <p>
+              <span aria-hidden="true">! </span>
+              この GTFS は平日・土曜・日祝のダイヤが複数の service_id に分かれています。読み込みの手順でダイヤのグループ分けを確かめて確定すると、ダイヤ単位で選べます(確定するまでは、下の詳しい設定で選んだ service だけを入れ替えます)。
+            </p>
+            <Button type="button" variant="outline" size="xs" onClick={jumpToServiceGroups}>
+              グループ分けを確かめる
+            </Button>
+          </div>
+        )}
+        {groupErrors && (
+          <div className="flex flex-col items-start gap-1 text-xs text-destructive" data-testid="groups-error">
+            {groupErrors.map((p) => (
+              <p key={p.code}>
+                <span aria-hidden="true">! </span>
+                {p.message}
+              </p>
+            ))}
+            <Button type="button" variant="outline" size="xs" onClick={jumpToServiceGroups}>
+              読み込みの手順の表で直す
+            </Button>
+          </div>
         )}
         {needsDetails && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-amber-900 dark:text-amber-300">
@@ -325,11 +393,29 @@ export function PolicyForm({
         data-testid="policy-details"
       >
         <summary ref={detailsSummaryRef} className="cursor-pointer">
-          詳しい設定(service:{serviceSummary(validity !== null, weekday, replacement, REPLACEMENT_LABELS[kind])}、除外する系統:
+          詳しい設定(
+          {groupMode
+            ? `ダイヤ:${groupSummary(groupValue, dropped)}`
+            : `service:${serviceSummary(validity !== null, weekday, replacement, REPLACEMENT_LABELS[kind])}`}
+          、除外する系統:
           {excluded.length > 0 ? `${excluded.length} 系統` : 'なし'})
         </summary>
         {/* 開いた中身は、文や確認の結果と同じ高さに見えないよう、左の線で1つのまとまりにする */}
         <div className="mt-2 flex min-w-0 flex-col gap-3 border-l pl-3">
+          {groupMode ? (
+            <fieldset className="flex min-w-0 flex-col gap-2" data-testid="policy-groups">
+              <legend className="mb-1 text-sm font-medium">入れ替えるダイヤ(読み込みの手順で確定したグループ分け)</legend>
+              {groupValue ? (
+                <PairList settings={groupValue} tripCounts={groupTrips} dropped={dropped} />
+              ) : (
+                <p className="text-xs text-destructive">このグループ分けでは、{REPLACEMENT_LABELS[kind]}ダイヤに変更できません。</p>
+              )}
+              <Button type="button" variant="outline" size="xs" className="self-start" onClick={jumpToServiceGroups}>
+                読み込みの手順の表で直す
+              </Button>
+              <ServiceDetails feed={feed} services={services} validity={validity} />
+            </fieldset>
+          ) : (
           <fieldset className="flex min-w-0 flex-col gap-2">
             <legend className="mb-1 text-sm font-medium">入れ替える service</legend>
             <ServiceSelect
@@ -353,6 +439,7 @@ export function PolicyForm({
             {guess && guess.notes.length > 0 && <NoteList items={guess.notes} label="推定できなかった理由" />}
             <ServiceDetails feed={feed} services={services} validity={validity} />
           </fieldset>
+          )}
 
           <ExcludedRoutes
             stats={routeStats}
@@ -410,6 +497,40 @@ function reasonOf(choice: ReasonChoice | null, otherText: string, note: string):
   if (choice === null) return { category: null, note: '' }
   if (choice === 'other') return { category: null, note: otherText.trim() }
   return { category: choice, note: note.trim() }
+}
+
+/**
+ * グループの語の選択肢:「平日のダイヤ(01001 ほか 3)」と、種類ごとの「土曜のダイヤ(03001 ほか 3)」。
+ * 対象便の確認・変更指示書の文(groupSentence)と同じ数え方にする:入れ替える組だけを数え、なくす service と
+ * 期間に走らないため除く組は数えない(入れ替える組が無ければ、なくす平日の service)
+ */
+function groupLabels(
+  byKind: Record<PolicyKind, GroupChoice>,
+  kind: PolicyKind,
+  droppedByKind: Record<PolicyKind, ReadonlySet<string>>,
+): { weekday: string; targets: Record<PolicyKind, string> } {
+  const value = (k: PolicyKind) => {
+    const c = byKind[k]
+    return 'error' in c ? null : c
+  }
+  const current = value(kind)
+  const targets = Object.fromEntries(
+    POLICY_KINDS.map((k) => {
+      const v = value(k)
+      return [k, diaLabel(REPLACEMENT_LABELS[k], v ? sentenceServices(v, droppedByKind[k]).replacements : [])]
+    }),
+  ) as Record<PolicyKind, string>
+  return { weekday: diaLabel('平日', current ? sentenceServices(current, droppedByKind[kind]).weekdays : []), targets }
+}
+
+/** 詳しい設定の summary のダイヤの部分:「組 4・なくす 1・残す 2」(期間に走らないため除く組は数えない) */
+function groupSummary(value: Exclude<GroupChoice, { error: unknown }> | null, dropped: ReadonlySet<string>): string {
+  if (!value) return '選べません'
+  const pairs = choicePairs(value).filter((p) => !dropped.has(p.weekday))
+  const replaced = pairs.filter((p) => p.replacements.length > 0).length
+  const erased = pairs.length - replaced
+  const kept = value.keptWeekdayServices?.length ?? 0
+  return [`組 ${replaced}`, ...(erased > 0 ? [`なくす ${erased}`] : []), ...(kept > 0 ? [`残す ${kept}`] : []), ...(dropped.size > 0 ? [`期間に走らない ${dropped.size}`] : [])].join('・')
 }
 
 /** 詳しい設定の summary の service の部分。「平日 WK を土曜 SA に」。期間が決まるまでは推定しないので、その旨を出す */

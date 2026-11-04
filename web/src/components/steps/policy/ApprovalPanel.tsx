@@ -11,6 +11,7 @@ import { FromTo, InlineConfirm, IssueList, NoteList } from '../editParts'
 import {
   ACTOR_LABELS,
   describeRecord,
+  groupSentence,
   periodText,
   POLICY_KIND_LABELS,
   reasonCategoryLabel,
@@ -19,6 +20,7 @@ import {
   UNDO_NOTE,
 } from '../editText'
 import { DiffCounts, Notice47Table, RouteDiffList, StartBandTable } from './DiffTables'
+import { PairList } from './PairList'
 import { totals } from './stats'
 import type { OpDraft } from './types'
 
@@ -75,11 +77,20 @@ export function PolicyReview({ draft, onCommitted }: { draft: OpDraft; onCommitt
   return (
     <section className="flex min-w-0 flex-col gap-3" aria-label="対象便の確認">
       <h3 className="text-sm font-medium">{heading}</h3>
-      <p className="text-xs">
-        {POLICY_KIND_LABELS[op.settings.kind]}。期間 {periodText(op.settings.period.start, op.settings.period.end)}。平日{' '}
-        <span className="font-mono">{op.settings.weekdayService}</span> を <span className="font-mono">{op.settings.replacementService}</span>{' '}
-        の便に入れ替えます。
-      </p>
+      {op.settings.pairs === undefined ? (
+        <p className="text-xs">
+          {POLICY_KIND_LABELS[op.settings.kind]}。期間 {periodText(op.settings.period.start, op.settings.period.end)}。平日{' '}
+          <span className="font-mono">{op.settings.weekdayService}</span> を <span className="font-mono">{op.settings.replacementService}</span>{' '}
+          の便に入れ替えます。
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1 text-xs">
+          <p>
+            {POLICY_KIND_LABELS[op.settings.kind]}。期間 {periodText(op.settings.period.start, op.settings.period.end)}。{groupSentence(op.settings, result.report)}
+          </p>
+          <PairList settings={op.settings} report={result.report} />
+        </div>
+      )}
       <DiffCounts diff={diff} result={result} />
       <RouteDiffList diff={diff} />
       <StartBandTable diff={diff} />
@@ -145,13 +156,22 @@ export function PolicySummary({
           <dt className="inline">期間:</dt>
           <dd className="inline">{periodText(plan.period.start, plan.period.end)}</dd>
         </div>
-        <div>
-          <dt className="inline">service:</dt>
-          <dd className="inline">
-            平日 <span className="font-mono">{plan.weekdayService}</span> ← {REPLACEMENT_LABELS[plan.kind]}{' '}
-            <span className="font-mono">{plan.replacementService}</span>
-          </dd>
-        </div>
+        {plan.pairs === undefined ? (
+          <div>
+            <dt className="inline">service:</dt>
+            <dd className="inline">
+              平日 <span className="font-mono">{plan.weekdayService}</span> ← {REPLACEMENT_LABELS[plan.kind]}{' '}
+              <span className="font-mono">{plan.replacementService}</span>
+            </dd>
+          </div>
+        ) : (
+          <div>
+            <dt>ダイヤ:{groupSentence(plan, version.report)}</dt>
+            <dd>
+              <PairList settings={plan} report={version.report} />
+            </dd>
+          </div>
+        )}
         <div>
           <dt className="inline">除外した系統:</dt>
           <dd className="inline">

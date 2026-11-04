@@ -223,6 +223,13 @@ ${EDITOR:-nano} .env
 | `DISPATCHER_JEV_TARGETS_PER_DAY` | `2000`(全体の1日に Jev に問う service の数) |
 | `DISPATCHER_JEV_COST_CENTS_PER_DAY` | `100`(全体の1日の Jev の額。$1。送る前に見込んだ額を数え、応答の額で直す。並行の数の分だけ超えうる) |
 
+`TYPESAFE_AI_VERCEL_KEY` を書くと、利用者のデータの送り先が Anthropic のほかに1つ増えます(画面の運営情報のページ `#/about` と README にも書いてあります)。
+
+- 送り先:TypeSafe AI Jev(TypeSafe AI)。Vercel AI Gateway(`ai-gateway.vercel.sh`)を経由します。キーは Vercel にだけ送ります
+- 送る時:GTFS を読み込んだあと、ブラウザが自動で1回送ります。service_id の分け方が単純な GTFS(道北バスなど)では送りません。利用者は、手順「読み込み」のファイルを選ぶ欄の上のスイッチで止められ、送っている間も中断でき、得た答えを捨てられます
+- 送る中身:service ごとの集計(service_id、運行日の数と走る日の割合、便数、系統名と系統ごとの便数、行き先、始発と終着の時刻、運行日が 10 日以下の service の日付、事業者名、有効期間)。GTFS のファイル・停留所の位置・時刻表そのものは送りません
+- Vercel は、TypeSafe AI が答えないときに別の会社(試しの応答では DigitalOcean)に回すことがあります(2026-11-04 時点。転送先を TypeSafe AI だけにする指定は確かめていません。`docs/design-service-groups.md` §6.2)。データの保持は Vercel と TypeSafe AI の規約によります
+
 次の変数は書きません。
 
 - `DISPATCHER_DEV`:開発用の緩みです。`compose.yaml` はこの変数をコンテナに渡さないので、`.env` に書いても効きませんが、書かないでください

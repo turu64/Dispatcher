@@ -1,4 +1,5 @@
 import { flushSync } from 'react-dom'
+import { useServiceGroupsStore } from '@/store/serviceGroups'
 import { useSidePanelStore } from '@/store/sidePanel'
 import { useStepStore } from '@/store/steps'
 
@@ -21,6 +22,25 @@ export function jumpToStep(step: JumpStepKey): void {
     useStepStore.getState().go(step)
   })
   const el = document.getElementById(STEP_IDS[step])
+  if (!el) return
+  el.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  el.focus({ preventScroll: true })
+}
+
+/** 読み込みの手順の「ダイヤのグループ分け」の欄の id */
+export const SERVICE_GROUPS_ID = 'service-groups'
+
+/**
+ * 読み込みの手順の「ダイヤのグループ分け」の表へ移る(減便の方針の手順の「読み込みの手順の表で直す」)。
+ * 「編集」のタブにして読み込みの手順を開き、表を開いてから、その欄へスクロールして焦点を置く
+ */
+export function jumpToServiceGroups(): void {
+  flushSync(() => {
+    useSidePanelStore.getState().show('edit')
+    useStepStore.getState().go('load')
+    useServiceGroupsStore.getState().showTable()
+  })
+  const el = document.getElementById(SERVICE_GROUPS_ID)
   if (!el) return
   el.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
   el.focus({ preventScroll: true })

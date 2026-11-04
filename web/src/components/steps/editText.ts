@@ -2,7 +2,8 @@
  * 編集の手順(方針・足し戻し・出力)の画面で使う文言と、表示のための小さな補助。数は gtfs/edit・gtfs/validate が出す。
  */
 import type { ServiceRole } from '@/gtfs/edit/services'
-import type { EditRecord, PolicyKind, PolicyReason } from '@/gtfs/edit/ops'
+import type { EditRecord, PolicyKind, PolicyReason, PolicySettings } from '@/gtfs/edit/ops'
+import { sentenceServices, splitPairs } from '@/gtfs/groups/view'
 import type { Form2Report } from '@/gtfs/edit/form2'
 import type { GtfsFeed } from '@/gtfs/load'
 import { isValidGtfsDate } from '@/gtfs/calendar'
@@ -83,7 +84,48 @@ export function describeRecord(record: EditRecord): string {
   return `平日に戻す操作の取り消し:${op.tripIds.length} 便`
 }
 
-/** 足し戻しの分類(§5.3)ごとの、受け付けなかった理由 */
+/**
+ * service_id の並びを短く書く。1つならそのまま、2つ以上なら「01001 ほか 8」(先頭とほかの数)、無ければ「なし」
+ */
+export function serviceIdsText(ids: readonly string[]): string {
+  if (ids.length === 0) return 'なし'
+  return ids.length === 1 ? ids[0] : `${ids[0]} ほか ${ids.length - 1}`
+}
+
+/** ダイヤの語の選択肢・見出し:「平日のダイヤ(01001 ほか 8)」「土曜のダイヤ(03001 ほか 4)」 */
+export function diaLabel(day: string, ids: readonly string[]): string {
+  return ids.length === 0 ? `${day}のダイヤ` : `${day}のダイヤ(${serviceIdsText(ids)})`
+}
+
+/**
+ * 組の表のある減便の方針の1文:「平日のダイヤ(01001 ほか 8)を土曜のダイヤ(03001 ほか 4)の便に入れ替えます。」。
+ * なくす service・残す service があれば「なくす service 1 つ・平日のまま残す service 2 つ」を添える。
+ * report を渡すと、期間に走らないため組ごと除いた平日の service を数えない
+ */
+export function groupSentence(
+  settings: Pick<PolicySettings, 'kind' | 'weekdayService' | 'replacementService' | 'pairs' | 'keptWeekdayServices'>,
+  report?: Pick<Form2Report, 'pairs'> | null,
+  /** 承認の前に、期間に走らないため除くと分かっている平日の service(droppedPairWeekdays) */
+  droppedBefore?: ReadonlySet<string>,
+): string {
+  // 版の report があれば、期間に走らないため組ごと除いた平日の service は数えない(組の内訳の「除いた組」に出す)
+  const dropped = new Set([...(droppedBefore ?? []), ...(report?.pairs ?? []).filter((p) => p.dropped).map((p) => p.weekday)])
+  const { replaced, erased } = sentenceServices(settings, dropped)
+  const kept = splitPairs(settings).kept
+  const label = REPLACEMENT_LABELS[settings.kind]
+  if (replaced.length === 0) {
+    const head = `${diaLabel('平日', erased)}は、入れ替えに使う${label}のダイヤがないため、期間の間なくします。`
+    return kept.length > 0 ? `${head}平日のまま残す service が ${kept.length} つあります。` : head
+  }
+  const head = `${diaLabel('平日', replaced.map((p) => p.weekday))}を${diaLabel(label, replaced.flatMap((p) => p.replacements))}の便に入れ替えます。`
+  const extra = [
+    ...(erased.length > 0 ? [`期間の間、便をなくす service ${erased.length} つ`] : []),
+    ...(kept.length > 0 ? [`平日のまま残す service ${kept.length} つ`] : []),
+  ]
+  return extra.length > 0 ? `${head}ほかに、${extra.join('・')}があります。` : head
+}
+
+/** 足し戻しの分類(§5.3、docs/design-service-groups.md §4.5)ごとの、受け付けなかった理由 */
 export function addBackRejections(
   report: Form2Report['addBack'],
   kind: PolicyKind,
@@ -92,7 +134,15 @@ export function addBackRejections(
   return [
     ...report.duplicate.map((tripId) => ({ tripId, reason: '同じ便を2回選んでいます(2回目は数えません)。' })),
     ...report.notFound.map((tripId) => ({ tripId, reason: '減便前の GTFS にこの便がありません。' })),
+    ...(report.alreadyKept ?? []).map((tripId) => ({
+      tripId,
+      reason: 'グループ分けで平日のまま残す service の便のため、期間の間も平日ダイヤで走ります(平日に戻す必要がありません)。',
+    })),
     ...report.notWeekday.map((tripId) => ({ tripId, reason: '平日ダイヤの便ではありません。' })),
+    ...(report.notActive ?? []).map((tripId) => ({
+      tripId,
+      reason: 'この便の service は減便の期間に1日も走らないため、出力の GTFS に入りません(平日に戻せません)。',
+    })),
     ...report.ignoredExcludedRoute.map((tripId) => ({
       tripId,
       reason: '入れ替えから外した系統の便のため、平日ダイヤのまま残っています。',

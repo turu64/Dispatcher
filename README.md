@@ -40,9 +40,22 @@
   - 調査役(`agents/researcher.md`):Haiku 5.5(`claude-haiku-5-5`)。事業者・施設を1つずつ、Web 検索と Web の読み込みで調べます。多数の対象は、調整役が並行に調べさせます
 - **6つのツール**:減便の方針の適用(`apply_policy`)、便を平日に戻す操作(`add_back_trips`)、元に戻す(`undo_edit`)、影響の要約(`summarize_impact`)、便の検索(`search_trips`)、検証(`run_validation`)。ツールはブラウザで実行し、結果をサーバー経由で Claude に返します。定義の正は `server/src/dispatcher_server/claude_tools.json` です
 - **数字はコードが出し、Claude は解釈と説明を受け持ちます**。Claude は GTFS を直接書き換えません。編集の操作を下書きとして出し、画面で差分を確かめてから承認すると、ブラウザのコードが適用します。書き換えるたびに検証します
-- GTFS のファイルは、Claude にもサーバーにも送りません。Claude に送るのは、利用者の文とツールの結果(便の要約や件数)だけで、サーバーのログに残すのは日時・回数・エラーだけです
+- GTFS のファイルは、Claude にもサーバーにも送りません。Claude に送るのは、利用者の文とツールの結果(便の要約・件数、検索した便の系統名・停留所名・時刻、調べる施設の名前と位置)だけで、サーバーのログに残すのは日時・回数・エラーだけです
 - 調査の結果は、公開情報だけを SQLite に一定時間保存して使い回します
 - 認証コードなしで公開するため、費用は次の上限で守ります。IP アドレスごとの回数制限、1セッション 3 ドル、全体で1日 6 ドル、Console のワークスペースの月の上限(200 ドル)
+
+### 使っている AI と送るデータ
+
+| AI | 役割 | 送り先 | 送るもの | 送る時 |
+| --- | --- | --- | --- | --- |
+| Claude(Anthropic) | 会話、減便の方針の下書き、平日に戻す理由、前提情報の調査 | Anthropic(Managed Agents のセッション) | 利用者の文と、ブラウザが計算したツールの結果(便の要約・件数、検索した便の系統名・停留所名・時刻、調べる施設の名前と位置) | 「AI に相談」で送ったとき・調査を始めたとき |
+| TypeSafe AI Jev(TypeSafe AI) | ダイヤのグループ分け(service_id を平日・土曜・日祝のダイヤにまとめる)の確かめだけ | Vercel AI Gateway を経由して TypeSafe AI | service ごとの集計(service_id、運行日の数と走る日の割合、便数、系統名と系統ごとの便数、行き先、始発と終着の時刻、運行日が 10 日以下の service の日付、事業者名、有効期間) | GTFS を読み込んだあと自動で1回(単純な GTFS では送らない) |
+
+- Jev は Claude 以外の AI です。数字と規則の案はコードが出し、Jev は規則で決まらない service の分け方を確かめるだけに使います。答えは画面の表に印つきで出し、利用者が確かめて確定します。設計は `docs/design-service-groups.md`
+- Jev に送るのを止めるスイッチは、手順「読み込み」のファイルを選ぶ欄の上にあります。送っている間も中断でき、得た答えを捨てられます。「送った情報を見る」で、サーバーが実際に送った本文を確かめられます
+- GTFS のファイル・停留所の位置・時刻表そのものは、どちらの AI にも送りません
+- Vercel は、TypeSafe AI が答えないときに別の会社(DigitalOcean)に回すことがあります(2026-11-04 時点)。データの保持は、Vercel と TypeSafe AI の規約によります
+- サーバーのキー `TYPESAFE_AI_VERCEL_KEY` が無ければ Jev は使わず、規則だけで分けます(ほかの機能はそのまま動きます)
 
 ### 開発での Claude Code
 
@@ -68,6 +81,10 @@ cp .env.example .env
 | `DISPATCHER_AGENT_ID`・`DISPATCHER_AGENT_VERSION`・`DISPATCHER_ENVIRONMENT_ID` | `ant apply` で作った調整役と実行環境の ID と版 |
 | `DISPATCHER_SESSION_SECRET` | セッションの取っ手に署名する秘密(32 バイト以上の乱数)。本番では必須です |
 | `DISPATCHER_DEV` | 手元の開発では `1`(行頭の `#` を外す)。認証コードと署名の秘密が無くても AI を使えます |
+| `TYPESAFE_AI_VERCEL_KEY` | ダイヤのグループ分けを TypeSafe AI Jev で確かめるときの、Vercel AI Gateway のキー。無ければ規則だけで分けます |
+| `DISPATCHER_JEV_PER_IP_HOUR`・`DISPATCHER_JEV_PER_IP_DAY` | IP アドレスごとの、Jev に問う回数の上限(1時間 6・1日 20。GTFS の読み込み1回が1回) |
+| `DISPATCHER_JEV_TARGETS_PER_DAY`・`DISPATCHER_JEV_COST_CENTS_PER_DAY` | 全体の1日の、Jev に問う service の数(2,000)と額(100 セント)の上限 |
+| `DISPATCHER_JEV_URL`・`DISPATCHER_JEV_MODEL` | Jev の口とモデルの名前。既定(`https://ai-gateway.vercel.sh/v4/ai/evaluation-model`・`typesafe-ai/jev`)のままにします |
 
 エージェントと実行環境は、自分のワークスペースに作ります。
 

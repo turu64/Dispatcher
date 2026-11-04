@@ -4,17 +4,18 @@ import { Button } from '@/components/ui/button'
 import { createTripBriefer, NOTICE47_BANDS, restoreTotals, type TripBrief } from '@/gtfs/edit/diff'
 import { feedVersionProblem, type Form2Result } from '@/gtfs/edit/form2'
 import { addBackReasons, policyReasonOf, type EditRecord } from '@/gtfs/edit/ops'
-import { forEachDay, indexFeedServiceDays, runsOn } from '@/gtfs/edit/services'
 import { stopDiff, type StopDiffResult } from '@/gtfs/edit/stopDiff'
-import { movementSummary } from '@/gtfs/edit/notice'
+import { movementSummary, pickNoticeDate } from '@/gtfs/edit/notice'
 import { form2Texts } from '@/gtfs/validate/edit'
 import { formatDateJa, todayInJapan } from '@/lib/dates'
 import { diffOf, draftName, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
 import { useResearchStore } from '@/store/research'
 import { checkedAtText } from '@/claude/research'
+import { PairList } from '@/components/steps/policy/PairList'
 import MovementQuoteView from './MovementQuote'
 import { PRINT_COLS, splitParts } from './printColumns'
 import {
+  groupSentence,
   periodText,
   POLICY_KIND_LABELS,
   reasonCategoryLabel,
@@ -55,20 +56,12 @@ function approvedAtText(iso: string): string {
 const ACTOR_TEXT = { user: '利用者が作成して承認', claude: 'AI(Claude)の下書きを利用者が承認' } as const
 
 /**
- * 掲示を差し替える停留所の件数を数える日。減便の期間の中で、基準の平日の service が最初に走る日。
+ * 掲示を差し替える停留所の件数を数える日。減便の期間の中の、ふつうの平日(周知文と同じ pickNoticeDate)。
  * 比べる日を影響(到達圏)の手順の日付に任せると、土日を選んだままのときに「差し替え 0 件」になるため、変更指示書は平日で数える。
  * 見つからなければ null
  */
 function weekdayComparisonDate(base: BaseGtfs, version: Form2Result): string | null {
-  const days = indexFeedServiceDays(base.feed).get(version.plan.weekdayService.trim())
-  let found: string | null = null
-  forEachDay(version.report.validity.start, version.report.validity.end, (date, weekday) => {
-    if (runsOn(days, date, weekday)) {
-      found = date
-      return true
-    }
-  })
-  return found
+  return pickNoticeDate(base.feed, version)
 }
 
 /** 一覧を前半と後半の2つに分ける(limit 件以下なら分けない)。印刷で左右に並べて1枚に収めるため */
@@ -273,9 +266,16 @@ function Sheet({
               (出力する GTFS の有効期間 {formatDateJa(report.validity.start)}〜{formatDateJa(report.validity.end)}、{report.validity.days} 日)
             </span>
           </Field>
-          <Field label="入れ替える service">
-            平日 {plan.weekdayService} → {REPLACEMENT_LABELS[plan.kind]} {plan.replacementService}
-          </Field>
+          {plan.pairs === undefined ? (
+            <Field label="入れ替える service">
+              平日 {plan.weekdayService} → {REPLACEMENT_LABELS[plan.kind]} {plan.replacementService}
+            </Field>
+          ) : (
+            <Field label="入れ替えるダイヤ" wide>
+              {groupSentence(plan, report)}
+              <PairList settings={plan} report={report} className="flex flex-col gap-0.5" />
+            </Field>
+          )}
           <Field label="除外した系統">{excluded.length > 0 ? excluded.join('、') : 'なし'}</Field>
           <Field label="平日の便数">
             {weekdayBefore} → {weekdayAfter} 便(なくなる便 {diff.removed.length}・加わる便 {diff.added.length}・同じ便 {diff.same.length})

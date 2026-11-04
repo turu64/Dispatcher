@@ -14,8 +14,19 @@ import { addBackRejections, describeRecord } from '@/components/steps/editText'
 import { activeServiceIds, isValidGtfsDate } from '@/gtfs/calendar'
 import { createTripBriefer, restoreTotals, type TripBrief, type WeekdayDiff } from '@/gtfs/edit/diff'
 import { formatMinutes, type FacilityWindow } from '@/gtfs/edit/facilityHours'
-import type { Form2Result } from '@/gtfs/edit/form2'
-import { checkPolicy, planOf, type AddBackItem, type EditOp, type PolicyKind, type PolicyReason, type PolicySettings } from '@/gtfs/edit/ops'
+import { activeWeekdayServicesOf, type Form2Result } from '@/gtfs/edit/form2'
+import {
+  checkPolicy,
+  keptServicesOf,
+  planOf,
+  weekdayServicesOf,
+  type AddBackItem,
+  type EditOp,
+  type PolicyKind,
+  type PolicyReason,
+  type PolicySettings,
+} from '@/gtfs/edit/ops'
+import { choicePairs, groupSettings, POLICY_KINDS, splitPairs, type GroupedPolicyServices } from '@/gtfs/groups/view'
 import {
   compareByHints,
   createRestoreHinter,
@@ -123,6 +134,12 @@ export interface PolicyServices {
   weekday: string | null
   saturday: string | null
   sundayHoliday: string | null
+  /**
+   * 読み込みの手順のダイヤのグループ分け(docs/design-service-groups.md §5.3)。confirmed なら apply_policy は
+   * その組の表で減便の方針を作り、weekday などは使わない。unconfirmed なら weekday などで作り、結果に未確定と書く。
+   * 省く(単純な GTFS で1組の形で足りる、まだ計算していない)なら今のまま
+   */
+  groups?: GroupedPolicyServices
 }
 
 /** summarize_impact が読む、到達圏の store の状態(useReachStore.getState() をそのまま渡せる) */
@@ -442,6 +459,11 @@ function trimmed(v: string | undefined): string {
   return v === undefined ? '' : v.trim()
 }
 
+/** service の集合に入る便の trip_id */
+function tripIdsOfServices(feed: GtfsFeed, services: ReadonlySet<string>): Set<string> {
+  return new Set((feed.tables.get('trips')?.rows ?? []).filter((t) => services.has(trimmed(t.service_id))).map((t) => trimmed(t.trip_id)))
+}
+
 function hoursText(minutes: number): string {
   return `${Math.floor(minutes / 60)}時間${minutes % 60}分`
 }
@@ -479,6 +501,18 @@ function draftSummary(diff: WeekdayDiff, result: Form2Result, issues: readonly V
     vanishing_routes: diff.byRoute.filter((r) => r.vanishes).map((r) => ({ route_id: r.routeId, name: r.routeName })),
     warnings: issueMessages(issues, 'warning'),
     errors: issueMessages(issues, 'error'),
+    // 組が複数あるとき(グループ分けの組の表)だけ、組ごとのなくなる便・加わる便と、期間に走らないため組ごと除いた組を書く
+    ...(result.report.pairs
+      ? {
+          pairs: result.report.pairs.map((p) => ({
+            weekday: p.weekday,
+            replacements: p.replacements.map((r) => r.serviceId),
+            removed: p.removed,
+            added: p.replacements.reduce((n, r) => n + r.added, 0),
+            dropped_for_period: p.dropped,
+          })),
+        }
+      : {}),
   }
 }
 
@@ -599,9 +633,16 @@ function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
   const input0 = feedValidity(base.feed)
   const validity = input0 ? (policyValidity(input0, { start, end }) ?? input0) : null
   const services = deps.policyServices(validity ? { start: validity.start, end: validity.end } : null)
-  const weekday = services?.weekday ?? null
-  const replacement = (kind === 'weekdayToSaturday' ? services?.saturday : services?.sundayHoliday) ?? null
-  if (!weekday || !replacement) return fail(NO_SERVICES)
+  const grouped = services?.groups
+  const groupChoice = grouped?.status === 'confirmed' ? grouped.byKind[kind] : null
+  if (groupChoice && 'error' in groupChoice) {
+    return fail(
+      `読み込みの手順で確定したダイヤのグループ分けでは、この減便の方針を作れません。${groupChoice.error.map((p) => p.message).join(' ')} 利用者に、手順「読み込み」のダイヤのグループ分けの表で直すよう伝えてください。下書きは作っていません。`,
+    )
+  }
+  const weekday = groupChoice ? groupChoice.weekdayService : (services?.weekday ?? null)
+  const replacement = groupChoice ? groupChoice.replacementService : ((kind === 'weekdayToSaturday' ? services?.saturday : services?.sundayHoliday) ?? null)
+  if (!groupChoice && (!weekday || !replacement)) return fail(NO_SERVICES)
 
   // 系統の指定は、決まった規則で route_id に読み替える。決まらないものがあれば、誤った下書きを作らずに返す
   const routeRefs = resolveRouteRefs(base.feed, excluded)
@@ -612,19 +653,16 @@ function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
   }
   const excludedIds = [...new Set(routeRefs.resolved.map((r) => r.route_id))]
 
-  const settings: PolicySettings = {
-    kind,
-    weekdayService: weekday,
-    replacementService: replacement,
-    period: { start, end },
-    excludedRoutes: excludedIds,
-  }
+  const settings: PolicySettings = groupChoice
+    ? groupSettings(groupChoice, { start, end }, excludedIds)
+    : { kind, weekdayService: weekday!, replacementService: replacement!, period: { start, end }, excludedRoutes: excludedIds }
+  const servicesJson = { weekday, replacement, ...(groupChoice ? { groups: groupsJson(settings) } : {}) }
   // 適用できない方針は下書きにしない(承認できない下書きが残ると、次の編集ができなくなるため)
   const problems = checkPolicy(base.feed, settings)
   const errors = problems.filter((p) => p.severity === 'error')
   if (errors.length > 0) {
     return fail(`この減便の方針は適用できません。${errors.map((p) => p.message).join(' ')}`, {
-      services: { weekday, replacement },
+      services: servicesJson,
     })
   }
 
@@ -632,10 +670,24 @@ function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
   const proposed = state.propose(op, 'claude')
   if (!proposed.ok) return fail(proposed.message)
   return draftResult(base.feed, proposed.draft, {
-    services: { weekday, replacement },
+    services: servicesJson,
+    ...(grouped?.status === 'unconfirmed' ? { groups_note: groupsUnconfirmedNote(weekday!) } : {}),
     // どの指定をどの系統と読んだか(利用者が「系統51」と言ったときなどに、Claude が確かめて伝えるため)
     excluded_routes: routeRefs.resolved,
   })
+}
+
+/**
+ * apply_policy の結果の services.groups(docs/design-service-groups.md §5.3)。pairs は入れ替える組(主の組が先頭)、
+ * erased は入れ替えに使うダイヤがないため期間の間便をなくす平日の service、kept は平日のまま残す平日の service
+ */
+function groupsJson(settings: PolicySettings): { pairs: { weekday: string; replacements: string[] }[]; kept: string[]; erased: string[] } {
+  const { replaced, erased, kept } = splitPairs(settings)
+  return { pairs: replaced.map((p) => ({ weekday: p.weekday, replacements: [...p.replacements] })), kept, erased }
+}
+
+function groupsUnconfirmedNote(weekday: string): string {
+  return `ダイヤのグループ分けが確定していないため、平日の service ${weekday} だけを入れ替える下書きにしました。ほかの平日の service の便は平日のまま残ります。ダイヤ単位で入れ替えるには、利用者に手順「読み込み」でダイヤのグループ分けを確定してもらい、apply_policy を使い直してください。`
 }
 
 /** 編集の下書き(kind 'op')の結果 */
@@ -694,15 +746,22 @@ function addBackTrips(input: unknown, deps: ToolDeps): ToolOutcome {
   const plan = planOf(state.history)
   if (!plan) return fail(NO_POLICY)
 
-  // 基準の平日の便(feed が base)の trip_id だけを受け付ける
-  const weekdayIds = new Set(
-    (base.feed.tables.get('trips')?.rows ?? []).filter((t) => trimmed(t.service_id) === plan.weekdayService.trim()).map((t) => trimmed(t.trip_id)),
-  )
+  // 基準の平日の便(feed が base。すべての組の平日の service の便)の trip_id だけを受け付ける
+  const weekdayIds = tripIdsOfServices(base.feed, weekdayServicesOf(plan))
   const invalid = items.filter((i) => !weekdayIds.has(i.tripId)).map((i) => i.tripId)
   if (invalid.length > 0) {
-    return fail(
-      `減便前の GTFS(feed が base)の平日の便ではない trip_id があります(${invalid.join('、')})。search_trips の scope removed か base_weekday で、feed が base の便の trip_id を使ってください。下書きは作っていません。`,
-    )
+    // グループ分けで平日のまま残す service の便は、戻す必要がない(期間の間も平日ダイヤで走る)
+    const keptIds = tripIdsOfServices(base.feed, new Set(keptServicesOf(plan)))
+    const kept = invalid.filter((id) => keptIds.has(id))
+    const other = invalid.filter((id) => !keptIds.has(id))
+    // 残す service の便と、それ以外の便を分けて書く(残す便を「平日の便ではない」と言わないため)
+    const keptText =
+      kept.length > 0 ? `${kept.join('、')} は、グループ分けで平日のまま残す service の便です。期間の間も平日ダイヤで走るため、平日に戻す必要がありません。` : ''
+    const otherText =
+      other.length > 0
+        ? `減便前の GTFS(feed が base)の平日の便ではない trip_id があります(${other.join('、')})。search_trips の scope removed か base_weekday で、feed が base の便の trip_id を使ってください。`
+        : ''
+    return fail(`${keptText}${otherText}下書きは作っていません。`)
   }
 
   const before = new Set(lastVersion(state)?.report.addBack.accepted ?? [])
@@ -957,14 +1016,25 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
     const accepted = new Set(result!.report.addBack.accepted)
     trips = baseTrips.filter((t) => accepted.has(trimmed(t.trip_id))).map(briefBase).sort(byTime)
   } else {
-    let weekday = plan?.weekdayService ?? null
-    if (weekday === null) {
+    // 減便の方針があれば、そのすべての組の平日の service(期間に走らないため組ごと除いた service は除く)。
+    // 無ければ、確定したグループ分けの平日の service(土曜・日祝のどちらかで組になるもの)、それも無ければ画面の平日の service
+    let weekdays: Set<string> | null = result ? activeWeekdayServicesOf(result) : null
+    if (weekdays === null) {
       const input0 = feedValidity(base.feed)
-      weekday = deps.policyServices(input0)?.weekday ?? null
+      const ps = deps.policyServices(input0)
+      if (ps?.groups?.status === 'confirmed') {
+        const byKind = ps.groups.byKind
+        weekdays = new Set(POLICY_KINDS.flatMap((k) => {
+          const c = byKind[k]
+          return 'error' in c ? [] : choicePairs(c).map((p) => p.weekday)
+        }))
+      } else if (ps?.weekday) {
+        weekdays = new Set([ps.weekday.trim()])
+      }
     }
-    if (!weekday) return fail(NO_SERVICES)
-    const wk = weekday.trim()
-    trips = baseTrips.filter((t) => trimmed(t.service_id) === wk).map(briefBase).sort(byTime)
+    if (!weekdays || weekdays.size === 0) return fail(NO_SERVICES)
+    const wk = weekdays
+    trips = baseTrips.filter((t) => wk.has(trimmed(t.service_id))).map(briefBase).sort(byTime)
   }
 
   // 絞り込みを先に行い、手がかりは残った候補だけに出す

@@ -101,6 +101,11 @@ function CompareBar({ label, same, other, otherKind, scale }: { label: string; s
   )
 }
 
+/** 便数の表示(3桁ごとに区切る。組の内訳と同じ) */
+function num(n: number): string {
+  return n.toLocaleString('ja-JP')
+}
+
 /**
  * 件数(§6 の 1)。先頭に平日の便数の前 → 後を大きく出し、消える・入る・残るの便数を並べる。
  * 全曜日で便がなくなる系統があれば、その名前を目立つ枠で出す(最も重い影響なので見落とさせない)
@@ -122,30 +127,30 @@ export function DiffCounts({ diff, result }: { diff: WeekdayDiff; result: Form2R
       <div className="rounded-md border bg-card px-3 py-2">
         <p className="text-xs text-muted-foreground">平日の便数(減便前 → 減便後)</p>
         <p className="flex flex-wrap items-baseline gap-x-1 tabular-nums">
-          <span className="text-2xl font-semibold">{before}</span>
+          <span className="text-2xl font-semibold">{num(before)}</span>
           <span aria-hidden="true" className="text-lg text-muted-foreground">
             →
           </span>
           <span className="sr-only">から</span>
-          <span className={`text-2xl font-semibold ${delta < 0 ? 'text-destructive' : ''}`}>{after}</span>
+          <span className={`text-2xl font-semibold ${delta < 0 ? 'text-destructive' : ''}`}>{num(after)}</span>
           <span className="text-sm">便</span>
           {delta !== 0 && (
             <span className={`ml-1 text-sm ${delta < 0 ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
               {delta < 0 && <span aria-hidden="true">▼ </span>}
               {delta < 0 ? '−' : '+'}
-              {Math.abs(delta)} 便{percent !== null && `(${percent}%)`}
+              {num(Math.abs(delta))} 便{percent !== null && `(${percent}%)`}
               {delta < 0 && <span className="sr-only">減る</span>}
             </span>
           )}
         </p>
         <p className="mt-1 tabular-nums" aria-label="なくなる便・加わる便・同じ便の内訳">
-          <span className={removed > 0 ? 'font-semibold text-destructive' : undefined}>なくなる便 {removed} 便</span>
+          <span className={removed > 0 ? 'font-semibold text-destructive' : undefined}>なくなる便 {num(removed)} 便</span>
           <span aria-hidden="true">・</span>
-          <span className={added > 0 ? 'font-semibold text-primary' : undefined}>加わる便 {added} 便</span>
+          <span className={added > 0 ? 'font-semibold text-primary' : undefined}>加わる便 {num(added)} 便</span>
           <span aria-hidden="true">・</span>
-          <span>同じ便 {same} 便</span>
+          <span>同じ便 {num(same)} 便</span>
         </p>
-        <div className="mt-1.5 flex flex-col gap-1" role="img" aria-label={`減便前 ${before} 便(同じ便 ${same}・なくなる便 ${removed})、減便後 ${after} 便(同じ便 ${same}・加わる便 ${added})`}>
+        <div className="mt-1.5 flex flex-col gap-1" role="img" aria-label={`減便前 ${num(before)} 便(同じ便 ${num(same)}・なくなる便 ${num(removed)})、減便後 ${num(after)} 便(同じ便 ${num(same)}・加わる便 ${num(added)})`}>
           <CompareBar label="減便前" same={same} other={removed} otherKind="removed" scale={scale} />
           <CompareBar label="減便後" same={same} other={added} otherKind="added" scale={scale} />
         </div>

@@ -1,6 +1,6 @@
 import { isValidGtfsDate } from '../calendar'
-import type { Form2Result } from '../edit/form2'
-import { formatDate, weekdayServicesOf } from '../edit/ops'
+import { activeWeekdayServicesOf, type Form2Result } from '../edit/form2'
+import { formatDate } from '../edit/ops'
 import { compareStrings, sortByStopSequence, stopTimesByTrip, tripSignature } from '../edit/signature'
 import type { GtfsFeed, GtfsRow } from '../load'
 
@@ -398,7 +398,8 @@ const ATTRIBUTE_FIELDS = ['trip_headsign', 'direction_id', 'stop_headsign', 'pic
  * 前後の比較と足し戻しでは同じ便として扱うので、warning で知らせる
  */
 function signatureColumnMismatchIssue(base: GtfsFeed, result: Form2Result): ValidationIssue | null {
-  const weekdays = weekdayServicesOf(result.plan)
+  // 期間に走らないため組ごと除いた service は出力に便が無いので、並べない(activeWeekdayServicesOf)
+  const weekdays = activeWeekdayServicesOf(result)
   const baseGroups = stopTimeGroups(base)
   const bySignature = new Map<string, Record<string, string>[]>()
   for (const t of rowsOf(base, 'trips')) {

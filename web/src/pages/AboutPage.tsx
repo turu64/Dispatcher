@@ -1,6 +1,7 @@
 import { ArrowLeft } from 'lucide-react'
 import type { ReactNode } from 'react'
 import DataSources from '@/components/DataSources'
+import { JEV_FALLBACK_NOTE, JEV_SENT_SCOPE } from '@/components/steps/load/serviceGroupsText'
 
 /** 運営情報のページの場所(ハッシュ)。ルーターの依存は入れず、App.tsx が location.hash を見て出し分ける */
 export const ABOUT_HASH = '#/about'
@@ -48,6 +49,26 @@ export default function AboutPage() {
             読み込んだ GTFS はサーバーに保存しません。読み込み・編集・到達圏の計算・検証は、すべてブラウザの中で行います。数字はプログラムが計算し、AI
             は解釈と説明を受け持ちます。AI は GTFS を直接書き換えず、変更は利用者が確かめて承認します。
           </p>
+        </Section>
+
+        <Section id="about-ai" title="使っている AI とデータの送り先">
+          <p>
+            会話・提案・説明は Anthropic の AI(Claude)が受け持ちます。AI に送るのは、利用者の文と、ブラウザが計算した結果(便の要約・件数、検索した便の系統名・停留所名・時刻、前提情報の調査で調べる施設の名前と位置)です。GTFS のファイルそのものは送りません。
+          </p>
+          <p>
+            ダイヤのグループ分け(service_id を平日・土曜・日祝のダイヤにまとめること)の確かめには、AI(Claude)とは別の AI、TypeSafe AI
+            Jev を使います。
+          </p>
+          <ul className="list-disc pl-5">
+            <li>
+              送り先:Vercel AI Gateway を経由して、TypeSafe AI に渡ります。
+            </li>
+            <li>
+              送る時:GTFS を読み込んだあと、自動で送ります。service_id の分け方が単純な GTFS(道北バスなど)では送りません。手順「読み込み」のファイルを選ぶ欄の上のスイッチで止められます。送っている間も中断でき、得た答えを捨てられます。
+            </li>
+            <li>送るもの:{JEV_SENT_SCOPE}</li>
+            <li>送り先の扱い:{JEV_FALLBACK_NOTE}データの保持は、Vercel と TypeSafe AI の規約によります。</li>
+          </ul>
         </Section>
 
         <Section id="about-hackathon" title="ハッカソンの作品です">

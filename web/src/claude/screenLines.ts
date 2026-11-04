@@ -9,9 +9,10 @@
  * - 「前に送った」の記録はセッションごとに持つ(ScreenLineTracker)。新しいセッションの最初の発言には、[画面の状態] をすべてと、
  *   承認済みの編集の要約を入れる(予算に達して新しく始めたときに、AI が今の状態を前提にできるように)
  */
-import { POLICY_KIND_LABELS } from '@/components/steps/editText'
+import { POLICY_KIND_LABELS, REPLACEMENT_LABELS, serviceIdsText } from '@/components/steps/editText'
 import type { Form2Result } from '@/gtfs/edit/form2'
-import { formatDate, planOf, type EditRecord } from '@/gtfs/edit/ops'
+import { formatDate, planOf, type EditRecord, type PolicyKind } from '@/gtfs/edit/ops'
+import { POLICY_KINDS, splitPairs, type GroupChoice } from '@/gtfs/groups/view'
 import { formatDateJa } from '@/lib/dates'
 import { draftName, type DraftNotice } from '@/store/edit'
 import type { PolicyServices } from './tools'
@@ -39,9 +40,17 @@ export function stateLines(s: ScreenState): { key: string; line: string }[] {
     const v = s.gtfs.validity
     const svc = s.gtfs.services
     const pick = (id: string | null | undefined) => id ?? '未選択'
+    const head = `[画面の状態] 読み込んだ GTFS:${s.gtfs.label}(有効期間 ${v ? `${formatDate(v.start)}〜${formatDate(v.end)}` : '不明'})。`
+    const legacy = `平日の service:${pick(svc?.weekday)}、土曜:${pick(svc?.saturday)}、日祝:${pick(svc?.sundayHoliday)}。`
+    const groups = svc?.groups
     lines.push({
       key: 'gtfs',
-      line: `[画面の状態] 読み込んだ GTFS:${s.gtfs.label}(有効期間 ${v ? `${formatDate(v.start)}〜${formatDate(v.end)}` : '不明'})。平日の service:${pick(svc?.weekday)}、土曜:${pick(svc?.saturday)}、日祝:${pick(svc?.sundayHoliday)}。`,
+      line:
+        groups?.status === 'confirmed'
+          ? `${head}${groupsText(groups.byKind)}`
+          : groups?.status === 'unconfirmed'
+            ? `${head}${legacy}ダイヤのグループ分けは未確定です(手順「読み込み」で確定すると、ダイヤ単位で減便の方針を作れます。確定するまでは平日の service ${pick(svc?.weekday)} だけを入れ替えます)。`
+            : `${head}${legacy}`,
     })
   }
   if (s.reach) {
@@ -51,6 +60,27 @@ export function stateLines(s: ScreenState): { key: string; line: string }[] {
     })
   }
   return lines
+}
+
+/**
+ * 確定したダイヤのグループ分けの文(docs/design-service-groups.md §5.3)。
+ * 「ダイヤのグループ分け(確定):土曜ダイヤに変えるとき、平日のダイヤ 01001 ほか 8 を土曜のダイヤ 03001 ほか 4 に入れ替える
+ * (なくす:01005_MSN、平日のまま残す:01002_RIT ほか 2)。日祝ダイヤに変えるとき、…。」
+ */
+export function groupsText(byKind: Record<PolicyKind, GroupChoice>): string {
+  const parts = POLICY_KINDS.map((kind) => {
+    const label = REPLACEMENT_LABELS[kind]
+    const c = byKind[kind]
+    if ('error' in c) return `${label}ダイヤに変えるときは作れません(${c.error.map((p) => p.message).join(' ')})`
+    const { replaced, erased, kept } = splitPairs(c)
+    const extra = [...(erased.length > 0 ? [`なくす:${serviceIdsText(erased)}`] : []), ...(kept.length > 0 ? [`平日のまま残す:${serviceIdsText(kept)}`] : [])]
+    const main =
+      replaced.length > 0
+        ? `平日のダイヤ ${serviceIdsText(replaced.map((p) => p.weekday))} を${label}のダイヤ ${serviceIdsText(replaced.flatMap((p) => p.replacements))} に入れ替える`
+        : `入れ替える組はなく、平日の便をなくす`
+    return `${label}ダイヤに変えるとき、${main}${extra.length > 0 ? `(${extra.join('、')})` : ''}`
+  })
+  return `ダイヤのグループ分け(確定):${parts.join('。')}。`
 }
 
 /** Claude の下書きの行方の行(docs/interfaces-1104.md §10 の3つの文) */

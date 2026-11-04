@@ -7,12 +7,14 @@ import { byteLength, runTool, toolLabel, type PolicyServices, type ToolDeps, typ
 import { planOf } from '../gtfs/edit/ops'
 import type { RestoreHintContext } from '../gtfs/edit/restore'
 import { describeServices, feedValidity, guessServiceChoice, policyValidity } from '../gtfs/edit/services'
+import { groupedPolicyServices } from '../gtfs/groups/view'
 import type { GtfsFeed } from '../gtfs/load'
 import { todayInJapan } from '../lib/dates'
 import { draftName, japanIso, useEditStore, type DraftNotice } from './edit'
 import { useHolidayStore } from './holidays'
 import { useReachStore } from './reach'
 import { buildRestoreHintContext } from './restoreHintContext'
+import { useServiceGroupsStore } from './serviceGroups'
 
 /**
  * アプリ内の Claude との会話の store(docs/interfaces-1105.md §6)。
@@ -822,6 +824,10 @@ export function defaultPolicyServices(validity: { start: string; end: string } |
     if (plan.kind === 'weekdayToSaturday') out.saturday = plan.replacementService
     else out.sundayHoliday = plan.replacementService
   }
+  // 読み込みの手順のダイヤのグループ分け(確定していれば、AI のツールもダイヤ単位で減便の方針を作る)
+  const sg = useServiceGroupsStore.getState()
+  const grouped = groupedPolicyServices(sg.groups, sg.confirmed)
+  if (grouped) out.groups = grouped
   return out
 }
 

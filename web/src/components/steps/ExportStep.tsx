@@ -7,13 +7,14 @@ import { Label } from '@/components/ui/label'
 import { restoreTotals } from '@/gtfs/edit/diff'
 import HolidayCalendar from '@/components/HolidayCalendar'
 import { addDays } from '@/gtfs/calendar'
-import { applyForm2, applyRevert, defaultFeedVersion, feedVersionProblem, type Form2Result, type RevertOptions } from '@/gtfs/edit/form2'
+import { applyForm2, applyRevert, defaultFeedVersion, feedVersionProblem, type Form2Result } from '@/gtfs/edit/form2'
 import { planOf, type Form2Plan, type PolicyKind } from '@/gtfs/edit/ops'
-import { describeServices, feedValidity, guessServiceChoice } from '@/gtfs/edit/services'
+import { feedValidity } from '@/gtfs/edit/services'
 import type { HolidayList } from '@/gtfs/holidays'
 import { form2Texts, timingNotices, validateEdit, type ValidationIssue } from '@/gtfs/validate/edit'
 import { exportFileName, writeGtfsZip } from '@/gtfs/write'
 import { formatDateJa, todayInJapan } from '@/lib/dates'
+import { revertServices } from './revertServices'
 import { diffOf, draftName, generatedAtOf, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { FromTo, IssueList, NoteList } from './editParts'
@@ -318,16 +319,6 @@ function Attribution({ base, generatedAt }: { base: BaseGtfs; generatedAt: strin
 function defaultRestoreFrom(plan: Form2Plan | null, input: { start: string; end: string }, today: string): string {
   const d = plan?.period.end ? addDays(plan.period.end, 1) : today
   return d < input.start ? input.start : d > input.end ? input.end : d
-}
-
-/**
- * 検証で「平日ダイヤ」として見る service:承認した方針があればその service、無ければ推定した平日の service。
- * 祝日・年末年始の確かめに使うだけで、便の中身は変えない
- */
-function revertServices(base: BaseGtfs, plan: Form2Plan | null, holidays: HolidayList | null, input: { start: string; end: string }): RevertOptions['services'] {
-  if (plan) return { kind: plan.kind, weekdayService: plan.weekdayService, replacementService: plan.replacementService }
-  const weekday = guessServiceChoice(base.feed, describeServices(base.feed, holidays), input).weekday
-  return weekday ? { kind: 'weekdayToSaturday', weekdayService: weekday, replacementService: '' } : undefined
 }
 
 /**

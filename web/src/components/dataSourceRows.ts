@@ -68,6 +68,8 @@ export const FACILITY_SOURCES: readonly DataSourceRow[] = [
 export interface DataSourceUsage {
   /** 前提情報の手順で施設の参照データ(P11・P29・P04)を読み込んだ */
   facilities?: boolean
+  /** ダイヤのグループ分けの確かめで、service ごとの集計を Jev に送った(送っている途中を含む) */
+  jevSent?: boolean
 }
 
 /**

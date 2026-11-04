@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyForm2 } from './form2'
-import { AGENCY, basePlan, CALENDAR, feedOf, ROUTES, rowsOf, smallFeed } from './form2.fixture'
+import { AGENCY, basePlan, CALENDAR, feedOf, multiFeed, multiPlan, ROUTES, rowsOf, smallFeed } from './form2.fixture'
 import type { GtfsFeed } from '../load'
 import {
   alternativesFor,
@@ -165,10 +165,25 @@ describe('pickNoticeDate', () => {
   it('期間の中で、基準の平日 service が走る最初の日(祝日などの運休日を飛ばす)', () => {
     const base = smallFeed()
     // 20261101 は日曜、20261102(月)は平日、20261103(火)は WK の運休
-    expect(pickNoticeDate(base, basePlan(), { start: '20261101', end: '20261130' })).toBe('20261102')
-    expect(pickNoticeDate(base, basePlan(), { start: '20261103', end: '20261130' })).toBe('20261104')
-    expect(pickNoticeDate(base, basePlan(), { start: '20261107', end: '20261108' })).toBeNull()
-    expect(pickNoticeDate(base, { weekdayService: 'NONE' }, { start: '20261101', end: '20261130' })).toBeNull()
+    const at = (plan: ReturnType<typeof basePlan>, start: string, end: string) => ({ plan, report: { validity: { start, end } } })
+    expect(pickNoticeDate(base, at(basePlan(), '20261101', '20261130'))).toBe('20261102')
+    expect(pickNoticeDate(base, at(basePlan(), '20261103', '20261130'))).toBe('20261104')
+    expect(pickNoticeDate(base, at(basePlan(), '20261107', '20261108'))).toBeNull()
+    expect(pickNoticeDate(base, at({ ...basePlan(), weekdayService: 'NONE' }, '20261101', '20261130'))).toBeNull()
+  })
+
+  it('組が複数のときは、主の組が走る日のうち、ふつうの平日の形の最初の日(迂回の版だけが走る特別な日を選ばない)', () => {
+    // multiFeed は京都の形:11/2(月)は 01001_A が運休し、01001_C だけが走る。11/10(火)も 01001_A が運休
+    const feed = multiFeed()
+    const plan = multiPlan({ period: { start: '20261101', end: null } })
+    expect(pickNoticeDate(feed, { plan, report: { validity: { start: '20261101', end: '20261130' } } })).toBe('20261103')
+    // 期間に走らないため除いた組があっても同じ
+    expect(
+      pickNoticeDate(feed, { plan, report: { validity: { start: '20261101', end: '20261130' }, droppedServices: [{ serviceId: '01001_C' }] } }),
+    ).toBe('20261103')
+    // 1組の計画では、主の組が最初に走る日(今までと同じ)
+    const single = multiPlan({ pairs: undefined, keptWeekdayServices: undefined })
+    expect(pickNoticeDate(feed, { plan: single, report: { validity: { start: '20261101', end: '20261130' } } })).toBe('20261102')
   })
 })
 

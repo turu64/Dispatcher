@@ -1,11 +1,11 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import StepSection from '@/components/StepSection'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createTripBriefer, restoreTotals, START_BAND_LABELS, startBandOf, type TripBrief } from '@/gtfs/edit/diff'
-import type { Form2Result } from '@/gtfs/edit/form2'
+import { activeWeekdayServicesOf, type Form2Result } from '@/gtfs/edit/form2'
 import { addBackReasons, planOf, type EditOp, type Form2Plan } from '@/gtfs/edit/ops'
 import {
   createRestoreHinter,
@@ -18,6 +18,7 @@ import {
 import { overlapLongBreaks } from '@/gtfs/edit/facilityHours'
 import { createRouteDirectionTimeline } from '@/gtfs/edit/stopDiff'
 import { activeServiceIds } from '@/gtfs/calendar'
+import { toStops } from '@/gtfs/parse'
 import { formatDateJa } from '@/lib/dates'
 import { diffOf, draftName, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
 import { usePriorityStore } from '@/store/priority'
@@ -40,6 +41,8 @@ import { CandidateGroups } from './restore/CandidateGroups'
 import { compareByTime, compareCandidates, groupCandidates, tripEndpoints, type Candidate } from './restore/grouping'
 import { AiPicks, FacilityEvidence, SelectedTrips } from './restore/PickLists'
 import { TripLine } from './restore/TripLine'
+import { RoundTripPanel } from './restore/RoundTripPanel'
+import { CHECK_LIMITS_NOTE, FacilityAccessPanel } from './restore/FacilityAccessPanel'
 
 /** 到達圏を使う2つの手がかりの名前(「停留所の発車がなくなる」と「到達圏が戻る」) */
 const REACH_PAIR = `「${RESTORE_HINT_LABELS.onlyServiceAtStop}」と「${RESTORE_HINT_LABELS.restoresLostCells}」`
@@ -131,6 +134,18 @@ function facilityTally(candidates: readonly Candidate[], max: number): { list: {
 const MAX_FACILITY_TALLY = 8
 
 /**
+ * 学校・病院に着く便の確認(A09)を出していない理由。施設は到達圏の前後の比較(ctx)の施設を使う
+ * (徒歩圏の距離に到達圏の条件を使うため)。施設を読めていれば null
+ */
+function facilityCheckUnavailable(ctx: RestoreHintContext | null, facilities: FacilityState): string | null {
+  if (ctx?.facilities) return null
+  if (facilities.status === 'loading') return '前提情報の学校・病院を読み込んでいます。読み込むと確かめます。'
+  if (facilities.status === 'error') return '前提情報の学校・病院の参照データを読み込めなかったため、確かめていません。手順「前提情報」で読み込み直せます。'
+  if (facilities.status !== 'ready') return '手順「前提情報」で学校・病院を読み込むと、施設ごとに確かめます。'
+  return '到達圏の前後の比較ができると、学校・病院ごとに確かめます。徒歩圏の距離に、到達圏の条件を使うためです。'
+}
+
+/**
  * 足し戻しの手順(docs/interfaces-1104.md §8)。手順の番号は components/steps/registry.ts の並びで決まるので、文言に番号を書かない。
  * 候補は、基準の平日便のうち、承認済みの編集後に同じ署名の便が無いもの(消える便)。系統・始発の時間帯・停留所名・手がかりで絞り込む。
  * 一覧は系統ごとに折りたたみ(全曜日で便がなくなる系統が先頭)、開くと方向ごとに時刻の順に並べて編集後の最大間隔を添える。
@@ -186,6 +201,26 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       ),
     [reachEdited, reachOrigins, reachComputing, reachError, reachSnapshot, reachRef, version.feed, facilities, researchResults, priorityOrder],
   )
+  // 往復と学校・病院に着く便の確認(A09)は、今の版(承認待ちの下書きがあれば下書きの結果)を減便前と比べる。
+  // 学校・病院は、下書きの間も、到達圏の store が今出している前後の比較の施設を使う(徒歩圏の距離だけを使い、到達圏の結果は使わない)
+  const facilityCtx = useMemo(
+    () =>
+      ctx ??
+      buildRestoreHintContext(
+        { edited: reachEdited, origins: reachOrigins, computing: reachComputing, error: reachError, snapshot: reachSnapshot, ref: reachRef },
+        undefined,
+        { facilities, results: researchResults, order: priorityOrder },
+      ),
+    [ctx, reachEdited, reachOrigins, reachComputing, reachError, reachSnapshot, reachRef, facilities, researchResults, priorityOrder],
+  )
+  // 下書きの結果(元に戻す下書きで基準に戻るなら null)。下書きが無いか、失敗した下書きなら undefined で、承認済みの版を使う
+  const draftResult: Form2Result | null | undefined =
+    draft?.kind === 'op' ? (draft.outcome.ok ? draft.outcome.result : undefined) : draft?.kind === 'undo' ? draft.result : undefined
+  const checkFeed = draftResult === undefined ? version.feed : (draftResult?.feed ?? base.feed)
+  const checkWeekdayResult = draftResult ?? version
+  const checkWeekdays = useMemo(() => activeWeekdayServicesOf(checkWeekdayResult), [checkWeekdayResult])
+  const checkDraftLabel = draftResult !== undefined && draft ? draftName(draft.id) : null
+  const baseStops = useMemo(() => toStops(base.feed).stops, [base.feed])
   const candidates = useMemo<Candidate[]>(() => {
     const hinter = createRestoreHinter(base.feed, version.feed, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
     return diff.removed.map((trip) => ({ trip, detail: hinter(trip, ctx ?? undefined) })).sort(compareCandidates)
@@ -218,6 +253,10 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
   // Claude の下書きを捨ててよいかを確かめている操作(画面の中で確かめる。ブラウザ標準の確認ダイアログは使わない)
   const [pending, setPending] = useState<{ op: EditOp; done: string; draftId: string; from: 'add' | 'withdraw' } | null>(null)
+  // 往復の確認の行から開いた系統(開いたあと、その系統の見出しへ移る)
+  const [focusRequest, setFocusRequest] = useState<{ routeId: string; n: number } | null>(null)
+  const handledFocus = useRef(0)
+  const candidatesRef = useRef<HTMLDivElement>(null)
 
   const routes = useMemo(() => {
     const m = new Map<string, string>()
@@ -259,6 +298,32 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   const groups = groupCandidates(filtered, endpoints, vanishing, editedTimeline)
   // 絞り込んでいる間は、当てはまる便のある系統を開いて出す
   const filtering = route !== '' || band !== '' || query !== '' || activeHint !== ''
+  const candidateRoutes = useMemo(() => new Set(candidates.map((c) => c.trip.routeId)), [candidates])
+
+  /** 往復の確認の行から、その系統の候補のまとまりを開く。絞り込みで隠れている系統なら、絞り込みを外す */
+  function openRoute(routeId: string) {
+    setOpened((o) => (o.includes(routeId) ? o : [...o, routeId]))
+    // なくなる便に判断材料が無いこともあるので、「ほかの便を見る」も開いておく
+    setShowAll((s) => (s.includes(routeId) ? s : [...s, routeId]))
+    if (!groups.some((g) => g.routeId === routeId)) {
+      setRoute('')
+      setBand('')
+      setStopName('')
+      setHint('')
+    }
+    setFocusRequest((r) => ({ routeId, n: (r?.n ?? 0) + 1 }))
+  }
+
+  // 開いた系統の見出し(CandidateGroups の開閉のボタン。aria-controls は並びの番号)へ移る
+  const focusIndex = focusRequest === null ? -1 : groups.findIndex((g) => g.routeId === focusRequest.routeId)
+  useEffect(() => {
+    if (focusRequest === null || handledFocus.current === focusRequest.n) return
+    handledFocus.current = focusRequest.n
+    if (focusIndex < 0) return
+    const button = candidatesRef.current?.querySelector<HTMLElement>(`[aria-controls="restore-route-${focusIndex}"]`)
+    button?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+    button?.focus({ preventScroll: true })
+  }, [focusRequest, focusIndex])
   const candidateById = new Map(candidates.map((c) => [c.trip.tripId, c]))
   const selectedNow = selected.filter((id) => candidateById.has(id))
   const selectedSet = new Set(selectedNow)
@@ -347,6 +412,28 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       </p>
       <AskRestoreButton blocked={policyDraft ? '減便の方針の下書きを承認するか、やめてから聞いてください。' : null} />
       <AiPicks picks={aiPicks} selected={selectedSet} onSelect={select} />
+      <div className="flex flex-col gap-3 rounded-md border px-2 py-1.5" role="group" aria-label="往復と学校・病院の確認">
+        <RoundTripPanel
+          base={base.feed}
+          edited={checkFeed}
+          weekdayServices={checkWeekdays}
+          date={compareDate}
+          draftLabel={checkDraftLabel}
+          openable={candidateRoutes}
+          onOpenRoute={openRoute}
+        />
+        <FacilityAccessPanel
+          base={base.feed}
+          edited={checkFeed}
+          weekdayServices={checkWeekdays}
+          date={compareDate}
+          draftLabel={checkDraftLabel}
+          facilities={facilityCtx?.facilities ?? null}
+          unavailable={facilityCheckUnavailable(facilityCtx, facilities)}
+          stops={baseStops}
+        />
+        <p className="text-xs text-muted-foreground">{CHECK_LIMITS_NOTE}</p>
+      </div>
       <fieldset className="grid grid-cols-2 gap-2" aria-label="候補の絞り込み">
         <div className="flex min-w-0 flex-col gap-1">
           <Label htmlFor="restore-route" className="text-xs">
@@ -405,6 +492,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
           ? `減便後の最大間隔は、比較する日付(${formatDateJa(compareDate)})の、承認済みの減便後の便で数えています。比較する日付は、地図の下の操作盤で変えられます。`
           : '比較する日付が決まると、方向ごとに減便後の最大間隔を出します。比較する日付は、地図の下の操作盤で選べます。'}
       </p>
+      <div ref={candidatesRef} className="flex min-w-0 flex-col">
       <CandidateGroups
         groups={groups}
         isOpen={(id) => filtering || opened.includes(id)}
@@ -418,6 +506,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         onSelect={select}
         aiIds={new Set(aiPicks.map((p) => p.candidate.trip.tripId))}
       />
+      </div>
       {candidates.length > 0 && <p className="text-xs text-muted-foreground">{BAND_HINT_NOTE}</p>}
       {(reachStatus.kind === 'absent' || hintsPresent.includes('onlyServiceAtStop') || hintsPresent.includes('restoresLostCells')) &&
         candidates.length > 0 && <p className="text-xs text-muted-foreground">{reachStatus.text}</p>}

@@ -709,6 +709,110 @@ describe('RestoreStep', () => {
     })
   })
 
+  describe('往復と学校・病院に着く便の確認(A09。指摘18.2・18.3)', () => {
+    /**
+     * smallFeed に、R1 の帰りの方向(市役所 → 駅前)の平日の便 R1_1700_WK を足したフィード。土曜ダイヤには帰りの便が無いので、
+     * 平日を土曜ダイヤにすると、駅前 → 市役所 は朝の便が残るのに帰りの方向の便がなくなる(方向の便がなくなる・帰りの便がない)
+     */
+    function feedWithReturn(): GtfsFeed {
+      const feed = smallFeed()
+      feed.tables.get('trips')!.rows.push(...rowsOf(`
+route_id,service_id,trip_id,trip_headsign,block_id
+R1,WK,R1_1700_WK,駅前,`))
+      feed.tables.get('stop_times')!.rows.push(...rowsOf(`
+trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type
+R1_1700_WK,17:00:00,17:00:00,B,1,0,1
+R1_1700_WK,17:10:00,17:10:00,A,2,1,0`))
+      return feed
+    }
+    const checks = () => screen.getByRole('group', { name: '往復と学校・病院の確認' })
+    const roundTrip = () => screen.getByRole('region', { name: '往復の確認' })
+    const facilityCheck = () => screen.getByRole('region', { name: '学校・病院に着く便の確認' })
+    const problemRows = () => within(screen.getByRole('list', { name: '問題のある方向' })).getAllByRole('listitem')
+
+    it('比較する日付の減便前と承認済みの減便後を、方向ごとに比べ、方向の便がなくなる、帰りの便がないの順に出す。判定しないことを断る', () => {
+      loadFeed(feedWithReturn())
+      act(() => useReachStore.setState({ date: '20261104' }))
+      render(<RestoreStep />)
+      expect(roundTrip().textContent).toContain('2026年11月4日(水)の減便前と減便後を、系統の方向(始発 → 終着)ごとに比べました。')
+      const rows = problemRows()
+      expect(rows[0].textContent).toContain('市役所 → 駅前')
+      expect(rows[0].textContent).toContain('方向の便がなくなる')
+      expect(rows[0].textContent).toContain('便数 1 → 0 便・始発 17:00 → —')
+      // 平日だけの系統 3(駅前 → 学校前 → 市役所)も方向の便がなくなる。逆向きは系統 1 の市役所 → 駅前
+      expect(rows[1].textContent).toMatch(/^3駅前 → 市役所方向の便がなくなる/)
+      expect(rows[2].textContent).toMatch(/^1駅前 → 市役所帰りの便がない/)
+      expect(rows[2].textContent).toContain('帰り(市役所 → 駅前)の15〜21時の便:1 → 0 便')
+      expect(rows).toHaveLength(3)
+      expect(checks().textContent).toContain(
+        '乗車人数・混み具合・鉄道との乗り継ぎの時刻は、データがないため判定していません。窓は始業・受付の時刻からの目安です。',
+      )
+      // 学校・病院を読み込んでいなければ、理由を出す
+      expect(facilityCheck().textContent).toContain('手順「前提情報」で学校・病院を読み込むと、施設ごとに確かめます。')
+    })
+
+    it('行の「候補を開く」で、その系統の候補のまとまりを開く。絞り込みで隠れていれば、絞り込みを外す', () => {
+      loadFeed(feedWithReturn())
+      act(() => useReachStore.setState({ date: '20261104' }))
+      render(<RestoreStep />)
+      const r1 = () => within(candidates()).getByRole('region', { name: '系統 1' })
+      expect(within(r1()).getAllByRole('button')[0].getAttribute('aria-expanded')).toBe('false')
+      // 系統 3 だけに絞り込んでいると、系統 1 は一覧に出ない
+      fireEvent.change(screen.getByLabelText('系統'), { target: { value: 'R3' } })
+      expect(within(candidates()).queryByRole('region', { name: '系統 1' })).toBeNull()
+      fireEvent.click(within(problemRows()[0]).getByRole('button', { name: /系統 1 の平日に戻す候補を開く/ }))
+      expect((screen.getByLabelText('系統') as HTMLSelectElement).value).toBe('')
+      const toggle = within(r1()).getAllByRole('button')[0]
+      expect(toggle.getAttribute('aria-expanded')).toBe('true')
+      expect(document.activeElement).toBe(toggle)
+      expect(r1().textContent).toContain('R1_1700_WK')
+    })
+
+    it('承認待ちの下書きがあれば、下書きの結果と比べる', () => {
+      loadFeed(feedWithReturn())
+      act(() => {
+        useReachStore.setState({ date: '20261104' })
+        useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R1_1700_WK', reason: '', schoolDaysOnly: false }] }, 'claude')
+      })
+      render(<RestoreStep />)
+      const id = useEditStore.getState().draft!.id
+      expect(roundTrip().textContent).toContain(`減便前と減便後(下書き #${id})を`)
+      // 帰りの便を平日に戻す下書きなので、帰りの方向の問題はなくなる
+      expect(screen.getByLabelText('往復の問題の数').textContent).toBe('方向の便がなくなる 1・帰りの便がない 0・終発が早まる 0・始発が遅くなる 0')
+      expect(problemRows().map((r) => r.textContent?.split('便数')[0])).toEqual(['3駅前 → 市役所方向の便がなくなる'])
+    })
+
+    it('比較する日付に平日ダイヤが走らないときは、2つとも確かめていない理由を出す', () => {
+      act(() => useReachStore.setState({ date: '20261107' }))
+      render(<RestoreStep />)
+      expect(roundTrip().textContent).toContain('比較する日付(2026年11月7日(土))は平日ダイヤの運行日ではないため、往復は確かめていません。')
+      expect(facilityCheck().textContent).toContain('比較する日付(2026年11月7日(土))は平日ダイヤの運行日ではないため、学校・病院に着く便は確かめていません。')
+    })
+
+    it('学校・病院を読めていれば、着く便が 0 便になる施設を出す', () => {
+      // 学校前(S9)の近くの高校。S9 に着くのは平日だけの R3_0730_WK(07:40 着)だけなので、平日を土曜ダイヤにすると着く便がなくなる
+      const school: HintFacility = {
+        targetId: 'P29:学校',
+        name: '南高校',
+        kind: 'school',
+        categoryLabel: '高校・特別支援学校',
+        rank: 3,
+        lat: 43.7905,
+        lon: 142.39,
+        radiusM: 400,
+        windows: facilityWindows('school', []),
+        longBreaks: [],
+      }
+      vi.mocked(buildRestoreHintContext).mockReturnValue({ ...FAKE_CTX, facilities: [school] } as RestoreHintContext)
+      act(() => useReachStore.setState({ date: '20261104' }))
+      render(<RestoreStep />)
+      const list = within(facilityCheck()).getByRole('list', { name: '着く便・出る便がなくなる学校・病院' })
+      expect(list.textContent).toContain('南高校')
+      expect(list.textContent).toContain('着く便がなくなる')
+      expect(list.textContent).toContain('着く 7:00〜9:00(既定):1 → 0 便・最も遅く着く時刻 07:40 → —')
+    })
+  })
+
   it('AI に候補を聞くボタン:AI が使えるときだけ押せて、押すと依頼を送る。使えないときは理由を出す', async () => {
     const askRestore = vi.fn(async () => true)
     useChatStore.setState({ status: { state: 'ready', available: false, tokenRequired: false }, askRestore })

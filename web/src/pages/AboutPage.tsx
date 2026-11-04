@@ -64,7 +64,7 @@ export default function AboutPage() {
               送り先:Vercel AI Gateway を経由して、TypeSafe AI に渡ります。
             </li>
             <li>
-              送る時:GTFS を読み込んだあと、自動で送ります。service_id の分け方が単純な GTFS(道北バスなど)では送りません。手順「読み込み」のファイルを選ぶ欄の上のスイッチで止められます。送っている間も中断でき、得た答えを捨てられます。
+              送る時:走る日の規則だけで分けきれない GTFS では、読み込むたびに送るかをダイアログで聞き、「Jev に送る」を押したときだけ送ります。自動では送りません。service_id の分け方が単純な GTFS(道北バスなど)では聞かず、送りません。送っている間も中断でき、得た答えを捨てられます。
             </li>
             <li>送るもの:{JEV_SENT_SCOPE}</li>
             <li>送り先の扱い:{JEV_ROUTING_NOTE}データの保持は、Vercel と TypeSafe AI の規約によります。</li>

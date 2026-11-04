@@ -13,6 +13,7 @@
 import { addBackRejections, describeRecord } from '@/components/steps/editText'
 import { activeServiceIds, isValidGtfsDate } from '@/gtfs/calendar'
 import { createTripBriefer, restoreTotals, type TripBrief, type WeekdayDiff } from '@/gtfs/edit/diff'
+import { facilityAccess, type FacilityAccessEntry, type FacilityAccessWindow } from '@/gtfs/edit/facilityAccess'
 import { formatMinutes, type FacilityWindow } from '@/gtfs/edit/facilityHours'
 import { activeWeekdayServicesOf, type Form2Result } from '@/gtfs/edit/form2'
 import {
@@ -39,14 +40,17 @@ import {
 import {
   compareByHints,
   createRestoreHinter,
+  hintSentence,
   type HintFacility,
   type NearFacility,
   type RestoreHintContext,
   type RestoreHintDetail,
 } from '@/gtfs/edit/restore'
+import { ROUND_TRIP_PROBLEM_LABELS, roundTripCheck, type RoundTripSide, type RoundTripWindow } from '@/gtfs/edit/roundTrip'
 import { feedValidity, policyValidity } from '@/gtfs/edit/services'
 import type { HolidayList } from '@/gtfs/holidays'
 import type { GtfsFeed } from '@/gtfs/load'
+import { toStops } from '@/gtfs/parse'
 import { timingNotices, validateEdit, type ValidationIssue } from '@/gtfs/validate/edit'
 import { formatPercent } from '@/reach/summary'
 import { blockingIssues, diffOf, draftName, lastVersion, type Draft, type EditState } from '@/store/edit'
@@ -214,6 +218,8 @@ const NO_POLICY = '減便の方針が承認されていないため、使えま�
 const NO_EDIT =
   '減便の方針の下書きも承認済みの減便の方針もないため、比較する減便後の GTFS がありません。先に apply_policy を使ってください。'
 const NO_REACH_HINTS = '到達圏の比較がまだないため、到達圏を使う判断材料は出していません。'
+const HINT_TEXTS_NOTE =
+  'hints(判断材料の名前)と hint_texts(hints と同じ並びの文)は、時間帯・停留所・系統の全体のどれについての判断材料かを書いたものです。利用者に説明するときは「唯一の便」とは書かず、hint_texts の言い方を使ってください。band は onlyTripInBand のときの、その系統の始発の時間帯(3時間ごと)の名前と、その系統・時間帯の減便前(before)・減便後(after)の平日の便数です(ほかの判断材料では null)。route_weekday_trips は、その系統の減便前・減便後の平日の便数です(方向は分けていません)。'
 const REACH_BUSY_HINTS = '到達圏の計算が終わらなかったため、到達圏を使う判断材料は出していません。しばらくしてから探し直してください。'
 
 const NO_FACILITY_HINTS_WITHOUT_REACH =
@@ -948,33 +954,204 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
   })
   const zeroStops = snap.zeroStops ?? []
   const result = basis.result
-  return ok(
-    {
-      status: 'ok',
-      ...basisFields(basis),
-      date: snap.date,
-      step_hours: snap.stepHours,
-      coverable_cells: total,
-      coverable_population: Math.round(totalPop),
-      bands,
-      day_lost_cells: snap.comparison.dayLostCells,
-      day_lost_population: Math.round(snap.comparison.dayLostPopulation),
-      zero_service_stops: {
-        count: zeroStops.length,
-        feed_scope_count: zeroStops.filter((z) => z.scope === 'feed').length,
-        top: zeroStops.slice(0, 20).map((z) => ({ stop_id: z.stopId, name: z.name, before_departures: z.beforeDepartures, scope: z.scope })),
-      },
-      zero_service_routes: (snap.zeroRoutes ?? []).map((r) => ({ route_id: r.routeId, name: r.name, before_trips: r.beforeTrips, scope: r.scope })),
-      add_back: result && result.report.addBack.accepted.length > 0 ? totalsJson(state.base.feed, result.report.addBack.accepted) : null,
-      notes: [
-        ...notes,
-        '区画(セル)は 125m 四方です。到達圏から外れる割合の分母は、減便前の GTFS で徒歩圏に停留所・駅がある区画(coverable_cells)です。',
-        '推計人口は令和2年国勢調査のメッシュ人口から推計した値です。',
-        'scope が feed の停留所・系統は、出力のどの日にも便が来ません。day はこの日だけ便がなくなります。',
-      ],
+  // 往復と学校・病院に着く便(A07)は、比較する日付の減便前と、今の減便後(元に戻す下書きで編集がなくなるなら減便前のまま)を比べる
+  const editedFeed = result?.feed ?? state.base.feed
+  const weekdays = result ? activeWeekdayServicesOf(result) : undefined
+  const roundTrip = roundTripJson(roundTripCheck(state.base.feed, editedFeed, snap.date, { weekdayServices: weekdays }))
+  const access = facilityAccessJson(state.base.feed, editedFeed, snap.date, weekdays, deps.hintContext(editedFeed))
+  const body: Record<string, unknown> = {
+    status: 'ok',
+    ...basisFields(basis),
+    date: snap.date,
+    step_hours: snap.stepHours,
+    coverable_cells: total,
+    coverable_population: Math.round(totalPop),
+    bands,
+    day_lost_cells: snap.comparison.dayLostCells,
+    day_lost_population: Math.round(snap.comparison.dayLostPopulation),
+    zero_service_stops: {
+      count: zeroStops.length,
+      feed_scope_count: zeroStops.filter((z) => z.scope === 'feed').length,
+      top: zeroStops.slice(0, 20).map((z) => ({ stop_id: z.stopId, name: z.name, before_departures: z.beforeDepartures, scope: z.scope })),
     },
-    ['zero_service_routes'],
-  )
+    zero_service_routes: (snap.zeroRoutes ?? []).map((r) => ({ route_id: r.routeId, name: r.name, before_trips: r.beforeTrips, scope: r.scope })),
+    add_back: result && result.report.addBack.accepted.length > 0 ? totalsJson(state.base.feed, result.report.addBack.accepted) : null,
+    round_trip: roundTrip,
+    facility_access: access.json,
+    ...(access.unavailable !== null ? { facility_access_unavailable: access.unavailable } : {}),
+    notes: [
+      ...notes,
+      '区画(セル)は 125m 四方です。到達圏から外れる割合の分母は、減便前の GTFS で徒歩圏に停留所・駅がある区画(coverable_cells)です。',
+      '推計人口は令和2年国勢調査のメッシュ人口から推計した値です。',
+      'scope が feed の停留所・系統は、出力のどの日にも便が来ません。day はこの日だけ便がなくなります。',
+      ROUND_TRIP_NOTE,
+      FACILITY_ACCESS_TOOL_NOTE,
+    ],
+  }
+  return ok(fitImpactLists(body), ['zero_service_routes'])
+}
+
+/** summarize_impact の round_trip.problems・facility_access.facilities に入れる件数の上限 */
+export const MAX_IMPACT_ITEMS = 20
+
+const ROUND_TRIP_NOTE =
+  'round_trip は、比較する日付の減便前と減便後を、系統の方向(始発 → 終着の停留所名)ごとに比べた往復の確かめです。problems は、方向の便がなくなる(directionVanishes)・帰りの便がない(noReturn。行きの方向に朝の窓の便があり、逆向きに帰りの窓の便が 0)・終発が早まる(lastEarlier)・始発が遅くなる(firstLater)の順で、上位 20 件まで(省いた数は problems_omitted)。counts は種類ごとの全体の件数です。逆向きが見つからない系統(循環・片道)は no_reverse の数だけで、problems には入りません。'
+
+const FACILITY_ACCESS_TOOL_NOTE =
+  'facility_access は、学校・病院ごとに、徒歩圏の停留所に着く窓の中に着く便と、出る窓の中に出る便を、比較する日付の減便前と減便後で数えたものです。facilities は、着く便か出る便が減便後に 0 便になる施設だけを、重要拠点の優先順位(priority_rank)・距離の順に上位 20 件まで(省いた数は facilities_omitted)。窓の source が research なら調べた結果(basis に読んだ時刻、source_url に出典)、default なら既定の窓です。乗車人数・混み具合・鉄道との乗り継ぎは判定していません。'
+
+function sideJson(s: RoundTripSide): Record<string, unknown> {
+  return { trips: s.trips, first: s.first, last: s.last }
+}
+
+function windowText(w: RoundTripWindow): string {
+  return `${formatMinutes(w.startMin)}〜${formatMinutes(w.endMin)}`
+}
+
+/** summarize_impact の round_trip(A04 の roundTripCheck の結果を、Claude に渡す形にする) */
+function roundTripJson(r: ReturnType<typeof roundTripCheck>): Record<string, unknown> {
+  const top = r.problems.slice(0, MAX_IMPACT_ITEMS)
+  return {
+    date: r.date,
+    empty_reason: r.emptyReason?.message ?? null,
+    windows: { morning: windowText(r.windows.morning), evening: windowText(r.windows.evening), shift_min: r.windows.shiftMin },
+    counts: {
+      direction_vanishes: r.counts.directionVanishes,
+      no_return: r.counts.noReturn,
+      last_earlier: r.counts.lastEarlier,
+      first_later: r.counts.firstLater,
+    },
+    routes: {
+      with_reverse: r.routes.withReverse,
+      same_route: r.routes.sameRoute,
+      other_route: r.routes.otherRoute,
+      no_reverse: r.routes.noReverse,
+      after_only: r.routes.afterOnly,
+    },
+    problems: top.map((p) => ({
+      kind: p.kind,
+      label: ROUND_TRIP_PROBLEM_LABELS[p.kind],
+      route_id: p.routeId,
+      route_name: p.routeName,
+      from: p.fromName,
+      to: p.toName,
+      before: sideJson(p.before),
+      after: sideJson(p.after),
+      ...(p.shiftMin !== null ? { shift_min: p.shiftMin } : {}),
+      ...(p.returnTrips
+        ? { return_trips: { route_ids: p.returnTrips.routeIds, evening_before: p.returnTrips.eveningBefore, evening_after: p.returnTrips.eveningAfter } }
+        : {}),
+    })),
+    problems_omitted: r.problems.length - top.length,
+  }
+}
+
+const FACILITY_PROBLEM_LABELS = { arriveLost: '着く便がなくなる', departLost: '出る便がなくなる' } as const
+
+function accessWindowJson(w: FacilityAccessWindow): Record<string, unknown> {
+  return {
+    window: `${w.from}〜${w.to}`,
+    source: w.source,
+    ...(w.source === 'research' ? { basis: w.basis, source_url: w.url } : {}),
+    before: { trips: w.before.trips, time: w.before.time },
+    after: { trips: w.after.trips, time: w.after.time },
+  }
+}
+
+function accessEntryJson(e: FacilityAccessEntry): Record<string, unknown> {
+  const nearest = e.stops[0]
+  return {
+    target_id: e.targetId,
+    name: e.name,
+    category: e.categoryLabel,
+    priority_rank: e.rank,
+    nearest_stop: nearest?.stopName ?? null,
+    distance_m: e.distanceM,
+    problems: e.problems.map((p) => FACILITY_PROBLEM_LABELS[p]),
+    arrive: accessWindowJson(e.arrive),
+    depart: accessWindowJson(e.depart),
+  }
+}
+
+/**
+ * summarize_impact の facility_access(A05 の facilityAccess の結果)。施設を読めていない・比較する日付に平日ダイヤが走らない
+ * ときは json を null にし、unavailable に理由を書く(「該当なし」と取り違えないように)
+ */
+function facilityAccessJson(
+  base: GtfsFeed,
+  edited: GtfsFeed,
+  date: string,
+  weekdays: ReadonlySet<string> | undefined,
+  ctx: RestoreHintContext | null,
+): { json: Record<string, unknown> | null; unavailable: string | null } {
+  if (!ctx) return { json: null, unavailable: '到達圏の比較と今の減便後の GTFS が合っていないため、学校・病院に着く便は確かめていません(該当がないという意味ではありません)。' }
+  if (!ctx.facilities) {
+    return {
+      json: null,
+      unavailable: '手順2「前提情報」の学校・病院の参照データを読み込めていないため、学校・病院に着く便は確かめていません(該当がないという意味ではありません)。',
+    }
+  }
+  if (weekdays !== undefined) {
+    const active = activeServiceIds(base, date)
+    if (![...weekdays].some((s) => active.has(s.trim()))) {
+      return {
+        json: null,
+        unavailable: `比較する日付 ${slashDate(date)} は平日ダイヤの運行日ではないため、学校・病院に着く便は確かめていません(該当がないという意味ではありません)。利用者に、比較する日付を平日にするよう伝えてください。`,
+      }
+    }
+  }
+  const r = facilityAccess(base, edited, date, ctx.facilities, toStops(base).stops)
+  if (r.reason !== null) return { json: null, unavailable: r.reason }
+  const lost = r.facilities.filter((f) => f.problems.length > 0)
+  const top = lost.slice(0, MAX_IMPACT_ITEMS)
+  return {
+    json: {
+      date: r.date,
+      counts: { arrive_lost: r.counts.arriveLost, depart_lost: r.counts.departLost },
+      facilities_with_stops: r.facilities.length,
+      facilities_without_stops: r.withoutStops.length,
+      facilities: top.map(accessEntryJson),
+      facilities_omitted: lost.length - top.length,
+      note: r.note,
+    },
+    unavailable: null,
+  }
+}
+
+/**
+ * summarize_impact の結果が 20KB を超えるとき、ほかの一覧(zero_service_routes。fitResult が省く)より先に、
+ * facility_access.facilities → round_trip.problems の順に後ろから省き、省いた数を facilities_omitted・problems_omitted に足し、
+ * notes に書く。収まれば省かない
+ */
+export function fitImpactLists(body: Record<string, unknown>): Record<string, unknown> {
+  const over = (o: Record<string, unknown>) => byteLength(JSON.stringify(o)) > MAX_RESULT_BYTES
+  if (!over(body)) return body
+  const copy: Record<string, unknown> = { ...body }
+  const notes = Array.isArray(body.notes) ? [...(body.notes as unknown[])] : []
+  const targets: readonly (readonly [string, string, string])[] = [
+    ['facility_access', 'facilities', 'facilities_omitted'],
+    ['round_trip', 'problems', 'problems_omitted'],
+  ]
+  for (const [key, listKey, omittedKey] of targets) {
+    const parent = copy[key]
+    if (typeof parent !== 'object' || parent === null) continue
+    const original = parent as Record<string, unknown>
+    if (!Array.isArray(original[listKey])) continue
+    const list = [...(original[listKey] as unknown[])]
+    const omitted0 = typeof original[omittedKey] === 'number' ? (original[omittedKey] as number) : 0
+    const message = (cut: number) =>
+      `結果が 20KB を超えたため、${key}.${listKey} の後ろから ${cut} 件を省きました(省いた数は ${omittedKey} に含めています)。`
+    let cut = 0
+    while (list.length > 0 && over(copy)) {
+      list.pop()
+      cut++
+      copy[key] = { ...original, [listKey]: list, [omittedKey]: omitted0 + cut }
+      copy.notes = [...notes, message(cut)]
+    }
+    if (cut > 0) notes.push(message(cut))
+    if (!over(copy)) break
+  }
+  return copy
 }
 
 /** 便の時刻順(時刻の無い便は後ろ)、同じなら系統、trip_id の順 */
@@ -1144,6 +1321,10 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
       stop_names: names.names,
       stop_names_omitted: names.omitted,
       hints: detail?.hints ?? [],
+      // 判断材料の文(hints と同じ並び)。時間帯・停留所・系統の全体のどれについての判断材料かと、数はコードが書く(A07。指摘15.3)
+      hint_texts: detail ? detail.hints.map((h) => hintSentence(h, detail)) : [],
+      band: detail?.band ?? null,
+      route_weekday_trips: detail ? { before: detail.routeTrips.before, after: detail.routeTrips.after } : null,
       lost_cells: detail?.lostCells ?? null,
       nearby_facilities: nearby,
       ...(nearbyOmitted > 0 ? { nearby_facilities_omitted: nearbyOmitted } : {}),
@@ -1152,6 +1333,7 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
   })
   if (scope === 'removed' || scope === 'base_weekday') {
     notes.push('lost_cells は、この便だけを平日に戻したときに到達圏に戻る区画(セル)の数と推計人口です(ほかの便を平日に戻したときとの重なりは考えていません)。')
+    if (details.size > 0) notes.push(HINT_TEXTS_NOTE)
   }
   notes.push('trip_id は feed とあわせて読んでください。加わる便(feed が edited)は、なくなる減便前の便(feed が base)と同じ trip_id のことがあります。')
   const body: Record<string, unknown> = {
@@ -1159,6 +1341,7 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
     scope,
     ...basisFields(basis),
     total: filtered.length,
+    // 20KB に収めるために便を省いたら、省いた後の数に直す(fitTrips)
     returned: list.length,
     omitted_over_limit: filtered.length - list.length,
     ...(resolvedRoutes.length > 0 ? { routes: resolvedRoutes } : {}),
@@ -1167,7 +1350,7 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
     trips: list,
   }
   // 20KB を超えたら、調べた施設の結果を先に後ろから省き(省いた数は facility_research_omitted)、それでも超えれば
-  // fitResult が便を後ろから省く(truncated は便の数だけ)。2つの数を混ぜると、Claude が省いた便の数を読み違えるため分ける
+  // fitTrips が便を後ろから省く(truncated は便の数だけ)。2つの数を混ぜると、Claude が省いた便の数を読み違えるため分ける
   const research = body.facility_research as Record<string, unknown>[] | undefined
   if (research && research.length > 0 && byteLength(JSON.stringify(body)) > MAX_RESULT_BYTES) {
     const kept = [...research]
@@ -1180,7 +1363,33 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
       `結果が 20KB を超えたため、facility_research(調べた施設の結果)の後ろから ${research.length - kept.length} 件を省きました。nearby_facilities の target_id の結果は get_research_results で読めます。`,
     )
   }
-  return ok(body, ['trips'])
+  return { content: fitTrips(body), isError: false }
+}
+
+/**
+ * search_trips の結果を 20KB に収める。超えたら trips を後ろから省き、returned を省いた後の便の数に直し、
+ * 省いた便の数を truncated に書く(returned + truncated + omitted_over_limit = total)。
+ * fitResult に任せると returned が省く前の数のまま残り、Claude が受け取った便の数と続きの位置を読み違えるため、ここで数え直す
+ */
+export function fitTrips(body: Record<string, unknown>): string {
+  let text = JSON.stringify(body)
+  const trips = body.trips
+  if (byteLength(text) <= MAX_RESULT_BYTES || !Array.isArray(trips)) return text
+  const kept = [...trips]
+  while (kept.length > 0) {
+    kept.pop()
+    const cut = trips.length - kept.length
+    const copy: Record<string, unknown> = {
+      ...body,
+      returned: kept.length,
+      truncated: cut,
+      truncated_note: `結果が 20KB を超えたため、trips の後ろから ${cut} 件を省きました。returned(${kept.length})は省いた後に trips に入れた便の数で、省いた ${cut} 件は trips に入っていません。省いた便は、depart_from・route_ids などで条件を絞って探し直してください。`,
+      trips: kept,
+    }
+    text = JSON.stringify(copy)
+    if (byteLength(text) <= MAX_RESULT_BYTES) return text
+  }
+  return text
 }
 
 function issueJson(i: ValidationIssue): Record<string, unknown> {

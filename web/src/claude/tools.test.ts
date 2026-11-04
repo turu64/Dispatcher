@@ -8,8 +8,11 @@ import { DEFAULT_REACH_PARAMS } from '../reach/reach'
 import { createEditStore, type BaseGtfs } from '../store/edit'
 import type { ReachSnapshot } from '../store/reach'
 import {
+  fitImpactLists,
   fitResult,
+  fitTrips,
   INPUT_LIMITS,
+  MAX_IMPACT_ITEMS,
   MAX_RESULT_BYTES,
   resolveRouteRefs,
   runTool,
@@ -440,6 +443,23 @@ describe('結果が 20KB を超えたら切り詰めて件数を書く', () => {
     const body = parse(r.content)
     expect(body.total).toBe(50)
     expect((body.trips as unknown[]).length + Number(body.truncated)).toBe(50)
+    // returned は省いた後の便の数で、returned + truncated + omitted_over_limit が total になる(続きの位置を読み違えないように)
+    expect(body.returned).toBe((body.trips as unknown[]).length)
+    expect(Number(body.returned) + Number(body.truncated) + Number(body.omitted_over_limit)).toBe(body.total)
+    expect(String(body.truncated_note)).toContain(`returned(${String(body.returned)})は省いた後に trips に入れた便の数`)
+  })
+
+  it('search_trips で limit を超えた便と 20KB で省いた便を分けて数える(fitTrips)', () => {
+    const trips = Array.from({ length: 30 }, (_, i) => ({ trip_id: `T${i}`, headsign: 'あ'.repeat(400) }))
+    const text = fitTrips({ status: 'ok', total: 40, returned: 30, omitted_over_limit: 10, notes: [], trips })
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(MAX_RESULT_BYTES)
+    const body = parse(text)
+    const kept = (body.trips as unknown[]).length
+    expect(kept).toBeLessThan(30)
+    expect(body).toMatchObject({ total: 40, returned: kept, omitted_over_limit: 10, truncated: 30 - kept })
+    // 20KB 以下ならそのまま
+    const small = { status: 'ok', total: 1, returned: 1, omitted_over_limit: 0, trips: trips.slice(0, 1) }
+    expect(fitTrips(small)).toBe(JSON.stringify(small))
   })
 })
 
@@ -466,12 +486,76 @@ describe('search_trips', () => {
       stop_names: ['駅前', '学校前', '市役所'],
       stop_names_omitted: 0,
       hints: ['weekdayOnlyRoute', 'routeWouldVanish', 'firstTripOfRoute', 'lastTripOfRoute', 'onlyTripInBand', 'morning'],
+      // 判断材料の文(hints と同じ並び)と、時間帯・系統の便数(A07)
+      hint_texts: [
+        '平日だけの系統です(入れ替えに使うダイヤに、この系統の便がありません。系統の平日 1 便)',
+        '平日に戻さないと、この系統は減便後に全曜日で便がなくなります(系統の平日 1 便)',
+        '系統の平日の始発です(系統の平日 1 便。方向は分けていません)',
+        '系統の平日の終発です(系統の平日 1 便。方向は分けていません)',
+        '6〜9時に、この系統の便が減便後 0 便になります(減便前 1 便)',
+        '始発が朝(6〜9時)の便です',
+      ],
+      band: { label: '6〜9時', before: 1, after: 0 },
+      route_weekday_trips: { before: 1, after: 0 },
       lost_cells: null,
       nearby_facilities: null,
     })
+    // R1 は 6〜9時に土曜の便が加わるので、時間帯の判断材料は付かない(band は null)。系統の平日の便数は前 2 便・後 3 便
+    expect(trips[1]).toMatchObject({ trip_id: 'R1_0800_WK', band: null, route_weekday_trips: { before: 2, after: 3 } })
+    expect((trips[1].hint_texts as string[]).length).toBe((trips[1].hints as string[]).length)
+    // 「唯一の便」とは書かず hint_texts の言い方を使うよう、notes で伝える
+    expect((body.notes as string[]).some((n) => n.includes('「唯一の便」とは書かず、hint_texts の言い方を使ってください'))).toBe(true)
     expect(body.notes).toContain('到達圏の比較がまだないため、到達圏を使う判断材料は出していません。')
     expect((body.notes as string[]).some((n) => n.includes('学校・病院の判断材料(nearFacility・nearby_facilities)も、到達圏の比較ができてから出します'))).toBe(true)
     expect(body).not.toHaveProperty('facility_research')
+  })
+
+  it('同じ系統・同じ時間帯の便がすべてなくなるとき、どの便にも band と hint_texts で前後の便数を書き、「唯一」とは書かない(A07)', async () => {
+    // R1 の平日 3 便(7:00・7:30・8:00)は、土曜の 12:00 の 1 便に入れ替わる
+    const feed = feedOf({
+      agency: rowsOf(AGENCY),
+      routes: rowsOf('route_id,agency_id,route_short_name,route_long_name,route_type\nR1,1,1,駅前線,3'),
+      stops: rowsOf('stop_id,stop_name,stop_lat,stop_lon\nA,駅前,43.76,142.36\nB,市役所,43.77,142.37'),
+      calendar: rowsOf(
+        'service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\nSA,0,0,0,0,0,1,0,20261001,20261130\nWK,1,1,1,1,1,0,0,20261001,20261130',
+      ),
+      trips: rowsOf('route_id,service_id,trip_id,trip_headsign\nR1,SA,SA1200,市役所\nR1,WK,WK0700,市役所\nR1,WK,WK0730,市役所\nR1,WK,WK0800,市役所'),
+      stop_times: rowsOf(`trip_id,arrival_time,departure_time,stop_id,stop_sequence
+SA1200,12:00:00,12:00:00,A,1
+SA1200,12:10:00,12:10:00,B,2
+WK0700,07:00:00,07:00:00,A,1
+WK0700,07:10:00,07:10:00,B,2
+WK0730,07:30:00,07:30:00,A,1
+WK0730,07:40:00,07:40:00,B,2
+WK0800,08:00:00,08:00:00,A,1
+WK0800,08:10:00,08:10:00,B,2`),
+      feed_info: rowsOf(FEED_INFO),
+    })
+    const { store, deps } = setup({}, feed)
+    await withPolicy(deps, store)
+    const body = parse((await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)).content)
+    const trips = body.trips as { trip_id: string; hints: string[]; hint_texts: string[]; band: unknown; route_weekday_trips: unknown }[]
+    expect(trips.map((t) => t.trip_id).sort()).toEqual(['WK0700', 'WK0730', 'WK0800'])
+    for (const t of trips) {
+      expect(t.hints).toContain('onlyTripInBand')
+      expect(t.band).toEqual({ label: '6〜9時', before: 3, after: 0 })
+      expect(t.route_weekday_trips).toEqual({ before: 3, after: 1 })
+      expect(t.hint_texts).toHaveLength(t.hints.length)
+      expect(t.hint_texts[t.hints.indexOf('onlyTripInBand')]).toBe('6〜9時に、この系統の便が減便後 0 便になります(減便前 3 便)')
+      expect(t.hint_texts.some((x) => x.includes('唯一'))).toBe(false)
+    }
+    // 識別子の配列は残す
+    expect(trips.find((t) => t.trip_id === 'WK0700')!.hints).toContain('firstTripOfRoute')
+  })
+
+  it('scope が added のときは判断材料を出さず、hint_texts は空、band・route_weekday_trips は null', async () => {
+    const { store, deps } = setup()
+    await withPolicy(deps, store)
+    const body = parse((await runTool('search_trips', { ...SEARCH, scope: 'added', limit: 50 }, deps)).content)
+    const trips = body.trips as Record<string, unknown>[]
+    expect(trips.length).toBeGreaterThan(0)
+    for (const t of trips) expect(t).toMatchObject({ hints: [], hint_texts: [], band: null, route_weekday_trips: null })
+    expect((body.notes as string[]).some((n) => n.includes('hint_texts'))).toBe(false)
   })
 
   it('到達圏の ctx は比べる編集後のフィードで1回だけ受け取り、あれば「比較が無い」とは書かない', async () => {
@@ -764,7 +848,6 @@ describe('search_trips', () => {
         const r = await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)
         expect(new TextEncoder().encode(r.content).length).toBeLessThanOrEqual(MAX_RESULT_BYTES)
         const body = parse(r.content)
-        expect(body.returned).toBe(50)
         // 調べた施設の結果を先に省く
         expect(body.facility_research).toEqual([])
         expect(body.facility_research_omitted).toBe(3)
@@ -772,6 +855,8 @@ describe('search_trips', () => {
         // 便の省いた数は便だけ(施設の数を足さない)
         const kept = (body.trips as unknown[]).length
         expect(kept).toBeGreaterThan(0)
+        // returned は省いた後に trips に入れた便の数
+        expect(body.returned).toBe(kept)
         expect(kept + Number(body.truncated)).toBe(50)
         expect(String(body.truncated_note)).toContain(`${50 - kept} 件`)
       })
@@ -785,7 +870,6 @@ describe('search_trips', () => {
         const r = await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)
         expect(new TextEncoder().encode(r.content).length).toBeLessThanOrEqual(MAX_RESULT_BYTES)
         const body = parse(r.content)
-        expect(body.returned).toBe(50)
         expect(body.facility_research).toEqual([])
         expect(body).not.toHaveProperty('facility_research_omitted')
         const trips = body.trips as { nearby_facilities: Record<string, unknown>[] }[]
@@ -797,17 +881,19 @@ describe('search_trips', () => {
             expect(new TextEncoder().encode(JSON.stringify(f)).length).toBeLessThan(MAX_NEARBY_BYTES_WITH_WINDOW)
           }
         }
+        expect(body.returned).toBe(trips.length)
         expect(trips.length + Number(body.truncated)).toBe(50)
         expect(String(body.truncated_note)).toContain(`${50 - trips.length} 件`)
       })
 
       it('調べた施設の結果を省くだけで収まれば、便は省かず truncated を書かない', async () => {
-        const { store, deps } = setup({ hintContext: () => ctxWith(researchedSchools) }, manyTripsFeed(5))
+        const { store, deps } = setup({ hintContext: () => ctxWith(researchedSchools) }, manyTripsFeed(2))
         await withPolicy(deps, store)
         const r = await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)
         expect(new TextEncoder().encode(r.content).length).toBeLessThanOrEqual(MAX_RESULT_BYTES)
         const body = parse(r.content)
-        expect((body.trips as unknown[]).length).toBe(5)
+        expect((body.trips as unknown[]).length).toBe(2)
+        expect(body.returned).toBe(2)
         expect(body).not.toHaveProperty('truncated')
         const research = body.facility_research as { target_id: string }[]
         const omitted = Number(body.facility_research_omitted)
@@ -1040,5 +1126,212 @@ describe('summarize_impact', () => {
     const pending = runTool('summarize_impact', { date: '20261112', step_hours: null }, { ...deps, reachTimeoutMs: 60_000 }, ctrl.signal)
     ctrl.abort()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  describe('往復(round_trip)と学校・病院に着く便(facility_access)。A07', () => {
+    /** R1 の平日は 駅前 → 市役所 7:00 と 市役所 → 駅前 17:00 の往復。土曜は 駅前 → 市役所 7:00 だけ(平日の行きと同じ時刻) */
+    function roundTripFeed() {
+      return feedOf({
+        agency: rowsOf(AGENCY),
+        routes: rowsOf('route_id,agency_id,route_short_name,route_long_name,route_type\nR1,1,1,駅前線,3'),
+        stops: rowsOf('stop_id,stop_name,stop_lat,stop_lon\nA,駅前,43.76,142.36\nB,市役所,43.77,142.37\nB2,市役所 ,43.7701,142.3701'),
+        calendar: rowsOf(
+          'service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\nSA,0,0,0,0,0,1,0,20261001,20261130\nWK,1,1,1,1,1,0,0,20261001,20261130',
+        ),
+        trips: rowsOf('route_id,service_id,trip_id,trip_headsign\nR1,SA,SA0700,市役所\nR1,WK,WK0700,市役所\nR1,WK,WK1700,駅前'),
+        stop_times: rowsOf(`trip_id,arrival_time,departure_time,stop_id,stop_sequence
+SA0700,07:00:00,07:00:00,A,1
+SA0700,07:10:00,07:10:00,B,2
+WK0700,07:00:00,07:00:00,A,1
+WK0700,07:10:00,07:10:00,B,2
+WK1700,17:00:00,17:00:00,B2,1
+WK1700,17:10:00,17:10:00,A,2`),
+        feed_info: rowsOf(FEED_INFO),
+      })
+    }
+
+    /** smallFeed の S9 学校前 (43.79, 142.39) の北 約 100m の高校(窓は既定の 7〜9時着・14〜18時発) */
+    const HIGH: HintFacility = {
+      targetId: 'P29:高校',
+      name: '学校前高校',
+      kind: 'school',
+      categoryLabel: '高校・特別支援学校',
+      rank: 3,
+      lat: 43.79 + 100 / 111_000,
+      lon: 142.39,
+      radiusM: 400,
+      windows: defaultFacilityWindows('school'),
+      longBreaks: [],
+    }
+    /** facility_access は ctx の facilities だけを読む */
+    const ctxOf = (facilities?: readonly HintFacility[]) => ({ ...(facilities ? { facilities } : {}) }) as unknown as RestoreHintContext
+
+    it('方向ごとの問題の件数と、上位の問題に系統・方向・前後の始発と終発、逆向きの無い系統の数を返す', async () => {
+      const reach = fakeReach(snapshot)
+      const { store, deps } = setup({ reach: reach.access }, roundTripFeed())
+      await withPolicy(deps, store)
+      const body = parse((await runTool('summarize_impact', { date: null, step_hours: null }, deps)).content)
+      const rt = body.round_trip as Record<string, unknown>
+      expect(rt).toMatchObject({
+        date: '20261110',
+        empty_reason: null,
+        windows: { morning: '6:00〜9:00', evening: '15:00〜21:00', shift_min: 30 },
+        counts: { direction_vanishes: 1, no_return: 1, last_earlier: 0, first_later: 0 },
+        routes: { with_reverse: 1, same_route: 1, other_route: 0, no_reverse: 0, after_only: 0 },
+        problems_omitted: 0,
+      })
+      const problems = rt.problems as Record<string, unknown>[]
+      expect(problems).toEqual([
+        {
+          kind: 'directionVanishes',
+          label: '方向の便がなくなる',
+          route_id: 'R1',
+          route_name: '1',
+          from: '市役所',
+          to: '駅前',
+          before: { trips: 1, first: '17:00', last: '17:00' },
+          after: { trips: 0, first: null, last: null },
+        },
+        {
+          kind: 'noReturn',
+          label: '帰りの便がない',
+          route_id: 'R1',
+          route_name: '1',
+          from: '駅前',
+          to: '市役所',
+          before: { trips: 1, first: '07:00', last: '07:00' },
+          after: { trips: 1, first: '07:00', last: '07:00' },
+          return_trips: { route_ids: ['R1'], evening_before: 1, evening_after: 0 },
+        },
+      ])
+      expect((body.notes as string[]).some((n) => n.startsWith('round_trip は'))).toBe(true)
+    })
+
+    it('逆向きの無い系統は no_reverse の数だけを返す(smallFeed はどの系統も片道)', async () => {
+      const reach = fakeReach(snapshot)
+      const { store, deps } = setup({ reach: reach.access })
+      await withPolicy(deps, store)
+      const rt = parse((await runTool('summarize_impact', { date: null, step_hours: null }, deps)).content).round_trip as Record<string, unknown>
+      expect(rt.problems).toEqual([])
+      expect((rt.routes as Record<string, number>).no_reverse).toBe(3)
+    })
+
+    it('学校・病院ごとに着く便・出る便が 0 便になる施設を、窓・出どころ・前後の便数つきで返す', async () => {
+      const reach = fakeReach(snapshot)
+      const { store, deps } = setup({ reach: reach.access, hintContext: () => ctxOf([HIGH]) })
+      await withPolicy(deps, store)
+      const body = parse((await runTool('summarize_impact', { date: null, step_hours: null }, deps)).content)
+      expect(body).not.toHaveProperty('facility_access_unavailable')
+      // R3 は 07:40 に学校前で降りられる(既定の 7〜9時着)。土曜ダイヤに R3 は無いので、着く便が 0 便になる
+      expect(body.facility_access).toEqual({
+        date: '20261110',
+        counts: { arrive_lost: 1, depart_lost: 0 },
+        facilities_with_stops: 1,
+        facilities_without_stops: 0,
+        facilities: [
+          {
+            target_id: 'P29:高校',
+            name: '学校前高校',
+            category: '高校・特別支援学校',
+            priority_rank: 3,
+            nearest_stop: '学校前',
+            distance_m: expect.any(Number),
+            problems: ['着く便がなくなる'],
+            arrive: { window: '7:00〜9:00', source: 'default', before: { trips: 1, time: '07:40' }, after: { trips: 0, time: null } },
+            depart: { window: '14:00〜18:00', source: 'default', before: { trips: 0, time: null }, after: { trips: 0, time: null } },
+          },
+        ],
+        facilities_omitted: 0,
+        note: expect.stringContaining('乗り継ぎと混み具合は見ていません'),
+      })
+    })
+
+    it('調べた窓の施設は、読んだ時刻と出典の URL を書く', async () => {
+      const facts = [{ label: '始業', value: '8時40分', url: 'https://example.jp/high' }]
+      const researched: HintFacility = {
+        ...HIGH,
+        windows: facilityWindows('school', facts),
+        research: { status: 'found', checkedAt: '2026-11-03T12:00:00+09:00', origin: 'demo', facts },
+      }
+      const reach = fakeReach(snapshot)
+      const { store, deps } = setup({ reach: reach.access, hintContext: () => ctxOf([researched]) })
+      await withPolicy(deps, store)
+      const fa = parse((await runTool('summarize_impact', { date: null, step_hours: null }, deps)).content).facility_access as {
+        facilities: { arrive: Record<string, unknown> }[]
+      }
+      expect(fa.facilities[0].arrive).toMatchObject({ source: 'research', basis: expect.stringContaining('8:40'), source_url: 'https://example.jp/high' })
+    })
+
+    it('施設を読めていない・比べられない・平日ダイヤが走らない日は、facility_access を null にして理由を書く', async () => {
+      const cases: [Partial<ToolDeps>, ReachSnapshot, string][] = [
+        [{}, snapshot, '到達圏の比較と今の減便後の GTFS が合っていない'],
+        [{ hintContext: () => ctxOf(undefined) }, snapshot, '学校・病院の参照データを読み込めていない'],
+        // 20261114 は土曜
+        [{ hintContext: () => ctxOf([HIGH]) }, { ...snapshot, date: '20261114' } as ReachSnapshot, '平日ダイヤの運行日ではない'],
+      ]
+      for (const [overrides, snap, reason] of cases) {
+        const reach = fakeReach(snap)
+        const { store, deps } = setup({ reach: reach.access, ...overrides })
+        await withPolicy(deps, store)
+        const body = parse((await runTool('summarize_impact', { date: null, step_hours: null }, deps)).content)
+        expect(body.facility_access).toBeNull()
+        expect(String(body.facility_access_unavailable)).toContain(reason)
+      }
+      // 平日ダイヤが走らない日は、往復も理由つきで空にする
+      const reach = fakeReach({ ...snapshot, date: '20261114' } as ReachSnapshot)
+      const { store, deps } = setup({ reach: reach.access })
+      await withPolicy(deps, store)
+      const rt = parse((await runTool('summarize_impact', { date: null, step_hours: null }, deps)).content).round_trip as Record<string, unknown>
+      expect(String(rt.empty_reason)).toContain('平日ダイヤが走らない')
+      expect(rt.problems).toEqual([])
+    })
+
+    it('20KB を超えたら、ほかの一覧より先に facility_access → round_trip の一覧を後ろから省き、省いた数を書く(fitImpactLists)', () => {
+      const big = (i: number) => ({ name: `施設${i}`, filler: 'あ'.repeat(300) })
+      const body = {
+        status: 'ok',
+        zero_service_routes: Array.from({ length: 5 }, (_, i) => ({ route_id: `R${i}` })),
+        round_trip: { counts: {}, problems: Array.from({ length: MAX_IMPACT_ITEMS }, (_, i) => big(i)), problems_omitted: 4 },
+        facility_access: { counts: {}, facilities: Array.from({ length: MAX_IMPACT_ITEMS }, (_, i) => big(i)), facilities_omitted: 0 },
+        notes: ['元の注意'],
+      }
+      // 1つの一覧(約 18KB)を省けば収まる:facility_access だけを省く
+      const fitted = fitImpactLists(body)
+      expect(new TextEncoder().encode(JSON.stringify(fitted)).length).toBeLessThanOrEqual(MAX_RESULT_BYTES)
+      const fa = fitted.facility_access as { facilities: unknown[]; facilities_omitted: number }
+      const rt = fitted.round_trip as { problems: unknown[]; problems_omitted: number }
+      expect(fa.facilities.length).toBeLessThan(MAX_IMPACT_ITEMS)
+      expect(fa.facilities_omitted).toBe(MAX_IMPACT_ITEMS - fa.facilities.length)
+      expect(rt.problems).toHaveLength(MAX_IMPACT_ITEMS)
+      expect(rt.problems_omitted).toBe(4)
+      expect(fitted.zero_service_routes).toHaveLength(5)
+      expect(fitted.notes).toEqual([
+        '元の注意',
+        `結果が 20KB を超えたため、facility_access.facilities の後ろから ${MAX_IMPACT_ITEMS - fa.facilities.length} 件を省きました(省いた数は facilities_omitted に含めています)。`,
+      ])
+      // 前から残す
+      expect((fa.facilities[0] as { name: string }).name).toBe('施設0')
+
+      // 2つとも大きければ、facility_access を空にしてから round_trip を省く(省いた数は、上位 20 件の外の数に足す)
+      const huge = (i: number) => ({ name: `施設${i}`, filler: 'あ'.repeat(600) })
+      const both = fitImpactLists({
+        ...body,
+        round_trip: { ...body.round_trip, problems: Array.from({ length: MAX_IMPACT_ITEMS }, (_, i) => huge(i)) },
+        facility_access: { ...body.facility_access, facilities: Array.from({ length: MAX_IMPACT_ITEMS }, (_, i) => huge(i)) },
+      })
+      expect(new TextEncoder().encode(JSON.stringify(both)).length).toBeLessThanOrEqual(MAX_RESULT_BYTES)
+      const fa2 = both.facility_access as { facilities: unknown[]; facilities_omitted: number }
+      const rt2 = both.round_trip as { problems: unknown[]; problems_omitted: number }
+      expect(fa2.facilities).toEqual([])
+      expect(fa2.facilities_omitted).toBe(MAX_IMPACT_ITEMS)
+      expect(rt2.problems.length).toBeGreaterThan(0)
+      expect(rt2.problems_omitted).toBe(4 + MAX_IMPACT_ITEMS - rt2.problems.length)
+      expect(both.zero_service_routes).toHaveLength(5)
+      expect((both.notes as string[]).length).toBe(3)
+
+      // 20KB 以下ならそのまま
+      const small = { ...body, round_trip: { problems: [] }, facility_access: null }
+      expect(fitImpactLists(small)).toBe(small)
+    })
   })
 })

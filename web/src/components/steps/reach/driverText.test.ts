@@ -67,7 +67,7 @@ describe('driverCaveats(断り書き)', () => {
     ]).join('\n')
     expect(text).toContain('拘束 15 時間')
     expect(text).toContain('最寄りの営業所・車庫')
-    expect(text).toContain('前の便の終着か次の便の始発のどちらかが休憩施設・営業所・車庫の近くなら')
+    expect(text).toContain('前の便の終着か次の便の始発のどちらかが休憩施設・営業所の近くなら')
   })
 })
 

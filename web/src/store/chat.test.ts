@@ -5,15 +5,18 @@ import type { SessionPostBody } from '../claude/session'
 import { ClaudeRequestError, NOT_CONNECTED, type SessionStreamEvent } from '../claude/sse'
 import { runTool, type ToolDeps, type ToolOutcome } from '../claude/tools'
 import { smallFeed } from '../gtfs/edit/form2.fixture'
+import { stateLines } from '../claude/screenLines'
 import {
   budgetReachedMessage,
   canStop,
+  chatToolDeps,
   CLAUDE_UNAVAILABLE,
   checkedLine,
   CONTINUE_LINE,
   CONTINUE_PROMPT,
   continueLine,
   createChatStore,
+  currentScreenState,
   draftMessage,
   dollars,
   fetchClaudeStatus,
@@ -36,7 +39,8 @@ import {
   type ChatStoreDeps,
   type TokenStorage,
 } from './chat'
-import { createEditStore, type BaseGtfs } from './edit'
+import { useDriversStore } from './drivers'
+import { createEditStore, useEditStore, type BaseGtfs } from './edit'
 
 const NOW = new Date('2026-11-04T00:30:00Z')
 const TODAY_LINE = '[画面の状態] 今日は 2026年11月4日(水)です(日本時間)。'
@@ -848,5 +852,61 @@ describe('AI が確かめた便の件数(指摘18.4)', () => {
     // 20KB を超えた結果は AI に届かない
     expect(summarizeSearchTrips({}, outcome({ ...body, pad: 'x'.repeat(21 * 1024) }))).toBeNull()
     expect(checkedLine(new Map())).toBeNull()
+  })
+})
+
+describe('置いた営業所・車庫・休憩施設の名前は AI に送らない(F02)', () => {
+  // 場所は画面の中だけに持つ(store/drivers.ts)。[画面の状態] の行・発言・ツールの結果のどれにも名前が入らないことを確かめる回帰テスト
+  const NAMES = ['秘匿の営業所F02', '秘匿の車庫F02', '秘匿の休憩所F02']
+  const leaks = (text: string) => NAMES.filter((n) => text.includes(n))
+
+  function placeAll() {
+    useEditStore.getState().setBase({ feed: smallFeed(), zip: new ArrayBuffer(0), label: 'test.zip', sample: null })
+    const d = useDriversStore.getState()
+    d.addPlace({ type: 'office', name: NAMES[0], lat: 43.76, lon: 142.36 })
+    d.addPlace({ type: 'garage', name: NAMES[1], lat: 43.77, lon: 142.36 })
+    d.addPlace({ type: 'rest', name: NAMES[2], lat: 43.76, lon: 142.37 })
+    d.setShortage(20)
+    expect(useDriversStore.getState().places.map((p) => p.name)).toEqual(NAMES)
+  }
+
+  afterEach(() => {
+    useDriversStore.setState({ shortage: null, places: [], placing: null })
+    useEditStore.getState().setBase(null)
+  })
+
+  it('[画面の状態] の材料と行に入らない', () => {
+    placeAll()
+    const screen = currentScreenState()
+    expect(leaks(JSON.stringify(screen))).toEqual([])
+    const lines = stateLines(screen).map((l) => l.line)
+    expect(lines.length).toBeGreaterThan(1)
+    expect(leaks(lines.join('\n'))).toEqual([])
+  })
+
+  it('発言と、6つのツールのうち AI が呼べるものの結果に入らない', async () => {
+    placeAll()
+    const { s, fake } = setup({
+      screen: currentScreenState,
+      runTool: (name, input, signal) => runTool(name, input, chatToolDeps, signal),
+    })
+    expect(await s().send('営業所の場所を教えて')).toBe(true)
+    const calls: [string, unknown][] = [
+      ['apply_policy', POLICY_INPUT],
+      ['summarize_impact', { date: '20261111', step_hours: 3 }],
+      ['search_trips', { scope: 'removed', route_ids: [], stop_name: null, depart_from: null, depart_to: null, limit: 10, offset: null, hints: null }],
+      ['run_validation', {}],
+      ['undo_edit', {}],
+    ]
+    for (const [i, [name, input]] of calls.entries()) {
+      fake.last().push({ type: 'tool_call', id: `sevt_${i}`, name, input })
+      await vi.waitFor(() => expect(fake.posts.filter((p) => p.body.kind === 'tool_results')).toHaveLength(i + 1))
+      // 減便の方針の下書きを承認してから、ほかのツールを呼ぶ
+      if (name === 'apply_policy') expect(useEditStore.getState().commit()).toEqual({ ok: true })
+    }
+    expect(await s().send('続けて')).toBe(true)
+    expect(fake.posts.length).toBeGreaterThan(calls.length)
+    expect(leaks(JSON.stringify(fake.posts))).toEqual([])
+    expect(leaks(JSON.stringify(s().sentLog))).toEqual([])
   })
 })

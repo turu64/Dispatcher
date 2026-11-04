@@ -167,7 +167,7 @@ describe('PlacesLayer(地図で置く)', () => {
     act(() => fake.click(142.4, 43.8))
     const places = useDriversStore.getState().places
     expect(places).toHaveLength(1)
-    expect(places[0]).toMatchObject({ type: 'garage', kind: 'depot', name: '車庫 1', lat: 43.8, lon: 142.4 })
+    expect(places[0]).toMatchObject({ type: 'garage', kind: 'garage', name: '車庫 1', lat: 43.8, lon: 142.4 })
     expect(useDriversStore.getState().placing).toBeNull()
     expect(fake.canvas.style.cursor).toBe('')
     // 置き終えたら、もう一度押しても足さない

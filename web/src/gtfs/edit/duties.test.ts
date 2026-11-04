@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BOUND_LIMIT_MIN,
   DUTY_DEFAULTS,
+  LONG_DEPOT_DEADHEAD_MIN,
   dutyAssumptions,
   estimateDuties,
   operatorRunsOf,
@@ -157,8 +158,42 @@ describe('estimateDuties:営業所・車庫と休憩施設', () => {
     expect(est.duties[0].start).toBe('05:22')
     expect(est.duties[0].end).toBe('07:22')
     expect(est.duties[0].deadheadMin).toBe(16)
+    expect(est.duties[0].pullOutMin).toBe(8)
+    expect(est.duties[0].pullInMin).toBe(8)
     expect(est.duties[0].drivingMin).toBe(76)
     expect(est.assumptions.some((s) => s.includes('営業所・車庫(2 か所)'))).toBe(true)
+    // 片道 8 分の回送は長すぎない
+    expect(est.longDeadheadDuties).toBe(0)
+  })
+
+  it('車庫も出庫・入庫の回送の場所に数える', () => {
+    const garage: DutyPlace[] = [{ kind: 'garage', name: '車庫', ...STOPS.get('B')!.point! }]
+    const est = estimateDuties([leg('a', '06:00', '07:00')], STOPS, {}, garage)
+    expect(est.duties[0].deadheadMin).toBe(16)
+    expect(est.assumptions.some((s) => s.includes('営業所・車庫(1 か所)'))).toBe(true)
+  })
+
+  it('休憩施設があるとき、営業所の近くのすき間は休憩に数え、車庫の近くのすき間は数えない', () => {
+    const far: DutyPlace[] = [{ kind: 'rest', name: '休憩所', ...STOPS.get('B')!.point! }]
+    // A の近くの車庫:A でのすき間は休憩に数えず、連続運転 4 時間を超えて分かれる
+    expect(tripsPerDuty(legs, {}, [...far, { kind: 'garage', name: '車庫', lat: A.lat + 0.001, lon: A.lon }])).toEqual([4, 1])
+    // A の近くの営業所:A でのすき間を休憩に数え、1つの勤務につながる
+    expect(tripsPerDuty(legs, {}, [...far, { kind: 'depot', name: '営業所', lat: A.lat + 0.001, lon: A.lon }])).toEqual([5])
+    const lines = dutyAssumptions(DUTY_DEFAULTS, [...far, { kind: 'garage', name: '車庫', ...A }])
+    expect(lines.join('\n')).toContain('休憩は、休憩施設(1 か所)・営業所の 300m 以内の停留所でのすき間だけに数えます(車庫は出庫・入庫の場所で、休憩には数えません)')
+  })
+
+  it(`出庫か入庫の回送が片道 ${LONG_DEPOT_DEADHEAD_MIN} 分を超える勤務を数える`, () => {
+    // A から約 22km 北(回送 約 86 分)の営業所。出庫・入庫とも片道 60 分を超える
+    const farDepot: DutyPlace[] = [{ kind: 'depot', name: '遠い営業所', lat: A.lat + 0.2, lon: A.lon }]
+    const est = estimateDuties([leg('a', '06:00', '07:00'), leg('b', '12:00', '13:00')], STOPS, {}, farDepot)
+    expect(est.duties.every((d) => d.pullOutMin > LONG_DEPOT_DEADHEAD_MIN && d.pullInMin > LONG_DEPOT_DEADHEAD_MIN)).toBe(true)
+    expect(est.longDeadheadDuties).toBe(est.dutyCount)
+    // 営業所・車庫が無ければ回送は 0
+    const none = estimateDuties([leg('a', '06:00', '07:00')], STOPS)
+    expect(none.duties[0].pullOutMin).toBe(0)
+    expect(none.duties[0].pullInMin).toBe(0)
+    expect(none.longDeadheadDuties).toBe(0)
   })
 
   it('事業場外の休憩の上限を使うと、営業所の外のすき間の合計で分かれる', () => {

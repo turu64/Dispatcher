@@ -23,11 +23,13 @@ import { compareStrings } from './signature'
  *   places に営業所・車庫があれば、最初の停留所・最後の停留所と最寄りの営業所・車庫の間の回送を足す(運転時間と連続運転にも入れる)
  * - 運転時間:9 時間以内(2日平均で1日9時間の基準を、その日だけに当てはめた目安)
  * - 連続運転:4 時間以内。10 分以上のすき間を合わせて 30 分になったら、連続運転を数え直す
- * - 休憩の場所:places に休憩施設があれば、休憩施設・営業所・車庫の params.placeRadiusM 以内の停留所(前の便の終着か次の便の始発)
- *   でのすき間だけを休憩に数える。休憩施設が無ければ、どの停留所のすき間も休憩に数える
+ * - 休憩の場所:places に休憩施設があれば、休憩施設・営業所の params.placeRadiusM 以内の停留所(前の便の終着か次の便の始発)
+ *   でのすき間だけを休憩に数える。車庫は出庫・入庫の場所で、休憩の場所には数えない。休憩施設が無ければ、どの停留所のすき間も休憩に数える
  * - 事業場外の休憩(営業所・車庫の外での休憩)の合計の上限(3 時間)は任意の条件で、既定は使わない
  * - どの勤務も、その便で終えても条件を満たすように足す(入庫の回送と点呼まで含めて確かめる)。1便だけで条件を超える便は、
  *   その便だけの勤務にして overLimit に印を付ける
+ * - 出庫か入庫の回送が片道 LONG_DEPOT_DEADHEAD_MIN 分を超える勤務を数える(longDeadheadDuties)。営業所・車庫が路線から遠いと、
+ *   回送だけで上限に近づいて勤務が細かく分かれ、数が跳ね上がる(道北バスで遠い営業所を1つ置くと 82 → 400 超)。画面で注意に出す
  *
  * 車両の数の下限の目安:法令の条件を外し、折り返しと回送だけで同じ手順でつないだ数(chained)と、同時に営業運行中の便の
  * 最大(maxConcurrent)。
@@ -84,9 +86,20 @@ export const DUTY_DEFAULTS: DutyParams = {
 /** 事業場外の休憩の上限の目安(分。通達。任意の条件で使うときの値) */
 export const OFF_SITE_BREAK_LIMIT_MIN = 3 * 60
 
-/** 利用者が足す場所。depot は営業所・車庫(出庫・入庫と点呼の場所)、rest は休憩施設 */
+/** 出庫か入庫の回送がこの分を超える勤務を、回送が長すぎる勤務として数える(片道) */
+export const LONG_DEPOT_DEADHEAD_MIN = 60
+
+/**
+ * 利用者が足す場所の、推定での種類。
+ * - depot:営業所。出庫・入庫と点呼の場所で、休憩の場所にも数える
+ * - garage:車庫。出庫・入庫の場所。休憩の場所には数えない
+ * - rest:休憩施設。休憩の場所
+ */
+export type DutyPlaceKind = 'depot' | 'garage' | 'rest'
+
+/** 利用者が足す場所 */
 export interface DutyPlace {
-  kind: 'depot' | 'rest'
+  kind: DutyPlaceKind
   name: string
   lat: number
   lon: number
@@ -106,6 +119,10 @@ export interface Duty {
   drivingMin: number
   /** そのうち回送(分) */
   deadheadMin: number
+  /** そのうち出庫の回送(営業所・車庫から最初の停留所。分) */
+  pullOutMin: number
+  /** そのうち入庫の回送(最後の停留所から営業所・車庫。分) */
+  pullInMin: number
   /** 連続運転の最大(分) */
   maxContinuousMin: number
   trips: number
@@ -130,6 +147,8 @@ export interface DutyEstimate {
   duties: Duty[]
   /** 1便だけで条件を超えた勤務の数 */
   overLimitDuties: number
+  /** 出庫か入庫の回送が片道 LONG_DEPOT_DEADHEAD_MIN 分を超える勤務の数 */
+  longDeadheadDuties: number
   /** 車両の数の下限の目安 */
   vehicles: {
     /** 法令の条件を外し、折り返しと回送だけでつないだ数 */
@@ -198,7 +217,7 @@ interface Stop {
   point: { lat: number; lon: number } | null
   /** 最寄りの営業所・車庫との回送(秒)。営業所・車庫が無いか座標が無ければ 0 */
   depotSec: number
-  /** 休憩に数える停留所か */
+  /** 休憩に数える停留所か(休憩施設・営業所の近く。休憩施設が無ければどこでも) */
   breakOk: boolean
   /** 営業所・車庫の近くか(事業場外の休憩の判定) */
   nearDepot: boolean
@@ -213,6 +232,8 @@ interface State {
   /** 入庫の回送を除いた運転(秒) */
   driving: number
   deadhead: number
+  /** 出庫の回送(秒) */
+  pullOut: number
   /** 数え直してからの連続運転(秒) */
   continuous: number
   /** 数え直してからの休憩の合計(秒) */
@@ -234,7 +255,9 @@ class Chainer {
   private readonly turnSec: number
   private readonly sameStopM: number
   private readonly metersPerSec: number
+  /** 出庫・入庫の場所(営業所と車庫) */
   private readonly depots: DutyPlace[]
+  /** 休憩の場所(休憩施設と営業所。車庫は入れない)。休憩施設が無ければ null(どこでも休憩に数える) */
   private readonly breakPlaces: DutyPlace[] | null
   private readonly stopPoints: ReadonlyMap<string, StopPoint>
   private readonly p: DutyParams
@@ -246,8 +269,8 @@ class Chainer {
     this.turnSec = p.turnaroundMin * 60
     this.sameStopM = p.sameStopM
     this.metersPerSec = (p.deadheadKmh * 1000) / 3600
-    this.depots = places.filter((x) => x.kind === 'depot')
-    this.breakPlaces = places.some((x) => x.kind === 'rest') ? [...places] : null
+    this.depots = places.filter((x) => x.kind === 'depot' || x.kind === 'garage')
+    this.breakPlaces = places.some((x) => x.kind === 'rest') ? places.filter((x) => x.kind === 'rest' || x.kind === 'depot') : null
   }
 
   stop(id: string): Stop {
@@ -300,6 +323,7 @@ class Chainer {
       lastStop: last,
       driving: out + run,
       deadhead: out,
+      pullOut: out,
       continuous: out + run,
       breakSum: 0,
       maxContinuous: out + run,
@@ -390,6 +414,8 @@ class Chainer {
       boundMin: Math.round((end - s.startSec) / 60),
       drivingMin: Math.round((s.driving + back) / 60),
       deadheadMin: Math.round((s.deadhead + back) / 60),
+      pullOutMin: Math.round(s.pullOut / 60),
+      pullInMin: Math.round(back / 60),
       maxContinuousMin: Math.round(Math.max(s.maxContinuous, s.continuous + back) / 60),
       trips: s.tripIds.length,
       start: clock(s.startSec),
@@ -431,7 +457,7 @@ function hoursText(min: number): string {
 
 /** 使った仮定の文(画面と変更指示書にそのまま出す) */
 export function dutyAssumptions(p: DutyParams, places: readonly DutyPlace[] = []): string[] {
-  const depots = places.filter((x) => x.kind === 'depot').length
+  const depots = places.filter((x) => x.kind === 'depot' || x.kind === 'garage').length
   const rests = places.filter((x) => x.kind === 'rest').length
   const bound =
     p.maxBoundMin === BOUND_LIMIT_MIN.extended
@@ -451,7 +477,7 @@ export function dutyAssumptions(p: DutyParams, places: readonly DutyPlace[] = []
     `運転時間は ${hoursText(p.maxDrivingMin)}以内(改善基準告示 第5条の「2日平均で1日 9 時間以内」を、この日だけに当てはめた目安)`,
     `連続運転は ${hoursText(p.maxContinuousMin)}以内とし、${p.minBreakMin} 分以上のすき間を合わせて ${p.breakResetMin} 分になったら数え直します(改善基準告示 第5条)`,
     rests > 0
-      ? `休憩は、休憩施設(${rests} か所)・営業所・車庫の ${p.placeRadiusM}m 以内の停留所でのすき間だけに数えます`
+      ? `休憩は、休憩施設(${rests} か所)・営業所の ${p.placeRadiusM}m 以内の停留所でのすき間だけに数えます(車庫は出庫・入庫の場所で、休憩には数えません)`
       : '休憩施設の位置がないため、どの停留所でのすき間も休憩に数えます',
   ]
   if (p.offSiteBreakMaxMin !== null) {
@@ -481,6 +507,7 @@ export function estimateDuties(
     dutyCount: duties.length,
     duties,
     overLimitDuties: duties.filter((d) => d.overLimit).length,
+    longDeadheadDuties: duties.filter((d) => Math.max(d.pullOutMin, d.pullInMin) > LONG_DEPOT_DEADHEAD_MIN).length,
     vehicles: { chained: vehicles, maxConcurrent: maxConcurrent(legs) },
     assumptions: dutyAssumptions(p, places),
     params: p,

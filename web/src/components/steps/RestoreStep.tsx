@@ -411,6 +411,8 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         なくなる平日便 <span className="tabular-nums">{candidates.length}</span> 便から選びます。系統ごとにまとめ、全曜日で便がなくなる系統を先に出します。
         系統を開くと、判断材料のある便を方向ごとに時刻の順に出します。
       </p>
+      {/* 勤務の数の目安の今の値と欠員との比較。最初の1便を戻す前から出し、便を戻すたびに書き直す(D04) */}
+      <DriverLine />
       <AskRestoreButton blocked={policyDraft ? '減便の方針の下書きを承認するか、やめてから聞いてください。' : null} />
       <AiPicks picks={aiPicks} selected={selectedSet} onSelect={select} />
       <div className="flex flex-col gap-3 rounded-md border px-2 py-1.5" role="group" aria-label="往復と学校・病院の確認">
@@ -684,7 +686,6 @@ function AddedBackList({
       <h3 className="text-sm font-medium">平日に戻した便({report.accepted.length} 便)</h3>
       {confirm}
       <p className="text-xs">{restoreTotalsText(totals)}</p>
-      <DriverLine />
       <ul className="flex flex-col divide-y rounded-md border text-xs">
         {report.accepted.map((id) => {
           const trip = briefs.get(id)

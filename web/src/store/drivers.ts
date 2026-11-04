@@ -32,8 +32,9 @@ import { useReachStore } from './reach'
  * - 欠員:その日に乗務できない運転士の数(0〜999 の整数。空なら null)
  * - 仮定:勤務の数の推定(gtfs/edit/duties.ts の estimateDuties)に渡す値。画面で変えるのは拘束の上限(13/15 時間)・点呼の分・回送の速さ
  * - 営業所・車庫・休憩施設:利用者が地図で置くか停留所から選んだ場所(D05。画面は reach/PlacesEditor.tsx、地図は map/PlacesLayer.tsx)。
- *   推定には次の対応で渡す(dutyKindOf):営業所・車庫 → depot(出庫・入庫の回送と点呼の場所)、休憩施設 → rest。
- *   duties.ts は、休憩施設が1つでもあれば休憩施設・営業所・車庫の近くのすき間だけを休憩に数え、無ければどこでも休憩に数える
+ *   推定には次の対応で渡す(dutyKindOf):営業所 → depot(出庫・入庫の回送と点呼の場所。休憩も取れる)、車庫 → garage
+ *   (出庫・入庫の回送の場所。休憩には数えない)、休憩施設 → rest。
+ *   duties.ts は、休憩施設が1つでもあれば休憩施設・営業所の近くのすき間だけを休憩に数え、無ければどこでも休憩に数える
  * - 地図で置いている途中の種類(placing)
  *
  * GTFS を読み込み直すと(削除しても)、欠員と施設は消える(store/gtfs の feed を見張る。store/research.ts と同じ)。仮定は残す
@@ -52,9 +53,12 @@ export interface UserPlace extends DutyPlace {
   type: PlaceType
 }
 
-/** 場所の種類を、推定(duties.ts)の種類にする。営業所・車庫は出庫・入庫の場所、休憩施設は休憩の場所 */
+/**
+ * 場所の種類を、推定(duties.ts)の種類にする。営業所は出庫・入庫と休憩の場所(depot)、車庫は出庫・入庫だけの場所(garage)、
+ * 休憩施設は休憩の場所(rest)
+ */
 export function dutyKindOf(type: PlaceType): DutyPlace['kind'] {
-  return type === 'rest' ? 'rest' : 'depot'
+  return type === 'office' ? 'depot' : type
 }
 
 interface DriverState {

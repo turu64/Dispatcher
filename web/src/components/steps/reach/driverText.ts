@@ -68,7 +68,7 @@ export function notWeekdayText(date: string): string {
  */
 export function driverCaveats(params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivingMin' | 'maxContinuousMin'>, places: readonly DutyPlace[] = []): string[] {
   const hours = (min: number) => (min % 60 === 0 ? `${min / 60} 時間` : `${Math.floor(min / 60)} 時間 ${min % 60} 分`)
-  const depots = places.some((p) => p.kind === 'depot')
+  const depots = places.some((p) => p.kind !== 'rest')
   const rests = places.some((p) => p.kind === 'rest')
   return [
     '勤務の数は、要る運転士の数の下限の目安です。実際に要る人数はこれより多くなることがあります。',
@@ -78,7 +78,7 @@ export function driverCaveats(params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivi
       ? '出庫・入庫の回送は、最寄りの営業所・車庫との直線距離から見積もっています。'
       : '営業所・車庫を置いていないため、出庫・入庫の回送を 0 として数えています。',
     rests
-      ? '休憩は、前の便の終着か次の便の始発のどちらかが休憩施設・営業所・車庫の近くなら、そのすき間を休憩に数える甘めの数え方です。'
+      ? '休憩は、前の便の終着か次の便の始発のどちらかが休憩施設・営業所の近くなら、そのすき間を休憩に数える甘めの数え方です(車庫は休憩に数えません)。'
       : '休憩施設を置いていないため、どの停留所でのすき間も休憩に数える甘めの数え方です。',
   ]
 }

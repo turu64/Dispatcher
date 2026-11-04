@@ -311,7 +311,7 @@ describe('RestoreStep', () => {
     expect(screen.queryByRole('region', { name: '選んだ便' })).toBeNull()
   })
 
-  it('平日に戻した便の合計の文の下に、勤務の数の目安の今の値と欠員との比較を1行出し、便を戻すたびに書き直す(D04)', () => {
+  it('候補の上に、勤務の数の目安の今の値と欠員との比較を1行出す。最初の1便を戻す前から出し、便を戻すたびに書き直す(D04)', () => {
     const base = useEditStore.getState().base!.feed
     const period = { start: '20261001', end: '20261130' }
     const expected = () => {
@@ -338,13 +338,20 @@ describe('RestoreStep', () => {
     })
     try {
       render(<RestoreStep />)
-      // まだ便を戻していなければ、合計の文と同じく出さない
-      expect(screen.queryByTestId('driver-line')).toBeNull()
+      // まだ便を戻していなくても(平日に戻した便の一覧が無くても)出す
+      expect(screen.queryByRole('region', { name: '平日に戻した便' })).toBeNull()
+      const line = () => screen.getByTestId('driver-line').textContent ?? ''
+      expect(line()).toContain(expected())
+      expect(line()).toMatch(/欠員 20 → (足りる目安です|あと \d+ 足りない目安です)。$/)
+      // 1行は候補の一覧より上に出す
+      const candidateList = candidates()
+      expect(screen.getByTestId('driver-line').compareDocumentPosition(candidateList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
       fireEvent.click(candidateBoxes().find((b) => idOf(b) === 'R3_0730_WK')!)
       fireEvent.click(screen.getByRole('button', { name: '選んだ 1 便を平日に戻す' }))
-      const added = () => within(screen.getByRole('region', { name: '平日に戻した便' }))
-      const line = () => added().getByTestId('driver-line').textContent ?? ''
+      // 平日に戻した便の一覧の中には重ねて出さない(1か所だけ)
+      expect(within(screen.getByRole('region', { name: '平日に戻した便' })).queryByTestId('driver-line')).toBeNull()
+      expect(screen.getAllByTestId('driver-line')).toHaveLength(1)
       expect(line()).toContain(expected())
       expect(line()).toContain('2026年11月4日(水)')
       expect(line()).toMatch(/欠員 20 → (足りる目安です|あと \d+ 足りない目安です)。$/)

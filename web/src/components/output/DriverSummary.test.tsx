@@ -105,6 +105,29 @@ describe('DriverSummaryView(変更指示書のまとまり)', () => {
     expect(verdict.className).toContain('font-semibold')
   })
 
+  it('営業所・車庫・休憩施設を置くと、仮定の一覧にその数と、回送・休憩の数え方を出す。置いた場所の名前は出さない', () => {
+    const places = [
+      { kind: 'depot' as const, name: '旭川営業所テスト', lat: 43.76, lon: 142.36 },
+      { kind: 'garage' as const, name: '永山車庫テスト', lat: 43.77, lon: 142.36 },
+      { kind: 'rest' as const, name: '休憩所テスト', lat: 43.76, lon: 142.37 },
+    ]
+    render(<DriverSummaryView comparison={comparisonOf({ places })} />)
+    const list = screen.getByRole('list', { name: '要る運転士の数の仮定' }).textContent ?? ''
+    expect(list).toContain('営業所・車庫(2 か所)と最初・最後の停留所の間の回送を、拘束時間と運転時間に入れます')
+    expect(list).toContain('休憩は、休憩施設(1 か所)・営業所の 300m 以内の停留所でのすき間だけに数えます(車庫は出庫・入庫の場所で、休憩には数えません)')
+    expect(list).not.toContain('営業所・車庫の位置がないため')
+    expect(list).not.toContain('休憩施設の位置がないため')
+    const block = screen.getByTestId('driver-summary').textContent ?? ''
+    for (const p of places) expect(block).not.toContain(p.name)
+    cleanup()
+
+    // 置かなければ、位置がない旨を出す
+    render(<DriverSummaryView comparison={comparisonOf()} />)
+    const none = screen.getByRole('list', { name: '要る運転士の数の仮定' }).textContent ?? ''
+    expect(none).toContain('営業所・車庫の位置がないため、出庫・入庫の回送は数えません')
+    expect(none).toContain('休憩施設の位置がないため')
+  })
+
   it('仮定を変えると(拘束 15 時間)、勤務の数と仮定の文がその値になる', () => {
     render(<DriverSummaryView comparison={comparisonOf({ params: { ...DUTY_DEFAULTS, maxBoundMin: BOUND_LIMIT_MIN.extended } })} />)
     expect(rowText('勤務の数(目安)')).toBe('勤務の数(目安)11±0')

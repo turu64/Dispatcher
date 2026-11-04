@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { BOUND_LIMIT_MIN, type DutyParams, type DutyPlace } from '@/gtfs/edit/duties'
+import { BOUND_LIMIT_MIN, LONG_DEPOT_DEADHEAD_MIN, type DutyParams, type DutyPlace } from '@/gtfs/edit/duties'
 import { formatDateJa } from '@/lib/dates'
 import { MAX_SHORTAGE, useDriverComparison, useDriversStore, type DriverComparison } from '@/store/drivers'
 import {
@@ -97,6 +97,7 @@ export function DriverView({
           {placesEffectText(comparison.placesEffect)}
         </p>
       )}
+      <DutyWarning comparison={comparison} />
       <ShortageField value={comparison.shortage} onCommit={onShortage} />
       <p className={tone} role="status" data-testid="driver-verdict">
         {verdict.kind === 'short' && <span aria-hidden="true">⚠ </span>}
@@ -110,6 +111,43 @@ export function DriverView({
       <AssumptionFields comparison={comparison} params={params} onParams={onParams} onReset={onResetParams} />
       {placesEditor}
     </section>
+  )
+}
+
+/**
+ * 上限を超えた勤務・回送が長すぎる勤務の注意の文。どちらも無ければ null。
+ * 営業所・車庫が路線から遠いと、回送だけで上限に近づいて勤務が細かく分かれ、勤務の数が跳ね上がる
+ * (道北バスで遠い営業所を1つ置くと 82 → 400 超)ので、数を出して置いた場所を確かめてもらう
+ */
+function dutyWarningText(comparison: DriverComparison): string | null {
+  const { before, after, placesEffect } = comparison
+  const counts = (pick: (d: DriverComparison['before']['duties']) => number) => {
+    const b = pick(before.duties)
+    const a = after ? pick(after.duties) : 0
+    return { any: b > 0 || a > 0, text: after ? `減便前 ${b}・減便後 ${a}` : `${b}` }
+  }
+  const over = counts((d) => d.overLimitDuties)
+  const long = counts((d) => d.longDeadheadDuties)
+  if (!over.any && !long.any) return null
+  const parts: string[] = []
+  if (over.any) parts.push(`1便だけで改善基準告示の上限を超える勤務 ${over.text}(その便だけで1つの勤務に数えています)`)
+  if (long.any) parts.push(`出庫か入庫の回送が片道 ${LONG_DEPOT_DEADHEAD_MIN} 分を超える勤務 ${long.text}`)
+  const hint =
+    placesEffect || long.any
+      ? '営業所・車庫が路線から遠いと、回送だけで上限に近づいて勤務が細かく分かれ、勤務の数が大きく増えます。置いた場所が正しいか、ほかの営業所・車庫も置いたかを確かめてください。'
+      : '長い便は途中の交代を数えていないため、勤務の数が多めに出ることがあります。'
+  return `注意:${parts.join('、')}。${hint}`
+}
+
+/** 上限を超えた勤務・回送が長すぎる勤務の注意(どちらも無ければ出さない) */
+function DutyWarning({ comparison }: { comparison: DriverComparison }) {
+  const text = dutyWarningText(comparison)
+  if (text === null) return null
+  return (
+    <p className="text-xs font-medium text-destructive" data-testid="duty-warning">
+      <span aria-hidden="true">⚠ </span>
+      {text}
+    </p>
   )
 }
 

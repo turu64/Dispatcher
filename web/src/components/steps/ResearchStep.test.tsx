@@ -295,7 +295,9 @@ describe('ResearchStep', () => {
           first = false
           throw new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます')
         }
-        return { targets: [], total: ids.length, maxTargets: 30 }
+        // サーバーは送った対象をすべて targets に入れて返す(research.py の session_targets)
+        const targets = ids.map((id) => ({ targetId: id, kind: 'school' as const, name: id, municipality: null, lat: 43.77, lon: 142.36, cached: null }))
+        return { targets, total: ids.length, maxTargets: 30 }
       },
     })
     fireEvent.click(screen.getByRole('button', { name: RESEARCH_START }))

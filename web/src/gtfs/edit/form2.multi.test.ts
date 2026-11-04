@@ -4,7 +4,7 @@ import type { GtfsFeed, GtfsRow } from '../load'
 import { validateEdit } from '../validate/edit'
 import { serializeTable } from '../write'
 import { diffWeekdayTrips } from './diff'
-import { activeWeekdayServicesOf, applyForm2, applyRevert, tripIdRuleFor, type Form2Result } from './form2'
+import { activeWeekdayServicesOf, applyForm2, tripIdRuleFor, type Form2Result } from './form2'
 import { basePlan, MULTI_CALENDAR_DATES, multiFeed, multiPlan, rowsOf, smallFeed, withRows } from './form2.fixture'
 import { checkPolicy, planOf, weekdayServicesOf, type Form2Plan } from './ops'
 import { restoreHints } from './restore'
@@ -373,23 +373,6 @@ service_id,date,exception_type
     expect(restoreHints(base, result.feed, result.plan, brief('R3_01001_0730')).hints).toContain('weekdayOnlyRoute')
     const r2 = diffWeekdayTrips(base, result.feed, ['WB']).removed.find((b) => b.tripId === 'R2_0900_WB')!
     expect(restoreHints(base, result.feed, result.plan, r2).hints).not.toContain('weekdayOnlyRoute')
-  })
-
-  it('元のダイヤに戻す版:pairs を渡すと plan に入り、祝日の確かめに使う', () => {
-    const base = multiFeed()
-    const outcome = applyRevert(base, {
-      ...OPTS,
-      restoreFrom: '20261101',
-      services: { kind: 'weekdayToSaturday', weekdayService: '01001', replacementService: '03001', pairs: multiPlan().pairs },
-    })
-    if (!outcome.ok) throw new Error(outcome.message)
-    expect(outcome.result.plan.pairs?.map((p) => p.weekday)).toEqual(['01001', '01001_A', '01001_C', '01005_MSN', 'WB'])
-    // 便は変えない(10/31 だけ走る 03001_C だけが除かれる)
-    expect(rows(outcome.result.feed, 'trips').map((t) => t.trip_id)).toEqual(
-      rows(base, 'trips').map((t) => t.trip_id).filter((id) => id !== 'R1_03001_1005_C'),
-    )
-    const holiday = validateEdit(base, outcome.result, HOLIDAYS).find((i) => i.code === 'holidayWithoutException')
-    expect(holiday?.message).toContain('01001・01001_A・01005_MSN・WB')
   })
 })
 

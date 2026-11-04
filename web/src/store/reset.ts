@@ -46,7 +46,7 @@ export type ResetReason = 'reload' | 'delete'
  * 戻さないもの:祝日一覧(store/holidays)、到達圏の参照データの取得の使い回し(store/reach の ref)、認証コード、
  * 地図(store/map の map)と地図の表示範囲(次の GTFS を読み込むと、その停留所に合わせ直す)、左の欄の幅などの見た目の設定。
  * Web Worker で動いている到達圏の計算は止めず、結果を捨てる(Worker は1つなので、すぐ次を読み込むと、前の計算の終わりを待つ)。
- * 手順の部品の中の値(出力の手順の「元のダイヤに戻す版」の feed_version など)は、各部品が編集の基準(base)の変化を見て消す
+ * 手順の部品の中の値(出力の手順の前の出力の表示など)は、各部品が編集の基準(base)の変化を見て消す
  */
 export function resetAll(reason: ResetReason): void {
   useGtfsStore.getState().clear()

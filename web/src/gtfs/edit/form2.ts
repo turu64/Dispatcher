@@ -9,7 +9,6 @@ import {
   skippedReplacementsOf,
   weekdayServicesOf,
   type Form2Plan,
-  type PolicySettings,
   type ServicePair,
 } from './ops'
 import {
@@ -754,120 +753,6 @@ function multiPairWarnings(
   }
 }
 
-// ---- 減便をやめる版(docs/tasks-1103.md T23、取り決め 1104 §12.1-3 の (a)) ----
-
-export interface RevertOptions extends Form2Options {
-  /** 戻す日('YYYYMMDD')。この日から元のダイヤで走る。出力の有効期間は戻す日〜入力の末日 */
-  restoreFrom: string
-  /**
-   * 検証(validateEdit)が「平日ダイヤ」として見る service(祝日・年末年始の確かめに使う)。
-   * 承認した方針があればその service、無ければ推定した平日の service、それも無ければ省く。便の中身には使わない。
-   * pairs を渡すと、祝日の確かめをすべての組の平日の service で行う(docs/design-service-groups.md §4.3)
-   */
-  services?: Pick<PolicySettings, 'kind' | 'weekdayService' | 'replacementService'> & Partial<Pick<PolicySettings, 'pairs'>>
-}
-
-/**
- * 減便をやめる版を作る。基準のフィードの便は変えず、有効期間を「戻す日〜入力の末日」に切り詰め(§5.6)、
- * feed_info の有効期間と feed_version を書き換える(§5.7)。減便の方針と足し戻しは入れない。
- *
- * - 結果は Form2Result の形で返す(validateEdit と writeGtfsZip をそのまま使うため)。plan は
- *   period = { start: 戻す日, end: null }、除外・足し戻しは空。report の tripIds・addBack は空
- * - trips・stop_times は、新しい有効期間に走らなくなった service が無ければ基準と同じ参照のまま返す
- *   (ZIP には元のバイト列が入る)。そのような service があれば、その便と stop_times の行だけを除く
- * - 戻す日が入力の開始日より前なら開始日にそろえて periodStartClamped、入力の末日より後なら ok: false。
- *   有効期間が 7 日以下なら shortValidity(出力を止めるのは validateEdit)
- */
-export function applyRevert(base: GtfsFeed, opts: RevertOptions): Form2Outcome {
-  if (!GENERATED_AT.test(opts.generatedAt)) {
-    return { ok: false, message: `作成日時の形が正しくありません(${opts.generatedAt})。YYYYMMDDhhmm の12桁にしてください。` }
-  }
-  const versionProblem = opts.feedVersion === undefined ? null : feedVersionProblem(opts.feedVersion)
-  if (versionProblem) return { ok: false, message: versionProblem }
-  const restoreFrom = opts.restoreFrom.trim()
-  if (!isValidGtfsDate(restoreFrom)) return { ok: false, message: `元のダイヤに戻す日の形が正しくありません(${opts.restoreFrom})。` }
-  const tripsTable = base.tables.get('trips')
-  const inputValidity = feedValidity(base)
-  if (!tripsTable || !inputValidity) return { ok: false, message: 'trips.txt か入力の有効期間がないため、元のダイヤに戻す版を作れません。' }
-  const validity = policyValidity(inputValidity, { start: restoreFrom, end: null })
-  if (!validity) {
-    return {
-      ok: false,
-      message: `元のダイヤに戻す日(${formatDate(restoreFrom)})が入力の有効期間の末日(${formatDate(inputValidity.end)})より後です。入力の有効期間の中の日を選んでください。`,
-    }
-  }
-
-  const warnings: { code: string; message: string }[] = []
-  const warn = (code: string, message: string) => warnings.push({ code, message })
-  if (restoreFrom < inputValidity.start) {
-    warn(
-      'periodStartClamped',
-      `元のダイヤに戻す日(${formatDate(restoreFrom)})が入力の開始日より前のため、入力の開始日(${formatDate(inputValidity.start)})にそろえました。`,
-    )
-  }
-  if (validity.days <= 7) {
-    warn(
-      'shortValidity',
-      `有効期間が ${validity.days} 日です。GTFS-JP は有効期間が 7 日以下のデータを作成しないこととしているため、出力できません。元のダイヤに戻す日を変えてください。`,
-    )
-  }
-
-  const calendars = clampCalendars(base, validity, warn)
-  const { droppedServiceIds } = calendars
-  const tables = new Map(base.tables)
-  const droppedTripCounts = new Map<string, number>()
-  if (droppedServiceIds.size > 0) {
-    const gone = new Set<string>()
-    const outTrips: GtfsRow[] = []
-    for (const row of tripsTable.rows) {
-      const sid = trimmed(row.service_id)
-      if (droppedServiceIds.has(sid)) {
-        droppedTripCounts.set(sid, (droppedTripCounts.get(sid) ?? 0) + 1)
-        gone.add(trimmed(row.trip_id))
-      } else {
-        outTrips.push(row)
-      }
-    }
-    // 同じ trip_id の便が残る service にもあれば(入力の重複)、その行は残す
-    for (const row of outTrips) gone.delete(trimmed(row.trip_id))
-    tables.set('trips', { ...tripsTable, rows: outTrips })
-    const stopTimesTable = base.tables.get('stop_times')
-    if (stopTimesTable) tables.set('stop_times', { ...stopTimesTable, rows: stopTimesTable.rows.filter((r) => !gone.has(trimmed(r.trip_id))) })
-  }
-  const droppedServices = sortedIds(droppedServiceIds).map((serviceId) => ({ serviceId, trips: droppedTripCounts.get(serviceId) ?? 0 }))
-  if (droppedServices.length > 0) {
-    warn(
-      'servicesDropped',
-      `新しい有効期間のどの日にも走らない service を、便ごと出力から除きました(${droppedServices.map((d) => `${d.serviceId}:${d.trips} 便`).join('、')})。`,
-    )
-  }
-  setCalendarTables(tables, calendars)
-  const feedInfo = feedInfoOf(base, validity, opts.generatedAt, opts.feedVersion?.trim() || undefined, warn)
-  tables.set('feed_info', feedInfo.table)
-
-  const plan: Form2Plan = {
-    kind: opts.services?.kind ?? 'weekdayToSaturday',
-    weekdayService: opts.services?.weekdayService.trim() ?? '',
-    replacementService: opts.services?.replacementService.trim() ?? '',
-    period: { start: restoreFrom, end: null },
-    excludedRoutes: [],
-    ...(opts.services?.pairs !== undefined ? { pairs: pairsOf({ ...opts.services, pairs: opts.services.pairs }) } : {}),
-    addBackTripIds: [],
-  }
-  const report: Form2Report = {
-    inputValidity: { start: inputValidity.start, end: inputValidity.end },
-    validity: { start: validity.start, end: validity.end, days: validity.days },
-    tripIds: { rule: 'append-service', servicePartIndex: null, derived: [], kept: [], addedBack: [], removed: [], collisions: [] },
-    addBack: { requested: 0, accepted: [], ignoredExcludedRoute: [], ignoredAlreadyPresent: [], notWeekday: [], notFound: [], duplicate: [] },
-    calendarDates: { kept: calendars.outCalendarDates.length, dropped: calendars.droppedDates },
-    droppedServices,
-    rowOrder: { trips: 'input', stop_times: 'input' },
-    feedVersion: feedInfo.version,
-    warnings,
-  }
-  return { ok: true, result: { feed: { tables, warnings: [] }, plan, report } }
-}
-
 /** §5.6 の calendar・calendar_dates の切り詰めの結果 */
 interface ClampedCalendars {
   calendarTable: GtfsTable | undefined
@@ -880,7 +765,7 @@ interface ClampedCalendars {
 }
 
 /**
- * 有効期間、calendar、calendar_dates(§5.6)。形2の適用(applyForm2)と減便をやめる版(applyRevert)で共通。
+ * 有効期間、calendar、calendar_dates(§5.6)。形2の適用(applyForm2)で使う。
  * calendar の各行を新しい有効期間に切り詰め(値が変わらない列は元の値のまま、start_date > end_date になる行は除いて
  * calendarRowDropped の警告)、calendar_dates は有効期間に入る行だけを入力の順で残す。
  * 切り詰めたあと新しい有効期間のどの日にも走らない service は、calendar の行と calendar_dates の残りの行も除く

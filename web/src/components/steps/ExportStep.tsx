@@ -5,16 +5,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { restoreTotals } from '@/gtfs/edit/diff'
-import HolidayCalendar from '@/components/HolidayCalendar'
-import { addDays } from '@/gtfs/calendar'
-import { applyForm2, applyRevert, defaultFeedVersion, feedVersionProblem, type Form2Result } from '@/gtfs/edit/form2'
-import { planOf, type Form2Plan, type PolicyKind } from '@/gtfs/edit/ops'
-import { feedValidity } from '@/gtfs/edit/services'
-import type { HolidayList } from '@/gtfs/holidays'
+import { applyForm2, defaultFeedVersion, feedVersionProblem, type Form2Result } from '@/gtfs/edit/form2'
+import { planOf, type PolicyKind } from '@/gtfs/edit/ops'
 import { form2Texts, timingNotices, validateEdit, type ValidationIssue } from '@/gtfs/validate/edit'
 import { exportFileName, writeGtfsZip } from '@/gtfs/write'
 import { formatDateJa, todayInJapan } from '@/lib/dates'
-import { revertServices } from './revertServices'
 import { diffOf, draftName, generatedAtOf, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { FromTo, IssueList, NoteList } from './editParts'
@@ -203,7 +198,6 @@ export default function ExportStep() {
             </div>
           )}
           <Attribution base={base} generatedAt={exported?.generatedAt ?? null} />
-          <RevertExport base={base} plan={plan} holidays={holidays} />
         </>
       )}
     </StepSection>
@@ -290,7 +284,7 @@ function ExportSummary({ base, version, customVersion }: { base: BaseGtfs; versi
       </dl>
       {report.addBack.accepted.length > 0 && <p className="text-xs">{restoreTotalsText(totals)}</p>}
       <NoteList
-        items={version.plan.period.end !== null ? [...texts.validity, '元のダイヤに戻す版は、この画面の下の「元のダイヤに戻す版を作る」で作れます。'] : texts.validity}
+        items={texts.validity}
         label="有効期間と期間の外"
       />
       <NoteList items={texts.changes} label="何が変わるか" />
@@ -310,292 +304,5 @@ function Attribution({ base, generatedAt }: { base: BaseGtfs; generatedAt: strin
         ZIP には同じ内容を ATTRIBUTION.md として入れます{generatedAt === null && '(加工日時は出力した日時になります)'}。
       </p>
     </section>
-  )
-}
-
-// ---- 減便をやめる版(docs/tasks-1103.md T23、取り決め 1104 §12.1-3 の (a)) ----
-
-/** 戻す日の既定:承認した方針に期間の終わりがあればその翌日、無ければ今日。入力の有効期間の中にそろえる */
-function defaultRestoreFrom(plan: Form2Plan | null, input: { start: string; end: string }, today: string): string {
-  const d = plan?.period.end ? addDays(plan.period.end, 1) : today
-  return d < input.start ? input.start : d > input.end ? input.end : d
-}
-
-/**
- * 減便をやめる版の検証の結果。validateEdit は形2の出力に向けた文言なので、この版に合わないものを除き、言い換える。
- * - weekdayNotRunning(「方針の対象になりません」)と validityGapBefore(形2の理由の文)は出さない。期間の外は revertTexts が書く
- * - 「減便後の平日ダイヤ」は、この版では元の平日ダイヤなので「平日ダイヤ」と書く。言い換えるのは、その語を使う
- *   holidayWithoutException・yearEnd だけ(validate/edit.ts の文言が変わると効かなくなるので、ExportStep.test.tsx で確かめている)
- */
-const REVERT_SKIPPED_CODES = new Set(['weekdayNotRunning', 'validityGapBefore'])
-const REVERT_REWORDED_CODES = new Set(['holidayWithoutException', 'yearEnd'])
-function revertIssues(issues: readonly ValidationIssue[]): ValidationIssue[] {
-  return issues
-    .filter((i) => !REVERT_SKIPPED_CODES.has(i.code))
-    .map((i) => (REVERT_REWORDED_CODES.has(i.code) ? { ...i, message: i.message.replaceAll('減便後の平日ダイヤ', '平日ダイヤ') } : i))
-}
-
-/**
- * 減便をやめる版の公開の注意。便を消さない版なので「便の削除が大きいと審査が長引く」の注意(publishNotes)は出さない。
- * ただし、新しい有効期間に走らなくなる service の便を除いたとき(report.droppedServices)は便が減るので出す
- */
-function revertTimingNotices(result: Form2Result, today: string): ValidationIssue[] {
-  const notices = timingNotices(result, today)
-  if (result.report.droppedServices.length > 0) return notices
-  return notices.filter((i) => !(i.code === 'publishNotes' && i.message.includes('便の削除')))
-}
-
-function revertTexts(result: Form2Result): string[] {
-  const { validity, inputValidity } = result.report
-  const texts = [
-    `出力する GTFS の有効期間は ${formatDateJa(validity.start)}〜${formatDateJa(validity.end)}(${validity.days}日)です。便と時刻は読み込んだ GTFS のままで、減便の方針と、平日に戻した便は入りません。`,
-  ]
-  if (validity.start > inputValidity.start) {
-    texts.push(`${formatDateJa(inputValidity.start)}〜${formatDateJa(addDays(validity.start, -1))} は出力に含まれません(元のダイヤに戻す日より前は、減便版の期間です)。`)
-  }
-  texts.push(
-    '読み込んだ GTFS が減便前の元の GTFS であることを確かめてください。減便版の ZIP を読み込んでいると、減便のダイヤのまま出力されます。',
-    'feed_version は、公開中の減便版の feed_version より大きい値にしてください。公開先が新しい版と見なさないことがあります。',
-  )
-  return texts
-}
-
-/** 減便をやめる版の出典(画面と ZIP の ATTRIBUTION.md)。減便を反映した版の文(attributionOf)とは加工の内容が違う */
-function revertAttributionOf(sample: BaseGtfs['sample'], generatedAt: string | null): { file: string; screen: string } {
-  const when = generatedAt === null ? '出力した日時' : generatedAtText(generatedAt)
-  if (sample) {
-    const text = `元データ:${sample.name} GTFS(北海道オープンデータプラットフォーム)。ライセンス:CC BY 4.0(https://creativecommons.org/licenses/by/4.0/deed.ja)。Dispatcher で有効期間と feed_version を書き換えています(便は元のまま。加工日時 ${when})。`
-    return { file: `# 出典\n\n${text}\n`, screen: text }
-  }
-  return {
-    file: `# 加工の記録\n\nこの GTFS は、Dispatcher で有効期間と feed_version を書き換えたもの(元のダイヤに戻す版。便は元のまま)です(加工日時 ${when})。元の GTFS の出典と利用条件は、元の GTFS の提供者の表示に従ってください。\n`,
-    screen: '元の GTFS の利用条件に従って、出典と加工した旨を示してください。',
-  }
-}
-
-/** 減便をやめる版の ZIP の名前。減便を反映した版と取り違えないよう、後ろに _restore を付ける */
-function revertFileName(label: string, generatedAt: string): string {
-  return exportFileName(label, generatedAt).replace(/\.zip$/, '_restore.zip')
-}
-
-interface RevertExported extends Exported {
-  restoreFrom: string
-}
-
-/**
- * 減便をやめる版の出力。読み込んだ GTFS の便を変えず、有効期間を「戻す日〜入力の末日」にし、feed_version を新しくする
- * (applyRevert。§5.6・§5.7 の切り詰めと feed_info の規則は形2と同じ)。編集の履歴(方針・足し戻し・下書き)には関わらない。
- * 中身は開いたときだけ作る(検証に道北バスの規模で 70ms ほどかかるため)
- */
-function RevertExport({ base, plan, holidays }: { base: BaseGtfs; plan: Form2Plan | null; holidays: HolidayList | null }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <section className="flex flex-col gap-2 border-t pt-3" aria-labelledby="revert-heading">
-      <h3 id="revert-heading" className="text-sm font-medium">
-        元のダイヤに戻す版
-      </h3>
-      <p className="text-xs text-muted-foreground">
-        減便を終えて元のダイヤに戻すときに公開する GTFS です。読み込んだ GTFS の便をそのまま使い、有効期間を元のダイヤに戻す日から入力の末日までにして、feed_version を新しくします。
-      </p>
-      <Button type="button" variant="outline" size="sm" className="self-start" aria-expanded={open} aria-controls="revert-body" onClick={() => setOpen((v) => !v)}>
-        {open ? '元のダイヤに戻す版を閉じる' : '元のダイヤに戻す版を作る'}
-      </Button>
-      {open && (
-        <div id="revert-body" className="flex flex-col gap-2">
-          <RevertBody base={base} plan={plan} holidays={holidays} />
-        </div>
-      )}
-    </section>
-  )
-}
-
-function RevertBody({ base, plan, holidays }: { base: BaseGtfs; plan: Form2Plan | null; holidays: HolidayList | null }) {
-  const [today] = useState(() => todayInJapan(new Date()))
-  const [previewAt] = useState(() => generatedAtOf(new Date()))
-  const input = useMemo(() => feedValidity(base.feed), [base.feed])
-  // null は既定の戻す日(承認した方針に合わせて変わる)。利用者が選んだら、その日のまま
-  const [picked, setPicked] = useState<string | null>(null)
-  const [feedVersion, setFeedVersion] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [exportIssues, setExportIssues] = useState<ValidationIssue[]>([])
-  const [exported, setExported] = useState<RevertExported | null>(null)
-  const urlRef = useRef<string | null>(null)
-
-  useEffect(
-    () => () => {
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-    },
-    [],
-  )
-  // 読み込み直したら、選んだ日・feed_version・前の出力を消す
-  const [shownBase, setShownBase] = useState(base)
-  if (shownBase !== base) {
-    setShownBase(base)
-    setPicked(null)
-    setFeedVersion('')
-    setExported(null)
-    setError(null)
-    setExportIssues([])
-  }
-  useEffect(() => {
-    if (exported === null && urlRef.current) {
-      URL.revokeObjectURL(urlRef.current)
-      urlRef.current = null
-    }
-  }, [exported])
-
-  const restoreFrom = input ? (picked ?? defaultRestoreFrom(plan, input, today)) : null
-  const services = useMemo(() => (input ? revertServices(base, plan, holidays, input) : undefined), [base, plan, holidays, input])
-  const custom = feedVersion.trim()
-  const versionProblem = feedVersionProblem(custom)
-  const deferredVersion = useDeferredValue(custom)
-  const preview = useMemo(() => {
-    if (!restoreFrom) return null
-    const v = feedVersionProblem(deferredVersion) ? '' : deferredVersion
-    const outcome = applyRevert(base.feed, { generatedAt: previewAt, restoreFrom, feedVersion: v, services })
-    if (!outcome.ok) return { result: null, message: outcome.message, issues: [] as ValidationIssue[] }
-    return { result: outcome.result, message: null, issues: revertIssues(validateEdit(base.feed, outcome.result, holidays)) }
-  }, [base.feed, restoreFrom, deferredVersion, previewAt, services, holidays])
-
-  if (!input || !restoreFrom) {
-    return <p className="text-sm text-muted-foreground">入力の有効期間が決まらないため、元のダイヤに戻す版を作れません。</p>
-  }
-  const blocked = versionProblem
-    ? versionProblem
-    : !preview?.result
-      ? (preview?.message ?? null)
-      : errorsIn(preview.issues).length > 0
-        ? '誤りがあるため出力できません。下の一覧を確かめ、元のダイヤに戻す日などを直してください。'
-        : null
-
-  function pick(date: string) {
-    setPicked(date)
-    // 前に出力した ZIP は別の戻す日のものなので、表示を消す
-    setExported(null)
-    setError(null)
-    setExportIssues([])
-  }
-
-  async function onExport() {
-    if (!restoreFrom || blocked) return
-    setBusy(true)
-    setError(null)
-    setExportIssues([])
-    try {
-      const generatedAt = generatedAtOf(new Date())
-      const outcome = applyRevert(base.feed, { generatedAt, restoreFrom, feedVersion: custom, services })
-      if (!outcome.ok) {
-        setError(outcome.message)
-        return
-      }
-      const issues = revertIssues(validateEdit(base.feed, outcome.result, holidays))
-      if (errorsIn(issues).length > 0) {
-        setExportIssues(issues)
-        setError('検証で誤りが見つかったため、出力しませんでした。')
-        return
-      }
-      const blob = await writeGtfsZip({
-        original: base.zip,
-        base: base.feed,
-        edited: outcome.result.feed,
-        generatedAt,
-        attribution: revertAttributionOf(base.sample, generatedAt).file,
-      })
-      // 書いている間に読み込み直したら、古い内容の ZIP は渡さない
-      if (useEditStore.getState().base !== base) {
-        setError('出力の途中で読み込んだ GTFS が変わったため、出力をやめました。もう一度押してください。')
-        return
-      }
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-      const url = URL.createObjectURL(blob)
-      urlRef.current = url
-      const fileName = revertFileName(base.label, generatedAt)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setExported({ url, fileName, generatedAt, feedVersion: outcome.result.report.feedVersion.after, restoreFrom })
-    } catch (e) {
-      setError(e instanceof Error && e.message ? e.message : '元のダイヤに戻す版を出力できませんでした。')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const result = preview?.result ?? null
-  return (
-    <>
-      <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium" id="revert-date-label">
-          元のダイヤに戻す日
-        </span>
-        <div aria-labelledby="revert-date-label" role="group">
-          <HolidayCalendar value={restoreFrom} onChange={pick} min={input.start} max={input.end} holidays={holidays} />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          この日から元のダイヤで走ります。
-          {plan?.period.end && `既定は、承認した減便の期間の終わり(${formatDateJa(plan.period.end)})の翌日です。`}
-        </p>
-      </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="revert-feed-version">元のダイヤに戻す版の feed_version</Label>
-        <Input
-          id="revert-feed-version"
-          value={feedVersion}
-          placeholder={`空欄なら出力した日時(例 ${defaultFeedVersion(result?.report.feedVersion.before ?? feedInfoVersion(base), previewAt)})`}
-          aria-invalid={versionProblem ? true : undefined}
-          onChange={(e) => setFeedVersion(e.target.value)}
-          className="font-mono"
-        />
-        {versionProblem && <p className="text-xs text-destructive">{versionProblem}</p>}
-      </div>
-      {result && (
-        <>
-          <dl className="flex flex-col gap-0.5 text-sm" aria-label="元のダイヤに戻す版">
-            <div>
-              <dt className="inline">有効期間:</dt>
-              <dd className="inline">
-                {formatDateJa(result.report.validity.start)}〜{formatDateJa(result.report.validity.end)}({result.report.validity.days}日)
-              </dd>
-            </div>
-            <div>
-              <dt className="inline">feed_version:</dt>
-              <dd className="inline">
-                {result.report.feedVersion.before || '(空)'} →{' '}
-                {custom !== '' && !versionProblem ? <span className="font-mono break-all">{custom}</span> : `出力した日時の値(例 ${result.report.feedVersion.after})`}
-              </dd>
-            </div>
-          </dl>
-          <NoteList items={revertTexts(result)} label="元のダイヤに戻す版の有効期間" />
-          <IssueList issues={preview?.issues ?? []} title="元のダイヤに戻す版:出力前の検証" />
-          <IssueList issues={revertTimingNotices(result, today)} title="元のダイヤに戻す版:公開の注意" />
-        </>
-      )}
-      {blocked && <p className="text-sm text-muted-foreground">{blocked}</p>}
-      <Button type="button" className="self-start" disabled={blocked !== null} loading={busy} loadingLabel="出力中" onClick={() => void onExport()}>
-        元のダイヤに戻す版を出力する
-      </Button>
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-      <IssueList issues={exportIssues} title="元のダイヤに戻す版:出力のときの検証" />
-      {exported && (
-        <div role="status" aria-label="元のダイヤに戻す版の出力" className="flex flex-col gap-1 rounded-md border px-2 py-1.5 text-xs">
-          <p>
-            出力しました:<span className="font-mono break-all">{exported.fileName}</span>(元のダイヤに戻す日 {formatDateJa(exported.restoreFrom)}、feed_version{' '}
-            {exported.feedVersion}、作成 {generatedAtText(exported.generatedAt)})
-          </p>
-          <a href={exported.url} download={exported.fileName} className="self-start underline">
-            元のダイヤに戻す版をもう一度ダウンロードする
-          </a>
-        </div>
-      )}
-      <p className="text-xs break-words text-muted-foreground">出典:{revertAttributionOf(base.sample, exported?.generatedAt ?? null).screen}</p>
-    </>
   )
 }

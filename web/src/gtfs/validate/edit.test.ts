@@ -244,7 +244,11 @@ describe('form2Texts', () => {
     )
     expect(texts.changes).toContain('平日に戻した便は学校の休業日にも走ります。休校日運休の便は GTFS では表せないため、変更指示書と周知文で補ってください。')
     const ended = form2Texts(apply(base, basePlan({ kind: 'weekdayToSundayHoliday', replacementService: 'SU', period: { start: '20261101', end: '20261120' } })), '20261020')
-    expect(ended.validity[1]).toContain('2026年11月21日 以降は出力に含まれず')
+    expect(ended.validity).toEqual([
+      '出力する GTFS の有効期間は 2026年11月1日〜2026年11月20日(20日)です。',
+      '2026年11月21日 以降は出力に含まれず、経路検索に便が出なくなります。元のダイヤには自動で戻りません。Dispatcher は期間の後のダイヤを出力しないため、期間が終わる前に、事業者のふだんの手順で元のダイヤの GTFS を公開し直してください。元の ZIP は保存しておいてください。',
+    ])
+    expect(ended.validity.join('')).not.toContain('戻す版')
     expect(ended.changes[0]).toContain('すべて日祝ダイヤ')
     expect(ended.changes.some((t) => t.includes('学校の休業日'))).toBe(false)
   })

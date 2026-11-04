@@ -544,7 +544,7 @@ export function form2Texts(result: Form2Result, today: string): Form2Texts {
   }
   if (plan.period.end !== null) {
     texts.push(
-      `${formatDate(addDays(validity.end, 1))} 以降は出力に含まれず、経路検索に便が出なくなります。その前に、元のダイヤに戻す版を公開してください。公開先の元データは減便版で置き換わるため、元の ZIP は保存しておいてください。`,
+      `${formatDate(addDays(validity.end, 1))} 以降は出力に含まれず、経路検索に便が出なくなります。元のダイヤには自動で戻りません。Dispatcher は期間の後のダイヤを出力しないため、期間が終わる前に、事業者のふだんの手順で元のダイヤの GTFS を公開し直してください。元の ZIP は保存しておいてください。`,
     )
   } else {
     texts.push(`出力の有効期間は ${formatDate(inputValidity.end)}(入力の GTFS の末日)までです。減便が続くときは、次の版でも同じ減便の方針を承認してください。`)

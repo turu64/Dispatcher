@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyForm2 } from '@/gtfs/edit/form2'
-import { basePlan, smallFeed, withRows } from '@/gtfs/edit/form2.fixture'
+import { basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
 import type { EditOp } from '@/gtfs/edit/ops'
 import type { GtfsFeed } from '@/gtfs/load'
 import { serializeTable } from '@/gtfs/write'
@@ -247,144 +247,31 @@ describe('ExportStep', () => {
     )
   })
 
-  describe('元のダイヤに戻す版', () => {
-    function openRevert(): HTMLElement {
-      fireEvent.click(screen.getByRole('button', { name: '元のダイヤに戻す版を作る' }))
-      return document.getElementById('revert-body')!
-    }
-
-    /**
-     * 日付('YYYYMMDD')のセルを、表示している月の日付の数字で探す(セルには日付の数字だけが入る。
-     * HolidayCalendar は前後の月の日を出さないので、数字は表示している月の中で1つに決まる)
-     */
-    function dayCell(container: HTMLElement, date: string): HTMLButtonElement {
-      const day = String(Number(date.slice(6, 8)))
-      const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button[data-kind]')).find((b) => b.textContent === day)
-      if (!button) throw new Error(`${date} のセルが見つかりません`)
-      return button
-    }
-
-    it('履歴が空でも、戻す日を選んで出力できる。便は読み込んだ GTFS のまま、有効期間は戻す日〜入力の末日、feed_version は新しくする', async () => {
-      render(<ExportStep />)
-      const body = openRevert()
-      // 既定の戻す日は今日(10/20)
-      expect(body.textContent).toContain('有効期間:2026年10月20日(火)〜2026年11月30日(月)(42日)')
-      fireEvent.click(screen.getByRole('button', { name: '次の月へ' }))
-      fireEvent.click(dayCell(body, '20261115'))
-      expect(body.textContent).toContain('有効期間:2026年11月15日(日)〜2026年11月30日(月)(16日)')
-      expect(body.textContent).toContain('2026年10月1日(木)〜2026年11月14日(土) は出力に含まれません')
-      expect(body.textContent).toContain('便と時刻は読み込んだ GTFS のままで、減便の方針と、平日に戻した便は入りません')
-      // 形2の文言は言い換え・除く(方針の対象・形2の理由の文を出さない)
-      expect(body.querySelector('[data-code="weekdayNotRunning"]')).toBeNull()
-      expect(body.querySelector('[data-code="validityGapBefore"]')).toBeNull()
-      expect(body.textContent).not.toContain('減便後の平日ダイヤ')
-      // 16 日(30 日未満)の注意と、開始日が今日より先の注意
-      expect(body.querySelector('[data-code="validityUnder30"]')).not.toBeNull()
-      expect(body.querySelector('[data-code="futureStart"]')).not.toBeNull()
-      expect(body.querySelector('[data-severity="error"]')).toBeNull()
-      // 便を消さない版なので、便の削除の審査の注意は出さない
-      expect(body.textContent).not.toContain('便の削除')
-
-      fireEvent.click(screen.getByRole('button', { name: '元のダイヤに戻す版を出力する' }))
-      await waitFor(() => expect(writeGtfsZip).toHaveBeenCalledTimes(1))
-      const input = writeGtfsZip.mock.calls[0][0]
-      const baseFeed = useEditStore.getState().base!.feed
-      // 便は変えない(元のバイト列のまま書く)
-      expect(input.edited.tables.get('trips')).toBe(baseFeed.tables.get('trips'))
-      expect(input.edited.tables.get('stop_times')).toBe(baseFeed.tables.get('stop_times'))
-      const info = input.edited.tables.get('feed_info')!.rows[0]
-      expect([info.feed_start_date, info.feed_end_date, info.feed_version]).toEqual(['20261115', '20261130', '202610201200'])
-      expect(input.edited.tables.get('calendar')!.rows.every((r) => r.start_date === '20261115' && r.end_date === '20261130')).toBe(true)
-      expect(input.attribution).toContain('Dispatcher で有効期間と feed_version を書き換えています(便は元のまま。加工日時 2026年10月20日 12:00)')
-      expect(input.attribution).not.toContain('減便を反映して')
-      const status = await screen.findByRole('status', { name: '元のダイヤに戻す版の出力' })
-      expect(status.textContent).toContain('dohoku_dispatcher_202610201200_restore.zip')
-      expect(status.textContent).toContain('元のダイヤに戻す日 2026年11月15日(日)')
-      // 減便の出力(承認済みの計画)は、履歴が空なので押せないまま
-      expect(screen.getByRole('button', { name: 'GTFS を出力する' })).toHaveProperty('disabled', true)
+  it('期間の後のダイヤは出力しない:元のダイヤに戻す版は作れず、期間に終わりがあれば公開し直す旨を出す', () => {
+    const op = policy()
+    if (op.type !== 'applyPolicy') throw new Error('方針の操作ではありません')
+    act(() => {
+      useEditStore.getState().propose({ ...op, settings: { ...op.settings, period: { start: '20261101', end: '20261115' } } }, 'user')
+      useEditStore.getState().commit()
     })
+    render(<ExportStep />)
+    const notes = screen.getByRole('list', { name: '有効期間と期間の外' })
+    expect(notes.textContent).toContain(
+      '2026年11月16日 以降は出力に含まれず、経路検索に便が出なくなります。元のダイヤには自動で戻りません。Dispatcher は期間の後のダイヤを出力しないため、期間が終わる前に、事業者のふだんの手順で元のダイヤの GTFS を公開し直してください。元の ZIP は保存しておいてください。',
+    )
+    expect(document.body.textContent).not.toContain('戻す版')
+    expect(screen.queryByRole('button', { name: /元のダイヤに戻す/ })).toBeNull()
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['GTFS を出力する'])
+  })
 
-    it('新しい有効期間に走らなくなる service の便を除くときは、便の削除の審査の注意を出す', () => {
-      // 10/31 で終わる平日の service(S11)の便を足す。戻す日を 11/15 にすると S11 は走らなくなり、便ごと除く
-      let feed = smallFeed()
-      feed = withRows(feed, 'calendar', [
-        ...feed.tables.get('calendar')!.rows,
-        { service_id: 'S11', monday: '1', tuesday: '1', wednesday: '1', thursday: '1', friday: '1', saturday: '0', sunday: '0', start_date: '20261001', end_date: '20261031' },
-      ])
-      feed = withRows(feed, 'trips', [...feed.tables.get('trips')!.rows, { route_id: 'R1', service_id: 'S11', trip_id: 'R1_1200_S11', trip_headsign: '市役所', block_id: '' }])
-      feed = withRows(feed, 'stop_times', [
-        ...feed.tables.get('stop_times')!.rows,
-        { trip_id: 'R1_1200_S11', arrival_time: '12:00:00', departure_time: '12:00:00', stop_id: 'A', stop_sequence: '1', pickup_type: '0', drop_off_type: '1' },
-        { trip_id: 'R1_1200_S11', arrival_time: '12:10:00', departure_time: '12:10:00', stop_id: 'B', stop_sequence: '2', pickup_type: '1', drop_off_type: '0' },
-      ])
-      act(() => useEditStore.getState().setBase({ feed, zip: new ArrayBuffer(0), label: 'dohoku.zip', sample: SAMPLE }))
-      render(<ExportStep />)
-      const body = openRevert()
-      // 既定の戻す日(今日 10/20)では S11 はまだ走るので、便は除かず注意も出さない
-      expect(body.textContent).not.toContain('便の削除')
-      fireEvent.click(screen.getByRole('button', { name: '次の月へ' }))
-      fireEvent.click(dayCell(body, '20261115'))
-      expect(body.textContent).toContain('S11:1 便')
-      const notes = [...body.querySelectorAll('[data-code="publishNotes"]')].map((e) => e.textContent ?? '')
-      expect(notes.some((t) => t.includes('便の削除が大きいと、公開先の審査が長引くことがあります。'))).toBe(true)
+  it('当面の間なら、期間の後の文は入力の末日までの文のまま', () => {
+    act(() => {
+      useEditStore.getState().propose(policy(), 'user')
+      useEditStore.getState().commit()
     })
-
-    it('年末年始と祝日の文言は「減便後の平日ダイヤ」を「平日ダイヤ」に言い換える(validate/edit.ts の文言が変わったら気づけるように)', () => {
-      // 有効期間を 2027/1/31 まで延ばし、戻す日(今日 10/20)からの有効期間に年末年始と平日の祝日を入れる
-      let feed = smallFeed()
-      feed = withRows(feed, 'calendar', feed.tables.get('calendar')!.rows.map((r) => ({ ...r, end_date: '20270131' })))
-      feed = withRows(feed, 'feed_info', feed.tables.get('feed_info')!.rows.map((r) => ({ ...r, feed_end_date: '20270131' })))
-      act(() => {
-        useEditStore.getState().setBase({ feed, zip: new ArrayBuffer(0), label: 'dohoku.zip', sample: SAMPLE })
-        useHolidayStore.setState({
-          holidays: { status: 'ready', list: { names: new Map([['20261123', '勤労感謝の日']]), first: '19550101', coveredUntil: '20271231', source: 'test' } },
-        })
-      })
-      render(<ExportStep />)
-      const body = openRevert()
-      const yearEnd = body.querySelector('[data-code="yearEnd"]')
-      expect(yearEnd?.textContent).toContain('は平日ダイヤで走ります。年末年始の運行を確かめてください。')
-      const holiday = body.querySelector('[data-code="holidayWithoutException"]')
-      expect(holiday?.textContent).toContain('平日ダイヤ(WK)')
-      expect(body.textContent).not.toContain('減便後')
-    })
-
-    it('承認した方針に期間の終わりがあれば、既定の戻す日はその翌日。下書きがあっても出力でき、7 日以下の有効期間は止める', async () => {
-      const op = policy()
-      if (op.type !== 'applyPolicy') throw new Error('方針の操作ではありません')
-      act(() => {
-        useEditStore.getState().propose({ ...op, settings: { ...op.settings, period: { start: '20261101', end: '20261115' } } }, 'user')
-        useEditStore.getState().commit()
-        useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '', schoolDaysOnly: false }] }, 'claude')
-      })
-      render(<ExportStep />)
-      // 減便の出力の要約から、この版へ案内する
-      expect(document.body.textContent).toContain('元のダイヤに戻す版は、この画面の下の「元のダイヤに戻す版を作る」で作れます。')
-      const body = openRevert()
-      expect(body.textContent).toContain('既定は、承認した減便の期間の終わり(2026年11月15日(日))の翌日です。')
-      expect(body.textContent).toContain('有効期間:2026年11月16日(月)〜2026年11月30日(月)(15日)')
-      const button = screen.getByRole('button', { name: '元のダイヤに戻す版を出力する' })
-      expect(button).toHaveProperty('disabled', false)
-
-      // 11/28(土)からでは 3 日しかなく、出力を止める
-      fireEvent.click(dayCell(body, '20261128'))
-      expect(body.querySelector('[data-code="shortValidity"]')?.getAttribute('data-severity')).toBe('error')
-      expect(button).toHaveProperty('disabled', true)
-
-      // feed_version は自分で入れられる。制御文字は止める
-      const field = screen.getByLabelText('元のダイヤに戻す版の feed_version')
-      fireEvent.click(dayCell(body, '20261121'))
-      fireEvent.change(field, { target: { value: 'a\tb' } })
-      expect(button).toHaveProperty('disabled', true)
-      fireEvent.change(field, { target: { value: '202611300000' } })
-      expect(button).toHaveProperty('disabled', false)
-      fireEvent.click(button)
-      await waitFor(() => expect(writeGtfsZip).toHaveBeenCalledTimes(1))
-      const info = writeGtfsZip.mock.calls[0][0].edited.tables.get('feed_info')!.rows[0]
-      expect([info.feed_start_date, info.feed_version]).toEqual(['20261121', '202611300000'])
-      // 減便の出力の feed_version の欄は変えない
-      expect(useEditStore.getState().feedVersion).toBe('')
-    })
+    render(<ExportStep />)
+    const notes = screen.getByRole('list', { name: '有効期間と期間の外' })
+    expect(notes.textContent).toContain('出力の有効期間は 2026年11月30日(入力の GTFS の末日)までです。減便が続くときは、次の版でも同じ減便の方針を承認してください。')
+    expect(notes.textContent).not.toContain('公開し直して')
   })
 })
-

@@ -19,9 +19,10 @@ const GENERATED_AT = '202611041200'
 const KYOTO = 'Kyoto_City_Bus_GTFS-20260930.zip'
 const DOHOKU = 'dohoku_bus_減便前.zip'
 
-function confirmedChoice(feed: GtfsFeed, holidays: HolidayList, kind: PolicyKind): Exclude<GroupChoice, { error: unknown }> {
+/** Jev の答えを待っていない(ready)ときの、ダイヤ単位の値。グループ分けを確定する操作は無い(指摘19) */
+function readyChoice(feed: GtfsFeed, holidays: HolidayList, kind: PolicyKind): Exclude<GroupChoice, { error: unknown }> {
   const g = groupedPolicyServices(proposeGroups(computeServiceFeatures(feed, holidays)), true)
-  if (g?.status !== 'confirmed') throw new Error('確定したグループ分けのはず')
+  if (g?.status !== 'confirmed') throw new Error('ダイヤ単位で選べるはず')
   const c = g.byKind[kind]
   if ('error' in c) throw new Error(c.error.map((e) => e.message).join('\n'))
   return c
@@ -40,6 +41,8 @@ describe.skipIf(!hasData(DOHOKU))('道北バス:ダイヤ単位で選ばず、�
     const groups = proposeGroups(computeServiceFeatures(feed, holidays))
     expect(groups.simple).toBe(true)
     expect(groupedPolicyServices(groups, true)).toBeNull()
+    // Jev を呼ばないので待つことも無いが、待っている扱いでも null(減便の方針の手順は今の ServiceSelect の形のまま)
+    expect(groupedPolicyServices(groups, false)).toBeNull()
     const input = feedValidity(feed)!
     const guess = guessServiceChoice(feed, describeServices(feed, holidays), policyValidity(input, { start: '20261101', end: null })!)
     const sat = policyServicesFor(groups, 'weekdayToSaturday')
@@ -59,7 +62,7 @@ describe.skipIf(!hasData(KYOTO))('京都市営バス:画面の経路(groupSettin
   beforeAll(async () => {
     feed = await loadFeed(KYOTO)
     holidays = loadHolidays()
-    choice = confirmedChoice(feed, holidays, 'weekdayToSaturday')
+    choice = readyChoice(feed, holidays, 'weekdayToSaturday')
   }, 120_000)
 
   it('主の組が weekdayService・replacementService とそろう', () => {

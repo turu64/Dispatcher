@@ -2,7 +2,7 @@
  * グループ分けを、減便の方針の手順・AI のツール・[画面の状態] の行で使う形にする(docs/design-service-groups.md §5.2・§5.3)。
  *
  * - groupedPolicyServices:画面と AI が「ダイヤ単位で選ぶ」かを決める。単純な GTFS で1組の形で足りる(道北バス)なら null
- *   (今の service の選び方のまま)。単純でない GTFS で確定していなければ unconfirmed
+ *   (今の service の選び方のまま)。単純でない GTFS で Jev の答えを待っている間は unconfirmed
  * - groupSettings:policyServicesFor の値から PolicySettings を作る(notApplied は入れない)
  */
 import { skippedReplacementsOf, type Period, type PolicyKind, type PolicySettings, type ServicePair } from '../edit/ops'
@@ -35,12 +35,14 @@ function choiceOf(groups: ServiceGroups, kind: PolicyKind): GroupChoice {
  * グループ分けから、方針の種類ごとの service を作る。
  * - グループ分けが無い(祝日一覧を待っている間など)なら null
  * - 単純な GTFS:どちらの種類も1組の形(pairs 無し)で足りるなら null(今の選び方のまま)。
- *   組の表が要る(入れ替えに使う service が無い名士バス・羽幌町)ときだけ confirmed(単純な GTFS は読み込んだ時点で確定)
- * - 単純でない GTFS:確定していれば confirmed、していなければ unconfirmed
+ *   組の表が要る(入れ替えに使う service が無い名士バス・羽幌町)ときだけ confirmed(単純な GTFS は Jev を呼ばない)
+ * - 単純でない GTFS:ready(Jev の答えを待っていない。store/serviceGroups の jevPending が false)なら confirmed、
+ *   待っている間は unconfirmed。グループ分けを利用者が確定するしくみは無い(指摘19。最後の確かめは減便の方針の「対象便を確かめる」)。
+ *   confirmed・unconfirmed の名前は、ダイヤ単位で選べるか・選べないかの意味で残している
  */
-export function groupedPolicyServices(groups: ServiceGroups | null, confirmed: boolean): GroupedPolicyServices | null {
+export function groupedPolicyServices(groups: ServiceGroups | null, ready: boolean): GroupedPolicyServices | null {
   if (!groups) return null
-  if (!groups.simple && !confirmed) return { status: 'unconfirmed' }
+  if (!groups.simple && !ready) return { status: 'unconfirmed' }
   const byKind = {
     weekdayToSaturday: choiceOf(groups, 'weekdayToSaturday'),
     weekdayToSundayHoliday: choiceOf(groups, 'weekdayToSundayHoliday'),

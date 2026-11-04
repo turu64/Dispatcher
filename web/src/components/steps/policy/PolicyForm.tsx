@@ -35,13 +35,13 @@ import { cn } from '@/lib/utils'
 import { setChatToolProviders } from '@/store/chat'
 import { useEditStore, type BaseGtfs } from '@/store/edit'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
-import { useServiceGroupsStore } from '@/store/serviceGroups'
+import { jevPending, useServiceGroupsStore } from '@/store/serviceGroups'
 import { draftActor, proposeAsUser, replaceClaudeDraftMessage } from '../editActions'
 import { InlineConfirm, IssueList, NoteList } from '../editParts'
 import { diaLabel, invalidCalendarNote, REASON_LABELS, REPLACEMENT_LABELS } from '../editText'
-import { jumpToServiceGroups } from '../stepIds'
 import { ExcludedRoutes } from './DiffTables'
-import { PairList } from './PairList'
+import { GROUP_MANUAL_ID, GroupReplaceFields } from './GroupReplaceFields'
+import { hasKindEdits, type ReplaceMode } from './groupReplace'
 import { EMPTY_HOLE_CLASS, PERIOD_PROBLEM_CODES, PeriodChecks, PeriodHoles, PolicyKindField } from './PeriodFields'
 import { ServiceDetails, ServiceSelect } from './ServiceFields'
 import { routeTripCounts, sameGroupTimetable } from './stats'
@@ -70,14 +70,23 @@ export function PolicyForm({
   const holidays = holidayListOf(holidayState)
   const input = useMemo(() => feedValidity(feed), [feed])
   const services = useMemo(() => describeServices(feed, holidays), [feed, holidays])
-  // 読み込みの手順で確定したダイヤのグループ分け(docs/design-service-groups.md §5.2)。単純な GTFS で1組の形で足りるときは null
-  // (今の service の選び方のまま)。単純でない GTFS で確定していなければ unconfirmed(今の選び方のまま、確定を促す)
+  // ダイヤのグループ分け(docs/design-service-groups.md §5.2)。単純な GTFS で1組の形で足りるときは null(今の service の選び方のまま)。
+  // 単純でない GTFS で Jev の答えを待っている間は unconfirmed(今の選び方のまま、待っていることを出す)。確定のしくみは無い(指摘19)
   const groups = useServiceGroupsStore((s) => s.groups)
-  const groupsConfirmed = useServiceGroupsStore((s) => s.confirmed)
-  const grouped = useMemo(() => groupedPolicyServices(groups, groupsConfirmed), [groups, groupsConfirmed])
+  const jevState = useServiceGroupsStore((s) => s.jev.state)
+  const stopJev = useServiceGroupsStore((s) => s.stopJev)
+  const groupsReady = !jevPending(jevState)
+  const grouped = useMemo(() => groupedPolicyServices(groups, groupsReady), [groups, groupsReady])
   const groupTrips = useMemo(() => new Map((groups?.features.services ?? []).map((f) => [f.serviceId, f.tripCount])), [groups])
 
   const [kind, setKind] = useState<PolicyKind>(initial?.kind ?? 'weekdayToSaturday')
+  // 入れ替えるダイヤの選び方(方針の種類ごと)。既定は自動。その種類で手動で直した値が残っていれば手動から始める
+  const [replaceModes, setReplaceModes] = useState<Record<PolicyKind, ReplaceMode>>(() => ({
+    weekdayToSaturday: hasKindEdits(groups, 'weekdayToSaturday') ? 'manual' : 'auto',
+    weekdayToSundayHoliday: hasKindEdits(groups, 'weekdayToSundayHoliday') ? 'manual' : 'auto',
+  }))
+  const replaceMode = replaceModes[kind]
+  const setReplaceMode = (m: ReplaceMode) => setReplaceModes((prev) => ({ ...prev, [kind]: m }))
   // 期間の日付は GTFS と同じ 'YYYYMMDD'(まだ決まっていなければ '')
   const [startDate, setStartDate] = useState(() => {
     if (initial) return initial.period.start
@@ -121,7 +130,7 @@ export function PolicyForm({
   )
 
   const replacementRole: ChoiceRole = kind === 'weekdayToSaturday' ? 'saturday' : 'sundayHoliday'
-  // ダイヤ単位で選ぶとき(グループ分けが確定している)の、この種類の値。作れなければ error
+  // ダイヤ単位で選ぶとき(Jev の答えを待っていない)の、この種類の値。作れなければ error
   const groupChoice = grouped?.status === 'confirmed' ? grouped.byKind[kind] : null
   const groupMode = groupChoice !== null
   const groupValue = groupChoice && !('error' in groupChoice) ? groupChoice : null
@@ -141,7 +150,7 @@ export function PolicyForm({
           weekday: overrides.weekday?.value ?? g?.weekday ?? null,
           saturday: overrides.saturday?.value ?? g?.saturday ?? null,
           sundayHoliday: overrides.sundayHoliday?.value ?? g?.sundayHoliday ?? null,
-          // 確定したグループ分けがあれば、AI のツールもダイヤ単位で減便の方針を作る
+          // ダイヤ単位で選べるときは、AI のツールもダイヤ単位で減便の方針を作る(手動で選んだ値も store に入っている)
           ...(grouped ? { groups: grouped } : {}),
         }
       },
@@ -245,6 +254,17 @@ export function PolicyForm({
     if (serviceProblem) setDetailsOpen(true)
   }
 
+  // 決まらない行などで作れないときの「手動で選ぶ」:詳しい設定を開いて手動にし、手動の欄の見出しへ焦点を移す
+  function openManual() {
+    flushSync(() => {
+      setReplaceMode('manual')
+      setDetailsOpen(true)
+    })
+    const el = document.getElementById(GROUP_MANUAL_ID)
+    el?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+    el?.focus({ preventScroll: true })
+  }
+
   function submit(replaceClaudeDraft = false) {
     if (!settings) return
     setMessage(null)
@@ -292,6 +312,7 @@ export function PolicyForm({
             onOtherTextChange={setOtherText}
             note={note}
             onNoteChange={setNote}
+            noteHintId={REASON_NOTE_HINT_ID}
           />
           <span>のため、</span>
           <PeriodHoles
@@ -306,6 +327,12 @@ export function PolicyForm({
           />
           <PolicyKindField kind={kind} onChange={setKind} labels={grouped?.status === 'confirmed' ? groupLabels(grouped.byKind, kind, droppedByKind, skippedByKind) : undefined} />
         </div>
+        {reasonChoice !== null && reasonChoice !== 'other' && (
+          // 括弧の補足の入力欄の説明(aria-describedby)。見た目は小さく
+          <p id={REASON_NOTE_HINT_ID} className="text-[11px] leading-tight text-muted-foreground">
+            括弧の補足は、変更指示書に載せます。
+          </p>
+        )}
       </fieldset>
 
       <section aria-label="確認の結果" className="flex flex-col gap-1.5 rounded-md bg-muted/50 px-2.5 py-2">
@@ -333,11 +360,17 @@ export function PolicyForm({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-amber-900 dark:text-amber-300" data-testid="groups-unconfirmed">
             <p>
               <span aria-hidden="true">! </span>
-              この GTFS は平日・土曜・日祝のダイヤが複数の service_id に分かれています。読み込みの手順でダイヤのグループ分けを確かめて確定すると、ダイヤ単位で選べます(確定するまでは、下の詳しい設定で選んだ service だけを入れ替えます)。
+              この GTFS は平日・土曜・日祝のダイヤが複数の service_id に分かれています。
+              {jevState === 'awaitingConsent'
+                ? '手順「読み込み」で Jev に送るかを選ぶと、ダイヤ単位で選べます'
+                : 'Jev の答えが届くと、ダイヤ単位で選べます'}
+              (それまでは、下の詳しい設定で選んだ service だけを入れ替えます)。
             </p>
-            <Button type="button" variant="outline" size="xs" onClick={jumpToServiceGroups}>
-              グループ分けを確かめる
-            </Button>
+            {(jevState === 'checking' || jevState === 'sending') && (
+              <Button type="button" variant="outline" size="xs" onClick={stopJev}>
+                Jev を待たずに規則だけで進める
+              </Button>
+            )}
           </div>
         )}
         {groupErrors && (
@@ -348,9 +381,11 @@ export function PolicyForm({
                 {p.message}
               </p>
             ))}
-            <Button type="button" variant="outline" size="xs" onClick={jumpToServiceGroups}>
-              読み込みの手順の表で直す
-            </Button>
+            {!(detailsOpen && replaceMode === 'manual') && (
+              <Button type="button" variant="outline" size="xs" onClick={openManual}>
+                手動で選ぶ
+              </Button>
+            )}
           </div>
         )}
         {needsDetails && (
@@ -408,15 +443,17 @@ export function PolicyForm({
         <div className="mt-2 flex min-w-0 flex-col gap-3 border-l pl-3">
           {groupMode ? (
             <fieldset className="flex min-w-0 flex-col gap-2" data-testid="policy-groups">
-              <legend className="mb-1 text-sm font-medium">入れ替えるダイヤ(読み込みの手順で確定したグループ分け)</legend>
-              {groupValue ? (
-                <PairList settings={groupValue} tripCounts={groupTrips} dropped={dropped} skipped={skipped} />
-              ) : (
-                <p className="text-xs text-destructive">このグループ分けでは、{REPLACEMENT_LABELS[kind]}ダイヤに変更できません。</p>
-              )}
-              <Button type="button" variant="outline" size="xs" className="self-start" onClick={jumpToServiceGroups}>
-                読み込みの手順の表で直す
-              </Button>
+              <legend className="mb-1 text-sm font-medium">入れ替えるダイヤ</legend>
+              <GroupReplaceFields
+                kind={kind}
+                value={groupValue}
+                errors={groupErrors}
+                mode={replaceMode}
+                onModeChange={setReplaceMode}
+                tripCounts={groupTrips}
+                dropped={dropped}
+                skipped={skipped}
+              />
               <ServiceDetails feed={feed} services={services} validity={validity} />
             </fieldset>
           ) : (
@@ -484,6 +521,9 @@ export function PolicyForm({
     </form>
   )
 }
+
+/** 括弧の補足の入力欄の説明の id(「変更指示書に載せます」) */
+const REASON_NOTE_HINT_ID = 'policy-reason-note-hint'
 
 /** 減便の理由の穴の選択肢。'other' は「その他」(文の中の入力欄に書いた文が理由になる。区分は null)、'none' は選ばない */
 type ReasonChoice = NonNullable<PolicyReason['category']> | 'other'
@@ -570,6 +610,7 @@ function ReasonHole({
   onOtherTextChange,
   note,
   onNoteChange,
+  noteHintId,
 }: {
   choice: ReasonChoice | null
   onChoiceChange: (c: ReasonChoice | null) => void
@@ -577,6 +618,8 @@ function ReasonHole({
   onOtherTextChange: (v: string) => void
   note: string
   onNoteChange: (v: string) => void
+  /** 補足の入力欄の説明(「変更指示書に載せます」)の id */
+  noteHintId: string
 }) {
   const otherRef = useRef<HTMLInputElement>(null)
   // 「その他」を選んだら、閉じたときに焦点をセレクトに戻さず、文の中に出た入力欄に移す
@@ -627,6 +670,7 @@ function ReasonHole({
           <span aria-hidden="true">(</span>
           <Input
             aria-label="減便の理由の補足"
+            aria-describedby={noteHintId}
             // 「その他」の欄と同じく、書いた文の長さに合わせて広げる
             className="h-7 w-auto min-w-32 max-w-full text-sm field-sizing-content md:text-sm"
             placeholder="補足(任意)例:インフルエンザ 20 人"

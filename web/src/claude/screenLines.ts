@@ -54,7 +54,7 @@ export function stateLines(s: ScreenState): { key: string; line: string }[] {
         groups?.status === 'confirmed'
           ? `${head}${groupsText(groups.byKind)}`
           : groups?.status === 'unconfirmed'
-            ? `${head}${legacy}ダイヤのグループ分けは未確定です(手順「読み込み」で確定すると、ダイヤ単位で減便の方針を作れます。確定するまでは平日の service ${pick(svc?.weekday)} だけを入れ替えます)。`
+            ? `${head}${legacy}ダイヤのグループ分けは Jev の答えを待っています(答えが届くと、ダイヤ単位で減便の方針を作れます。それまでは平日の service ${pick(svc?.weekday)} だけを入れ替えます)。`
             : `${head}${legacy}`,
     })
   }

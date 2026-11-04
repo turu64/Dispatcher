@@ -1,6 +1,6 @@
 /**
  * 読み込みの手順の「ダイヤのグループ分け」の文と、表の行の並び(docs/design-service-groups.md §5.1・§3.6)。
- * 画面の部品(ServiceGroupsCard.tsx)から、文と並びだけをここに分けて確かめる
+ * 画面の部品(ServiceGroupsCard.tsx)から、文と並びだけをここに分けて確かめる。表は読む専用(指摘19。docs/tasks-1105.md の U04)
  */
 import type { PolicyKind } from '@/gtfs/edit/ops'
 import { policyServicesFor } from '@/gtfs/groups/policy'
@@ -85,6 +85,27 @@ export function coverageParts(f: ServiceFeatures): string[] {
 /** 便数・系統の列:「310 便・8 系統」 */
 export function tripsText(f: ServiceFeatures): string {
   return `${f.tripCount.toLocaleString('ja-JP')} 便・${f.routeCount} 系統`
+}
+
+/** 単純でない GTFS で、表の上に出す「どこで直すか」の1文(読み込みの手順の表は読む専用) */
+export const GROUPS_FIX_NOTE =
+  '入れ替えは、この分け方のとおりに一括で行います。service ごとに直すときは、手順「減便の方針」の詳しい設定で「手動で選ぶ」を選びます。'
+
+/**
+ * 表の「扱い・入れる先」の列の文(読む専用)。入れ替えに使う service は「入れる先 01001」「使わない」「決まらない」、
+ * 平日の側は「入れ替える」「なくす」「残す」(形2で表せない service で扱いが決まっていなければ「決まっていない」)
+ */
+export function rowValueText(row: KindRow, kg: KindGroups): string {
+  if (row.side === 'replacement') {
+    if (row.into !== null) return `入れる先 ${row.into}`
+    return row.intoMark === 'undecided' ? '決まらない' : '使わない'
+  }
+  if (row.side === 'weekdayOnly' || row.side === 'unsupported') {
+    if (row.treatment === 'keep') return '残す'
+    if (row.treatment === null) return '決まっていない'
+    return kg.rows.some((r) => r.side === 'replacement' && r.into === row.serviceId) ? '入れ替える' : 'なくす'
+  }
+  return '手を付けない'
 }
 
 /** 行の印(平日の側は扱いの印、入れ替えに使う側は割り当ての印) */
@@ -197,7 +218,7 @@ export function complexSummary(groups: ServiceGroups, attention: number): string
   return `${head}確かめが要るものが ${attention} 件あります${byTab}。`
 }
 
-/** 規則と Jev が食い違っている行の数(方針の種類をまたいで重ねない)。確定すると規則の値で進む */
+/** 規則と Jev が食い違っている行の数(方針の種類をまたいで重ねない)。直さなければ規則の値で入れ替える */
 export function conflictCount(groups: ServiceGroups): number {
   const ids = new Set<string>()
   for (const k of POLICY_KINDS) for (const r of groups.byKind[k].rows) if (markOf(r) === 'conflict') ids.add(r.serviceId)
@@ -212,5 +233,12 @@ export function attentionCount(groups: ServiceGroups, kind?: PolicyKind): number
   const kinds: PolicyKind[] = kind ? [kind] : ['weekdayToSaturday', 'weekdayToSundayHoliday']
   const ids = new Set<string>()
   for (const k of kinds) for (const r of groups.byKind[k].rows) if (rowNeedsAttention(r)) ids.add(r.serviceId)
+  return ids.size
+}
+
+/** 入れる平日の service が決まらない service の数(方針の種類をまたいで重ねない) */
+export function undecidedCount(groups: ServiceGroups): number {
+  const ids = new Set<string>()
+  for (const k of POLICY_KINDS) for (const r of groups.byKind[k].rows) if (r.intoMark === 'undecided') ids.add(r.serviceId)
   return ids.size
 }

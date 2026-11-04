@@ -46,9 +46,10 @@ describe('[画面の状態] のグループ分け', () => {
     expect(line).not.toContain('平日の service:')
   })
 
-  it('未確定なら、今の行に未確定であることを足す', () => {
+  it('Jev の答えを待っている間(unconfirmed)は、今の行に待っていることを足す。確定の操作は言わない', () => {
     const line = gtfsLine({ weekday: '01001', saturday: '03001', sundayHoliday: '02001', groups: { status: 'unconfirmed' } })
     expect(line).toContain('平日の service:01001、土曜:03001、日祝:02001。')
-    expect(line).toContain('ダイヤのグループ分けは未確定です')
+    expect(line).toContain('ダイヤのグループ分けは Jev の答えを待っています(答えが届くと、ダイヤ単位で減便の方針を作れます。それまでは平日の service 01001 だけを入れ替えます)。')
+    expect(line).not.toContain('確定')
   })
 })

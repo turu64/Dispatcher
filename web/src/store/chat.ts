@@ -3,7 +3,7 @@ import { ScreenLineTracker, type EditSnapshot, type ScreenState } from '../claud
 import { ClaudeSession, createSessionApi, type ConnectionState, type DisplayStreamEvent, type SessionApi, type SessionDeps, type SessionEvent, type TextBlock } from '../claude/session'
 import { createResearchApi, MAX_KNOWN_IDS, type ResearchApi, type ResearchOverview, type ResearchStartView } from '../claude/research'
 import { ClaudeRequestError, NOT_CONNECTED } from '../claude/sse'
-import { byteLength, runTool, toolLabel, type PolicyServices, type ToolDeps, type ToolOutcome } from '../claude/tools'
+import { byteLength, MAX_RESULT_BYTES, runTool, toolLabel, type PolicyServices, type ToolDeps, type ToolOutcome } from '../claude/tools'
 import { planOf } from '../gtfs/edit/ops'
 import type { RestoreHintContext } from '../gtfs/edit/restore'
 import { describeServices, feedValidity, guessServiceChoice, policyValidity } from '../gtfs/edit/services'
@@ -15,7 +15,7 @@ import { useHolidayStore } from './holidays'
 import { useReachStore } from './reach'
 import { useResearchStore } from './research'
 import { buildRestoreHintContext } from './restoreHintContext'
-import { useServiceGroupsStore } from './serviceGroups'
+import { jevPending, useServiceGroupsStore } from './serviceGroups'
 
 /**
  * アプリ内の Claude との会話の store(docs/interfaces-1105.md §6)。
@@ -66,8 +66,125 @@ export const RESEARCH_KNOWN_FAILED = '調べた結果を AI に渡せません�
 export const TOO_MANY_TOOL_CALLS = 'too_many_tool_calls'
 /** 止まった作業の「続きを頼む」で送る利用者の文 */
 export const CONTINUE_PROMPT = '続けてください。'
-/** 「続きを頼む」で [画面の操作] の行の後ろに足す行 */
+/** 「続きを頼む」で [画面の操作] の行の後ろに足す行(この相談で AI が確かめた便が無いとき。あれば continueLine) */
 export const CONTINUE_LINE = '[画面の操作] 利用者が、止まった作業の続きを頼みました。'
+
+// ---- AI が確かめた便の件数(指摘18.4) ----
+
+/** search_trips の scope の画面の名前(docs/wording.md) */
+export const SEARCH_SCOPE_NAMES: Readonly<Record<string, string>> = {
+  removed: 'なくなる便',
+  added: '加わる便',
+  same: '同じ便',
+  added_back: '平日に戻した便',
+  base_weekday: '減便前の平日の便',
+}
+
+/** search_trips の入力のうち、便を絞る条件の項目(offset は続きから読むだけなので条件に入れない) */
+const SEARCH_FILTER_KEYS = ['route_ids', 'stop_name', 'depart_from', 'depart_to', 'hints'] as const
+
+/** 1回の search_trips で AI に返した便(結果の JSON から読む) */
+export interface SearchTripsSummary {
+  scope: string
+  /** 結果の total(条件で絞ったときは、絞った後の数) */
+  total: number
+  /** AI に返した便(結果が 20KB を超えて後ろを省いたときは、残った便だけ)。`{feed}:{trip_id}` */
+  tripKeys: string[]
+  /** 系統・停留所名・時刻・判断材料のどれかで絞った */
+  filtered: boolean
+}
+
+function isSet(v: unknown): boolean {
+  if (v === null || v === undefined) return false
+  if (typeof v === 'string') return v.trim() !== ''
+  if (Array.isArray(v)) return v.some((x) => typeof x !== 'string' || x.trim() !== '')
+  return true
+}
+
+/**
+ * search_trips の入力と結果から、AI に返した便を読む。結果が ok でない・20KB を超えて AI に届かない・形が違うときは null。
+ * 件数は結果の trips の数(fitResult が後ろを省いたときは returned より少ない)
+ */
+export function summarizeSearchTrips(input: unknown, outcome: ToolOutcome): SearchTripsSummary | null {
+  if (outcome.isError || byteLength(outcome.content) > MAX_RESULT_BYTES) return null
+  let body: unknown
+  try {
+    body = JSON.parse(outcome.content)
+  } catch {
+    return null
+  }
+  if (typeof body !== 'object' || body === null) return null
+  const b = body as Record<string, unknown>
+  if (b.status !== 'ok' || typeof b.scope !== 'string' || typeof b.total !== 'number' || !Array.isArray(b.trips)) return null
+  const tripKeys: string[] = []
+  for (const t of b.trips as unknown[]) {
+    if (typeof t !== 'object' || t === null) continue
+    const trip = t as Record<string, unknown>
+    if (typeof trip.trip_id === 'string') tripKeys.push(`${typeof trip.feed === 'string' ? trip.feed : ''}:${trip.trip_id}`)
+  }
+  const o = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {}
+  return { scope: b.scope, total: b.total, tripKeys, filtered: SEARCH_FILTER_KEYS.some((k) => isSet(o[k])) }
+}
+
+function scopeName(scope: string): string {
+  return SEARCH_SCOPE_NAMES[scope] ?? scope
+}
+
+/** ツールの項目の括弧の中(「なくなる便 292 便のうち 50 便」。条件で絞ったときは「条件に合うなくなる便 12 便のうち 12 便」) */
+export function searchTripsDetail(s: SearchTripsSummary): string {
+  return `${s.filtered ? '条件に合う' : ''}${scopeName(s.scope)} ${s.total} 便のうち ${s.tripKeys.length} 便`
+}
+
+/** 1回の相談で、scope ごとに AI に返した便と最新の total */
+export interface CheckedScope {
+  /** 条件を付けずに探した結果の最新の total。条件を付けずに探していなければ null */
+  total: number | null
+  /** 条件を付けずに探した結果で返した便 */
+  unfiltered: Set<string>
+  /** 条件で絞った結果で返した便 */
+  filtered: Set<string>
+}
+
+export type CheckedTally = Map<string, CheckedScope>
+
+/** 相談の数えに、search_trips の1回の結果を足す */
+export function addToTally(tally: CheckedTally, s: SearchTripsSummary): void {
+  let c = tally.get(s.scope)
+  if (!c) {
+    c = { total: null, unfiltered: new Set(), filtered: new Set() }
+    tally.set(s.scope, c)
+  }
+  if (s.filtered) for (const k of s.tripKeys) c.filtered.add(k)
+  else {
+    c.total = s.total
+    for (const k of s.tripKeys) c.unfiltered.add(k)
+  }
+}
+
+/** 条件を付けずに探した scope ごとの「なくなる便 292 便のうち 100 便」 */
+function checkedMain(tally: CheckedTally): string[] {
+  return [...tally].filter(([, c]) => c.total !== null).map(([scope, c]) => `${scopeName(scope)} ${c.total} 便のうち ${c.unfiltered.size} 便`)
+}
+
+/**
+ * 返答の終わりに出す1行。条件を付けずに探した結果があるときだけ出す(無ければ null)。
+ * 条件で絞った結果は、条件を付けずに探した結果に無い便の数だけを添える
+ */
+export function checkedLine(tally: CheckedTally): string | null {
+  const main = checkedMain(tally)
+  if (main.length === 0) return null
+  const extra = [...tally]
+    .map(([scope, c]) => ({ scope, n: [...c.filtered].filter((k) => !c.unfiltered.has(k)).length }))
+    .filter((x) => x.n > 0)
+    .map((x) => `${scopeName(x.scope)} ${x.n} 便`)
+  return `この相談で AI が確かめた便:${main.join('、')}${extra.length > 0 ? `(ほかに条件で絞って探した便:${extra.join('、')})` : ''}`
+}
+
+/** 「続きを頼む」の [画面の操作] の行。この相談で条件を付けずに探した結果があれば、確かめた件数を添える */
+export function continueLine(tally: CheckedTally): string {
+  const main = checkedMain(tally)
+  return main.length === 0 ? CONTINUE_LINE : `${CONTINUE_LINE}${main.join('、')}を確かめ済みです。`
+}
 
 export const ASK_RESTORE_PROMPT =
   '減便の方針でなくなる平日の便のうち、通勤・通学・通院などのために平日に戻したほうがよい便を、判断材料と停留所名から選び、理由をつけて、便を平日に戻す下書きにしてください。数は多くても 10 便くらいにしてください。'
@@ -110,7 +227,16 @@ export type ChatItem =
    * ツールの動き。callId はブラウザのツールの呼び出しの id(サーバーのツールは null)。
    * skipped は実行しなかったもの(止めた・会話を終えた)
    */
-  | { id: number; kind: 'tool'; callId: string | null; name: string; label: string; status: 'running' | 'done' | 'error' | 'skipped' }
+  | {
+      id: number
+      kind: 'tool'
+      callId: string | null
+      name: string
+      label: string
+      status: 'running' | 'done' | 'error' | 'skipped'
+      /** 終えたときに名前の後ろの括弧に添える文(search_trips の「なくなる便 292 便のうち 50 便」。指摘18.4) */
+      detail?: string
+    }
   /** 下書きの知らせ */
   | { id: number; kind: 'draft'; draftId: string; text: string; step: DraftStep }
   | { id: number; kind: 'notice'; text: string }
@@ -120,6 +246,8 @@ export type ChatItem =
    * 「続きを頼む」のボタンを付ける。continued は続きを頼んだ後(ボタンを出さない)
    */
   | { id: number; kind: 'stopped'; text: string; continued: boolean }
+  /** 返答の終わりに出す、この相談で AI が確かめた便の件数(checkedLine。指摘18.4) */
+  | { id: number; kind: 'checked'; text: string }
 
 /** id を除いた項目(項目の種類ごとに Omit する) */
 type NewChatItem = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, 'id'> : never) : never
@@ -156,7 +284,7 @@ export interface ResearchProgress {
   phase: string | null
   /** run が一時停止した */
   paused: boolean
-  /** 保存した数と対象の数(save_research に答えたとき) */
+  /** 保存した数と対象の数(save_research に答えたとき)。「前提情報を調べる」で始めたときは、利用者が選んだ対象だけで数える */
   saved: number
   total: number | null
   /** 調査役に1件ずつ頼んだ数 */
@@ -325,6 +453,35 @@ export function createChatStore(deps: ChatStoreDeps) {
     // この発言で、サーバーが「ツールを使いすぎたので止めた」を知らせた(知らせを1件にし、続く「止めました」を出さない)。
     // 利用者が発言を送ったら戻す
     let stoppedLong = false
+    // この相談(利用者の発言から次の発言まで)で AI に返した便(指摘18.4)。「続きを頼む」では数え直さない
+    let checked: CheckedTally = new Map()
+    // この相談の返答の終わりに出した件数の行(同じ文を2度出さない)
+    let checkedShown: string | null = null
+    // 利用者が「前提情報を調べる」で選んだ対象の数(進み具合の分母。サーバーの数は、登録した調べた結果の対象も含む)
+    let researchChosen: number | null = null
+    // 「続きを頼む」で送っている(send が相談を数え直さない)
+    let continuing = false
+
+    /** 新しい相談を始める(件数を数え直す) */
+    function resetChecked(): void {
+      checked = new Map()
+      checkedShown = null
+    }
+
+    /** 返答の終わりに、この相談で AI が確かめた便の件数を1行出す(条件を付けずに探していなければ出さない) */
+    function pushChecked(): void {
+      const text = checkedLine(checked)
+      if (text === null || text === checkedShown) return
+      checkedShown = text
+      push({ kind: 'checked', text })
+    }
+
+    /** サーバーの調査の進み具合の数を、利用者が選んだ対象の数にそろえる(選んだ対象のほかは保存済みの結果の対象) */
+    function scopeResearch(e: Extract<DisplayStreamEvent, { type: 'research' }>): Extract<DisplayStreamEvent, { type: 'research' }> {
+      if (e.kind !== 'saved' || researchChosen === null || e.saved === null || e.total === null) return e
+      const extra = Math.max(0, e.total - researchChosen)
+      return { ...e, saved: Math.min(researchChosen, Math.max(0, e.saved - extra)), total: researchChosen }
+    }
 
     function push(item: NewChatItem): void {
       set({ items: [...get().items, { ...item, id: nextId++ } as ChatItem] })
@@ -392,7 +549,7 @@ export function createChatStore(deps: ChatStoreDeps) {
           return
         }
         case 'research':
-          set({ research: nextResearch(get().research, e) })
+          set({ research: nextResearch(get().research, scopeResearch(e)) })
           return
         case 'status':
           onStatus(e.state, e.reason)
@@ -421,6 +578,7 @@ export function createChatStore(deps: ChatStoreDeps) {
         closeStreaming()
         skipRunning()
         set({ replying: false, research: { ...get().research, active: false, openRuns: [] } })
+        pushChecked()
         push({ kind: 'notice', text: ENDED_NOTICE })
         return
       }
@@ -433,6 +591,8 @@ export function createChatStore(deps: ChatStoreDeps) {
           ? { ...research, active: false, outcome: research.total !== null && research.saved >= research.total ? ('done' as const) : ('partial' as const) }
           : research
       set({ replying: false, research: finished })
+      // 返答の終わり。知らせ(止めました・上限)より先に、確かめた便の件数を出す
+      pushChecked()
       if (reason === 'budget_reached') {
         set({ budgetReached: true })
         push({ kind: 'notice', text: budgetReachedMessage(get().budgetCents) })
@@ -457,7 +617,9 @@ export function createChatStore(deps: ChatStoreDeps) {
           return
         case 'tool_done': {
           const item = get().items.find((i) => i.kind === 'tool' && i.callId === e.id)
-          if (item) update(item.id, (i) => ({ ...i, status: e.outcome.isError ? 'error' : 'done' }) as ChatItem)
+          const found = searchSummaries.get(e.outcome)
+          if (found) addToTally(checked, found)
+          if (item) update(item.id, (i) => ({ ...i, status: e.outcome.isError ? 'error' : 'done', ...(found ? { detail: searchTripsDetail(found) } : {}) }) as ChatItem)
           const draft = e.outcome.draft
           if (draft?.kind === 'undo') tracker.noteUndoDraft(draft.id)
           if (draft && !e.outcome.isError) push({ kind: 'draft', draftId: draft.id, text: draftMessage(draft.id), step: STEP_OF_TOOL[e.name] ?? 'policy' })
@@ -488,10 +650,20 @@ export function createChatStore(deps: ChatStoreDeps) {
       }
     }
 
+    // search_trips の結果ごとの、AI に返した便(tool_done で同じ結果のオブジェクトから読む)
+    const searchSummaries = new WeakMap<ToolOutcome, SearchTripsSummary>()
+
     session = new ClaudeSession({
       api: deps.api,
       token: () => get().token,
-      runTool: deps.runTool,
+      runTool: async (name, input, signal) => {
+        const outcome = await deps.runTool(name, input, signal)
+        if (name === 'search_trips') {
+          const summary = summarizeSearchTrips(input, outcome)
+          if (summary) searchSummaries.set(outcome, summary)
+        }
+        return outcome
+      },
       onEvent: onSessionEvent,
       ...deps.session,
     })
@@ -618,12 +790,18 @@ export function createChatStore(deps: ChatStoreDeps) {
           set({ unsent: null })
           // 新しい発言(サーバーも、この発言で止めた印を戻す)
           stoppedLong = false
+          // 新しい相談なら、AI が確かめた便を数え直す。「続きを頼む」は同じ相談の続きなので数え続け、返答の終わりにまた出す
+          if (continuing) checkedShown = null
+          else resetChecked()
           // 取っ手が使えなくなっていたら(404・410)、1回だけ新しいセッションで送り直す
           for (let attempt = 0; ; attempt++) {
             try {
               if (!session.handle) tracker.reset()
               const created = await session.start()
-              if (created) set({ budgetCents: session.budgetCents, usage: null, research: EMPTY_RESEARCH })
+              if (created) {
+                researchChosen = null
+                set({ budgetCents: session.budgetCents, usage: null, research: EMPTY_RESEARCH })
+              }
               // 調べた結果の対象を、発言より先に登録する(AI が最初の返答から get_research_results で読めるように)
               await registerKnown()
               if (gen !== generation) return false
@@ -655,9 +833,15 @@ export function createChatStore(deps: ChatStoreDeps) {
       },
 
       async continueStopped() {
-        const ok = await get().send(CONTINUE_PROMPT, { extraLines: [CONTINUE_LINE] })
-        if (ok) set({ items: get().items.map((i) => (i.kind === 'stopped' && !i.continued ? { ...i, continued: true } : i)) })
-        return ok
+        // [画面の操作] の行に、この相談で AI が確かめた便の件数を入れる(AI が続きから探せるように。指摘18.4)
+        continuing = true
+        try {
+          const ok = await get().send(CONTINUE_PROMPT, { extraLines: [continueLine(checked)] })
+          if (ok) set({ items: get().items.map((i) => (i.kind === 'stopped' && !i.continued ? { ...i, continued: true } : i)) })
+          return ok
+        } finally {
+          continuing = false
+        }
       },
 
       async startResearch(targetIds) {
@@ -691,7 +875,10 @@ export function createChatStore(deps: ChatStoreDeps) {
             try {
               if (!session.handle) tracker.reset()
               const created = await session.start()
-              if (created) set({ budgetCents: session.budgetCents, usage: null, research: EMPTY_RESEARCH })
+              if (created) {
+                researchChosen = null
+                set({ budgetCents: session.budgetCents, usage: null, research: EMPTY_RESEARCH })
+              }
               const handle = session.handle
               if (!handle) throw new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます。')
               await registerKnown()
@@ -702,14 +889,19 @@ export function createChatStore(deps: ChatStoreDeps) {
               if (known?.handle === handle) for (const t of view.targets) known.ids.add(t.targetId)
               // サーバーが会話に入れる行の件数は、送った対象の数(view.total は登録済みの調べた結果の対象も含む)
               log([{ kind: 'screen', text: researchStartLine(new Set(targetIds).size) }])
-              // 調査を始めると、サーバーは user.message を送る(この発言で止めた印も戻る)
+              // 調査を始めると、サーバーは user.message を送る(この発言で止めた印も戻る。新しい相談として数え直す)
               stoppedLong = false
+              resetChecked()
+              // 進み具合の分母は、利用者が選んだ対象の数(view.total は登録した調べた結果の対象も含む。A06 の申し送り)。
               // 保存済み(cached)の対象は調べない(§3.2)。調べる対象が無ければ、進み具合は「調べ終えました」から始める
-              const saved = view.targets.filter((t) => t.cached !== null).length
-              const active = saved < view.total
+              const chosenIds = new Set(targetIds)
+              const chosen = [...new Map(view.targets.filter((t) => chosenIds.has(t.targetId)).map((t) => [t.targetId, t])).values()]
+              researchChosen = chosen.length
+              const saved = chosen.filter((t) => t.cached !== null).length
+              const active = saved < chosen.length
               set({
                 replying: true,
-                research: { ...EMPTY_RESEARCH, active, saved, total: view.total, outcome: active ? null : 'done' },
+                research: { ...EMPTY_RESEARCH, active, saved, total: chosen.length, outcome: active ? null : 'done' },
               })
               return view
             } catch (e) {
@@ -761,6 +953,8 @@ export function createChatStore(deps: ChatStoreDeps) {
         tracker.reset()
         known = null
         stoppedLong = false
+        resetChecked()
+        researchChosen = null
         closeStreaming()
         skipRunning()
         set({ sending: false, replying: false, toolRunning: false, connection: 'none', usage: null, budgetCents: null, budgetReached: false, research: EMPTY_RESEARCH, researchError: null })
@@ -773,6 +967,8 @@ export function createChatStore(deps: ChatStoreDeps) {
         tracker.reset()
         known = null
         stoppedLong = false
+        resetChecked()
+        researchChosen = null
         set({
           items: [],
           sentLog: [],
@@ -921,9 +1117,9 @@ export function defaultPolicyServices(validity: { start: string; end: string } |
     if (plan.kind === 'weekdayToSaturday') out.saturday = plan.replacementService
     else out.sundayHoliday = plan.replacementService
   }
-  // 読み込みの手順のダイヤのグループ分け(確定していれば、AI のツールもダイヤ単位で減便の方針を作る)
+  // 読み込みの手順のダイヤのグループ分け(Jev の答えを待っていなければ、AI のツールもダイヤ単位で減便の方針を作る)
   const sg = useServiceGroupsStore.getState()
-  const grouped = groupedPolicyServices(sg.groups, sg.confirmed)
+  const grouped = groupedPolicyServices(sg.groups, !jevPending(sg.jev.state))
   if (grouped) out.groups = grouped
   return out
 }

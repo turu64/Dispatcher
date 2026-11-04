@@ -9,7 +9,7 @@ import { useGtfsStore } from './gtfs'
 import type { HolidayState } from './holidays'
 import { resetAll } from './reset'
 import { attentionCount } from '@/components/steps/load/serviceGroupsText'
-import { createServiceGroupsStore, useServiceGroupsStore } from './serviceGroups'
+import { createServiceGroupsStore, jevPending, useServiceGroupsStore } from './serviceGroups'
 
 const SAT: PolicyKind = 'weekdayToSaturday'
 const FEED = { tables: new Map(), warnings: [] } as GtfsFeed
@@ -104,14 +104,14 @@ describe('計算の時機', () => {
 })
 
 describe('単純な GTFS', () => {
-  it('Jev を呼ばず(サーバーにも聞かない)、読み込んだ時点で確定', async () => {
+  it('Jev を呼ばず(サーバーにも聞かない)、待つことも無い', async () => {
     const t = setup({ groups: () => proposeGroups(featuresOf([svc('01', { weekday: 98 }), svc('03', { saturday: 19 }), svc('06', { sundayHoliday: 25 })])) })
     t.store.getState().start(FEED)
     await settle()
     const s = t.store.getState()
     expect(s.groups?.simple).toBe(true)
-    expect(s.confirmed).toBe(true)
     expect(s.jev.state).toBe('notNeeded')
+    expect(jevPending(s.jev.state)).toBe(false)
     expect(t.fetchStatus).not.toHaveBeenCalled()
     expect(t.judge).not.toHaveBeenCalled()
   })
@@ -195,10 +195,12 @@ describe('Jev に送るかを聞く', () => {
     expect(t.store.getState().jev.state).toBe('idle')
   })
 
-  it('聞いている間は確定できない', () => {
+  it('聞いている間は、Jev を待っている扱い(減便の方針の手順と AI はダイヤ単位で選ばない)', () => {
     const t = setup()
     t.store.getState().start(FEED)
-    expect(t.store.getState().confirm()).toBe(false)
+    expect(jevPending(t.store.getState().jev.state)).toBe(true)
+    t.store.getState().declineJev()
+    expect(jevPending(t.store.getState().jev.state)).toBe(false)
   })
 
   it('規則で決まらない service が無ければ、聞かずに notNeeded', async () => {
@@ -223,7 +225,7 @@ describe('Jev の呼び出し(送ると答えたあと)', () => {
     expect(s.groups?.jev).toHaveLength(1)
     const row = s.groups!.byKind[SAT].rows.find((r) => r.serviceId === '03001_A')!
     expect(row.intoMark).toBe('agreed')
-    expect(s.confirmed).toBe(false)
+    expect(jevPending(s.jev.state)).toBe(false)
   })
 
   it('Jev を使えない(キーが無い)ときは送らず、規則だけで続ける', async () => {
@@ -271,8 +273,8 @@ describe('中断と捨てる', () => {
     const t = setup({ judge: () => d.promise })
     await startAndAccept(t)
     expect(t.store.getState().jev.state).toBe('sending')
-    // 送っている間は確定できない
-    expect(t.store.getState().confirm()).toBe(false)
+    // 送っている間は待っている扱い
+    expect(jevPending(t.store.getState().jev.state)).toBe(true)
 
     t.store.getState().stopJev()
     expect(t.store.getState().jev.state).toBe('stopped')
@@ -336,8 +338,8 @@ describe('中断と捨てる', () => {
   })
 })
 
-describe('直しと確定', () => {
-  it('決まらない行が残っている間は確定できない。選べば確定できる', async () => {
+describe('直し(確定のしくみは無い。指摘19)', () => {
+  it('決まらない行は、選べば edited になり、案に戻すとまた決まらない', async () => {
     const t = setup({ groups: undecidedGroups, status: { available: false, provider: null, via: null, reason: 'noKey' } })
     await startAndAccept(t)
     const g = t.store.getState().groups!
@@ -345,34 +347,60 @@ describe('直しと確定', () => {
     const row = g.byKind[SAT].rows.find((r) => r.serviceId === '03001_X')!
     expect(row.intoMark).toBe('undecided')
     expect(attentionCount(g)).toBe(1)
-    expect(t.store.getState().confirm()).toBe(false)
-    expect(t.store.getState().confirmed).toBe(false)
+    // 確定の操作は無い
+    expect('confirm' in t.store.getState()).toBe(false)
+    expect('confirmed' in t.store.getState()).toBe(false)
 
-    for (const kind of ['weekdayToSaturday', 'weekdayToSundayHoliday'] as const) {
-      if (t.store.getState().groups!.byKind[kind].rows.some((r) => r.serviceId === '03001_X' && r.intoMark === 'undecided')) {
-        t.store.getState().edit({ kind, serviceId: '03001_X', into: '11001_X' })
-      }
-    }
-    const edited = t.store.getState().groups!.byKind[SAT].rows.find((r) => r.serviceId === '03001_X')!
-    expect(edited).toMatchObject({ into: '11001_X', intoMark: 'edited' })
-    expect(t.store.getState().confirm()).toBe(true)
-    expect(t.store.getState().confirmed).toBe(true)
+    t.store.getState().edit({ kind: SAT, serviceId: '03001_X', into: '11001_X' })
+    expect(t.store.getState().groups!.byKind[SAT].rows.find((r) => r.serviceId === '03001_X')!).toMatchObject({ into: '11001_X', intoMark: 'edited' })
 
-    // 案に戻すと、また決まらない。決まらない行が戻ったので、確定も外れる(減便の方針の手順と言うことをそろえる)
     t.store.getState().resetRow('03001_X')
     expect(t.store.getState().groups!.byKind[SAT].rows.find((r) => r.serviceId === '03001_X')!.intoMark).toBe('undecided')
-    expect(t.store.getState().confirmed).toBe(false)
   })
 
-  it('確定したあとに直して、決まらない行が残らなければ確定のまま', async () => {
+  it('複数の直しは順に当てて1回で反映する(割り当てを外してから残す)', async () => {
     const t = setup({ status: { available: false, provider: null, via: null, reason: 'noKey' } })
     await startAndAccept(t)
-    expect(t.store.getState().confirm()).toBe(true)
-    t.store.getState().edit({ kind: SAT, serviceId: '01005_MSN', treatment: 'keep' })
-    expect(t.store.getState().confirmed).toBe(true)
+    const updates = vi.fn()
+    const unsubscribe = t.store.subscribe(updates)
+    // 01001_A には 03001_A が入っている。先に外さないと「残す」は受け付けない
+    t.store.getState().edit([
+      { kind: SAT, serviceId: '03001_A', into: null },
+      { kind: SAT, serviceId: '01001_A', treatment: 'keep' },
+    ])
+    unsubscribe()
+    expect(updates).toHaveBeenCalledTimes(1)
+    const rows = t.store.getState().groups!.byKind[SAT].rows
+    expect(rows.find((r) => r.serviceId === '01001_A')).toMatchObject({ treatment: 'keep', basisMark: 'edited' })
+    expect(rows.find((r) => r.serviceId === '03001_A')).toMatchObject({ into: null, intoMark: 'edited' })
   })
 
-  it('確定したあとに Jev に問い合わせ直して分け方が変わったら、確定を外し、表を開くよう頼む', async () => {
+  it('受け付けない直しだけなら、何も変えない', async () => {
+    const t = setup({ status: { available: false, provider: null, via: null, reason: 'noKey' } })
+    await startAndAccept(t)
+    const before = t.store.getState().groups
+    t.store.getState().edit({ kind: SAT, serviceId: 'NO_SUCH', treatment: 'keep' })
+    expect(t.store.getState().groups).toBe(before)
+  })
+
+  it('resetKind は、その方針の種類の直しだけを捨てる', async () => {
+    const t = setup({ status: { available: false, provider: null, via: null, reason: 'noKey' } })
+    await startAndAccept(t)
+    t.store.getState().edit([
+      { kind: SAT, serviceId: '01005_MSN', treatment: 'keep' },
+      { kind: 'weekdayToSundayHoliday', serviceId: '01005_MSN', treatment: 'keep' },
+    ])
+    t.store.getState().resetKind(SAT)
+    const g = t.store.getState().groups!
+    expect(g.byKind[SAT].rows.find((r) => r.serviceId === '01005_MSN')!.basisMark).not.toBe('edited')
+    expect(g.byKind.weekdayToSundayHoliday.rows.find((r) => r.serviceId === '01005_MSN')).toMatchObject({ treatment: 'keep', basisMark: 'edited' })
+    // 直しが無ければ何も変えない
+    const same = t.store.getState().groups
+    t.store.getState().resetKind(SAT)
+    expect(t.store.getState().groups).toBe(same)
+  })
+
+  it('Jev に問い合わせ直して分け方が変わっても、確定を外す知らせは出さない(答えを合わせるだけ)', async () => {
     let call = 0
     const conflict = response([
       result('03001_A', 'saturday', { weekdayCounterpart: { choice: '01005_MSN', probabilities: { '01005_MSN': 0.95 }, confidence: 0.95 } }),
@@ -385,43 +413,20 @@ describe('直しと確定', () => {
     })
     await startAndAccept(t)
     expect(t.store.getState().jev.state).toBe('failed')
-    expect(t.store.getState().confirm()).toBe(true)
-    const request = t.store.getState().tableRequest
+    expect(jevPending(t.store.getState().jev.state)).toBe(false)
 
-    // 失敗したあとは、もう一度頼める
-    await t.store.getState().askJev()
+    // 失敗したあとは、もう一度頼める。待っている間は待っている扱い
+    const asked = t.store.getState().askJev()
+    expect(jevPending(t.store.getState().jev.state)).toBe(true)
+    await asked
     expect(t.judge).toHaveBeenCalledTimes(2)
     const s = t.store.getState()
     expect(s.groups!.byKind[SAT].rows.find((r) => r.serviceId === '03001_A')!.intoMark).toBe('conflict')
-    expect(s.confirmed).toBe(false)
-    expect(s.jev.message).toContain('確定を外しました')
-    expect(s.tableRequest).toBe(request + 1)
+    expect(s.jev.state).toBe('done')
+    expect(s.jev.message).toBeNull()
   })
 
-  it('確定したあとに Jev の判断を捨てても、決まらない行が出なければ確定のまま', async () => {
-    const agreed = response([
-      result('03001_A', 'saturday', { weekdayCounterpart: { choice: '01001_A', probabilities: { '01001_A': 0.95 }, confidence: 0.95 } }),
-    ])
-    const t = setup({ judge: async () => ({ ok: true, response: agreed }) })
-    await startAndAccept(t)
-    expect(t.store.getState().confirm()).toBe(true)
-    t.store.getState().dropJev()
-    expect(t.store.getState().jev.state).toBe('dropped')
-    expect(t.store.getState().confirmed).toBe(true)
-  })
-
-  it('Jev が埋めた決まらない行は、答えを捨てると決まらない行に戻り、確定が外れる', async () => {
-    const res = response([
-      result('03001_X', 'saturday', { weekdayCounterpart: { choice: '12001_X', probabilities: { '12001_X': 0.92 }, confidence: 0.93 } }),
-    ])
-    const t = setup({ groups: undecidedGroups, judge: async () => ({ ok: true, response: res }) })
-    await startAndAccept(t)
-    expect(t.store.getState().confirm()).toBe(true)
-    t.store.getState().dropJev()
-    expect(t.store.getState().confirmed).toBe(false)
-  })
-
-  it('Jev の確信の高い答えが、決まらない割り当てを埋める', async () => {
+  it('Jev の確信の高い答えが、決まらない割り当てを埋める。捨てると決まらない行に戻る', async () => {
     const res = response([
       result('03001_X', 'saturday', { weekdayCounterpart: { choice: '12001_X', probabilities: { '12001_X': 0.92 }, confidence: 0.93 } }),
     ])
@@ -429,6 +434,8 @@ describe('直しと確定', () => {
     await startAndAccept(t)
     const row = t.store.getState().groups!.byKind[SAT].rows.find((r) => r.serviceId === '03001_X')!
     expect(row).toMatchObject({ into: '12001_X', intoMark: 'jev' })
+    t.store.getState().dropJev()
+    expect(t.store.getState().groups!.byKind[SAT].rows.find((r) => r.serviceId === '03001_X')!.intoMark).toBe('undecided')
   })
 })
 
@@ -448,7 +455,7 @@ describe('読み込みと削除(本物の store)', () => {
     const after = useServiceGroupsStore.getState()
     expect(after.status).toBe('idle')
     expect(after.groups).toBeNull()
-    expect(after.confirmed).toBe(false)
+    expect(after.jev.state).toBe('idle')
   })
 
   it('単純でない GTFS では送るかを聞き、送ると答えてサーバーにつながらなければ、Jev を使えない扱いで規則だけで続ける', async () => {
@@ -476,7 +483,7 @@ describe('読み込みと削除(本物の store)', () => {
       void useServiceGroupsStore.getState().acceptJev()
       await vi.waitFor(() => expect(useServiceGroupsStore.getState().jev.state).toBe('unavailable'))
       expect(useServiceGroupsStore.getState().jev.message).toContain('規則だけで分けました')
-      expect(useServiceGroupsStore.getState().confirmed).toBe(false)
+      expect(jevPending(useServiceGroupsStore.getState().jev.state)).toBe(false)
       await settle()
       expect(unhandled).not.toHaveBeenCalled()
     } finally {

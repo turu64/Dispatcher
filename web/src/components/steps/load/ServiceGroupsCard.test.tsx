@@ -55,7 +55,6 @@ function showGroups(groups: ServiceGroups, extra: Partial<ReturnType<typeof useS
     useServiceGroupsStore.setState({
       status: 'ready',
       groups,
-      confirmed: groups.simple,
       jev: { state: groups.simple ? 'notNeeded' : 'unavailable', status: null, response: null, omitted: [], asking: 0, message: groups.simple ? null : 'サーバーに Jev のキーが設定されていないため、規則だけで分けました。', sent: false },
       ...extra,
     }),
@@ -134,8 +133,8 @@ describe('Jev に送るかのダイアログ', () => {
     expect(within(dialog).queryByRole('checkbox')).toBeNull()
     expect(within(dialog).getByRole('button', { name: 'Jev に送る' })).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: '送らずに規則だけで進める' })).toBeTruthy()
-    // 待っている間は確定できない
-    expect((screen.getByRole('button', { name: 'このグループ分けで進める', hidden: true }) as HTMLButtonElement).disabled).toBe(true)
+    // 確定のボタンは無い(指摘19)
+    expect(screen.queryByRole('button', { name: 'このグループ分けで進める', hidden: true })).toBeNull()
   })
 
   it('上限で問わない service が無ければ、その文を出さない', () => {
@@ -186,8 +185,8 @@ describe('Jev に送るかのダイアログ', () => {
   })
 })
 
-describe('単純でない GTFS の表', () => {
-  it('要約・Jev を使えない理由・方針の種類のタブ・表を出し、確定できる', () => {
+describe('単純でない GTFS の表(読む専用。指摘19)', () => {
+  it('要約・Jev を使えない理由・方針の種類のタブ・表を出す。扱い・入れる先の Select と確定のボタンは無い', () => {
     showGroups(proposeGroups(kyotoLike()))
     expect(screen.getByTestId('service-groups-summary').textContent).toContain('service_id が 11 個あります。')
     expect(screen.getByRole('region', { name: 'Jev による確かめ' }).textContent).toContain('キーが設定されていない')
@@ -196,122 +195,82 @@ describe('単純でない GTFS の表', () => {
     const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
     expect(table.querySelector('[data-service="01001"]')!.textContent).toContain('平日 98%・土曜 0%・日祝 0%')
     expect(table.querySelector('[data-service="01001"]')!.textContent).toContain('500 便・4 系統')
-
-    fireEvent.click(screen.getByRole('button', { name: 'このグループ分けで進める' }))
-    expect(useServiceGroupsStore.getState().confirmed).toBe(true)
-    expect(screen.getByText('グループ分けを確定しました。直すときは表を開きます。')).toBeTruthy()
-    // 確定したら表を閉じる。押したボタンは消えるので、焦点は「表を開く」に移す
+    // 扱い・入れる先は文で出す
+    expect(table.querySelector('[data-service="01001"]')!.textContent).toContain('入れ替える')
+    expect(table.querySelector('[data-service="03001_A"]')!.textContent).toContain('入れる先 01001_A')
+    expect(table.querySelector('[data-service="01005_MSN"]')!.textContent).toContain('なくす')
+    expect(table.querySelector('[data-service="01002_RIT"]')!.textContent).toContain('残す')
+    expect(screen.queryByRole('combobox')).toBeNull()
+    for (const name of ['このグループ分けで進める', 'Jev の値を使う', '規則の値のまま進める', '案に戻す']) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+    }
+    // 直す場所を1文で出す
+    expect(screen.getByTestId('service-groups-next').textContent).toContain('手順「減便の方針」の詳しい設定で「手動で選ぶ」を選びます')
+    // 表は開け閉めできる
+    fireEvent.click(screen.getByRole('button', { name: '表を閉じる' }))
     expect(screen.queryByRole('table', { name: /平日を土曜ダイヤに/ })).toBeNull()
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '表を開く' }))
     fireEvent.click(screen.getByRole('button', { name: '表を開く' }))
     expect(screen.getByRole('table', { name: /平日を土曜ダイヤに/ })).toBeTruthy()
   })
 
-  it('決まらない行が残っている間は確定できず、選べば確定できる', () => {
+  it('決まらない行は「決まらない」と印で出し、数を表の上に出す', () => {
     const groups = undecidedGroups()
     expect(attentionCount(groups)).toBe(1)
     showGroups(groups)
     expect(screen.getByTestId('service-groups-summary').textContent).toContain('確かめが要るものが 1 件あります。')
-    const confirm = screen.getByRole('button', { name: 'このグループ分けで進める' }) as HTMLButtonElement
-    expect(confirm.disabled).toBe(true)
-    expect(screen.getByText(/「選んでください」の行が残っている/)).toBeTruthy()
+    expect(screen.getByTestId('service-groups-next').textContent).toContain('入れる平日の service が決まらないものが 1 件あります。')
     // タブに確かめが要る数を出す
     expect(within(screen.getByRole('tab', { name: /平日を土曜ダイヤに/ })).getByLabelText('確かめが要るもの 1 件')).toBeTruthy()
-
     const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
-    expect(table.querySelector('[data-service="03001_X"] [data-mark="undecided"]')).toBeTruthy()
-    const trigger = within(table).getByRole('combobox', { name: '03001_X の便を入れる平日の service' })
-    fireEvent.keyDown(trigger, { key: 'Enter' })
-    fireEvent.click(screen.getByRole('option', { name: '11001_X' }))
-
-    const row = useServiceGroupsStore.getState().groups!.byKind.weekdayToSaturday.rows.find((r) => r.serviceId === '03001_X')!
-    expect(row).toMatchObject({ into: '11001_X', intoMark: 'edited' })
-    expect(table.querySelector('[data-service="03001_X"] [data-mark="edited"]')).toBeTruthy()
-    // 日祝の側に 03001_X は関係しないので、これで確定できる
-    expect((screen.getByRole('button', { name: 'このグループ分けで進める' }) as HTMLButtonElement).disabled).toBe(false)
-
-    // 判断材料を開き、案に戻す。焦点は判断材料のボタンに移す
-    fireEvent.click(within(table).getByRole('button', { name: '03001_X の判断材料' }))
-    fireEvent.click(screen.getByRole('button', { name: '案に戻す' }))
-    expect(useServiceGroupsStore.getState().groups!.byKind.weekdayToSaturday.rows.find((r) => r.serviceId === '03001_X')!.intoMark).toBe('undecided')
-    expect(document.activeElement).toBe(within(table).getByRole('button', { name: '03001_X の判断材料' }))
+    const row = table.querySelector('[data-service="03001_X"]') as HTMLElement
+    expect(row.querySelector('[data-mark="undecided"]')).toBeTruthy()
+    expect(row.textContent).toContain('決まらない')
+    expect(within(table).queryByRole('combobox')).toBeNull()
   })
 
-  it('確定したあとに案に戻して決まらない行が戻ると、確定が外れ、進めるボタンが戻る', () => {
-    const groups = undecidedGroups()
-    showGroups(groups)
+  it('減便の方針の手順で直した値は、表に「直しました」の印で出る', () => {
+    showGroups(proposeGroups(kyotoLike()))
+    act(() => useServiceGroupsStore.getState().edit({ kind: 'weekdayToSaturday', serviceId: '01005_MSN', treatment: 'keep' }))
     const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
-    fireEvent.keyDown(within(table).getByRole('combobox', { name: '03001_X の便を入れる平日の service' }), { key: 'Enter' })
-    fireEvent.click(screen.getByRole('option', { name: '11001_X' }))
-    fireEvent.click(screen.getByRole('button', { name: 'このグループ分けで進める' }))
-    expect(useServiceGroupsStore.getState().confirmed).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: '表を開く' }))
-    const reopened = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
-    fireEvent.click(within(reopened).getByRole('button', { name: '03001_X の判断材料' }))
-    fireEvent.click(screen.getByRole('button', { name: '案に戻す' }))
-    expect(useServiceGroupsStore.getState().confirmed).toBe(false)
-    expect(screen.queryByText('グループ分けを確定しました。直すときは表を開きます。')).toBeNull()
-    expect((screen.getByRole('button', { name: 'このグループ分けで進める' }) as HTMLButtonElement).disabled).toBe(true)
+    const row = table.querySelector('[data-service="01005_MSN"]') as HTMLElement
+    expect(row.textContent).toContain('残す')
+    expect(row.querySelector('[data-mark="edited"]')).toBeTruthy()
   })
 
-  it('食い違いの行に Jev の値を出し、「Jev の値を使う」で直せる。確定のボタンの下に、規則の値で進む数を出す', () => {
+  it('食い違いの行に Jev の値を出す(直すボタンは無い)。規則の値で入れ替える数を出す', () => {
     const res = response()
     res.results[0].weekdayCounterpart = { choice: '01005_MSN', probabilities: { '01005_MSN': 0.95 }, confidence: 0.95 }
     showGroups(mergeJevAnswers(proposeGroups(kyotoLike()), res), {
       jev: { state: 'done', status: null, response: res, omitted: [], asking: 0, message: null, sent: true },
     })
-    expect(screen.getByText('規則と Jev が食い違っている 1 件は、規則の値で進めます。')).toBeTruthy()
+    expect(screen.getByText('規則と Jev が食い違っている 1 件は、規則の値で入れ替えます。')).toBeTruthy()
     const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
     const row = table.querySelector('[data-service="03001_A"]') as HTMLElement
     expect(row.textContent).toContain('Jev:01005_MSN')
-    fireEvent.click(within(row).getByRole('button', { name: 'Jev の値を使う' }))
-    const after = useServiceGroupsStore.getState().groups!.byKind.weekdayToSaturday.rows.find((r) => r.serviceId === '03001_A')!
-    expect(after).toMatchObject({ into: '01005_MSN', intoMark: 'edited' })
-    // 押したボタンは消えるので、焦点はその行の Select に移す
-    expect(document.activeElement).toBe(within(table).getByRole('combobox', { name: '03001_A の便を入れる平日の service' }))
-  })
-
-  it('食い違いを規則の値のまま受け入れると、焦点を「案に戻す」に移す', () => {
-    const res = response()
-    res.results[0].weekdayCounterpart = { choice: '01005_MSN', probabilities: { '01005_MSN': 0.95 }, confidence: 0.95 }
-    showGroups(mergeJevAnswers(proposeGroups(kyotoLike()), res), {
-      jev: { state: 'done', status: null, response: res, omitted: [], asking: 0, message: null, sent: true },
-    })
-    const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
+    expect(within(row).queryByRole('button', { name: 'Jev の値を使う' })).toBeNull()
+    // 判断材料を開いても、直すボタンは無い
     fireEvent.click(within(table).getByRole('button', { name: '03001_A の判断材料' }))
-    fireEvent.click(screen.getByRole('button', { name: '規則の値のまま進める' }))
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '案に戻す' }))
-    // 判断材料には、規則の値のまま進めたことと Jev の答えを残す
-    expect(table.textContent).toContain('利用者が、規則の値(01001_A)のまま進めることにしました。')
+    expect(screen.queryByRole('button', { name: '規則の値のまま進める' })).toBeNull()
     expect(table.textContent).toMatch(/Jev は 01005_MSN を選びました/)
   })
 
-  it('承認待ちの減便の方針の下書きがあれば、直しても下書きには反映されないと出す', () => {
+  it('承認待ちの減便の方針の下書きがあれば、グループ分けが変わっても下書きには反映されないと出す', () => {
     act(() =>
       useEditStore.setState({
         draft: { kind: 'op', id: '3', record: { op: { type: 'applyPolicy' } } } as unknown as ReturnType<typeof useEditStore.getState>['draft'],
       }),
     )
     showGroups(proposeGroups(kyotoLike()))
-    expect(screen.getByText('グループ分けを直しても、承認待ちの下書き #3 には反映されません。減便の方針の手順で、下書きを作り直してください。')).toBeTruthy()
+    expect(screen.getByText('グループ分けが変わっても、承認待ちの下書き #3 には反映されません。減便の方針の手順で、下書きを作り直してください。')).toBeTruthy()
     act(() => useEditStore.setState({ draft: null }))
-  })
-
-  it('平日だけの service の扱いを「残す」に直せる', () => {
-    showGroups(proposeGroups(kyotoLike()))
-    const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
-    fireEvent.keyDown(within(table).getByRole('combobox', { name: '01005_MSN の扱い' }), { key: 'Enter' })
-    fireEvent.click(screen.getByRole('option', { name: '残す' }))
-    const row = useServiceGroupsStore.getState().groups!.byKind.weekdayToSaturday.rows.find((r) => r.serviceId === '01005_MSN')!
-    expect(row).toMatchObject({ treatment: 'keep', basisMark: 'edited' })
   })
 })
 
 describe('Jev の欄', () => {
-  it('送っている間は「やめる」を出し、確定できない。押すと中断する', () => {
+  it('送っている間は「やめる」を出す。押すと中断する', () => {
     showGroups(proposeGroups(kyotoLike()), { jev: { state: 'sending', status: null, response: null, omitted: [], asking: 0, message: null, sent: true } })
-    expect((screen.getByRole('button', { name: 'このグループ分けで進める' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByText('Jev の答えを待っています。')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'このグループ分けで進める' })).toBeNull()
+    expect(screen.getByRole('region', { name: 'Jev による確かめ' }).textContent).toContain('分け方を確かめています')
     fireEvent.click(screen.getByRole('button', { name: 'Jev への問い合わせをやめる' }))
     expect(useServiceGroupsStore.getState().jev.state).toBe('stopped')
     expect(screen.getByRole('region', { name: 'Jev による確かめ' }).textContent).toContain('問い合わせをやめました')
@@ -398,12 +357,15 @@ describe('祝日一覧と、削除', () => {
   })
 })
 
-describe('減便の方針の手順から表を開く(tableRequest)', () => {
-  it('確定して閉じた表を、showTable で開く', () => {
-    showGroups(proposeGroups(kyotoLike()), { confirmed: true })
+describe('単純な GTFS(道北バスの形)', () => {
+  it('要約の1行と「表を開く」のまま。開いた表も読む専用', () => {
+    showGroups(proposeGroups(featuresOf([svc('01', { weekday: 98 }), svc('03', { saturday: 19 }), svc('06', { sundayHoliday: 25 })])))
+    expect(screen.getByTestId('service-groups-summary').textContent).toBe('平日 01・土曜 03・日祝 06 に分かれています(走る日から判定しました)。')
     expect(screen.queryByRole('tablist')).toBeNull()
-    act(() => useServiceGroupsStore.getState().showTable())
+    expect(screen.queryByTestId('service-groups-next')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '表を開く' }))
     expect(screen.getByRole('tablist')).toBeTruthy()
-    expect(document.getElementById('service-groups')).toBeTruthy()
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'このグループ分けで進める' })).toBeNull()
   })
 })

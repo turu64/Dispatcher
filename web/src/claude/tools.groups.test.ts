@@ -145,14 +145,20 @@ describe('apply_policy は確定したグループ分けの組で下書きを作
     const r = await runTool('apply_policy', { ...POLICY, kind: 'weekday_to_sunday_holiday' }, deps)
     expect(r.isError).toBe(true)
     expect(String(parse(r.content).message)).toContain('形2で表せない service')
+    // 直す場所は、減便の方針の詳しい設定の手動の欄(読み込みの手順の表は読む専用)
+    expect(String(parse(r.content).message)).toContain('手順「減便の方針」の詳しい設定で、入れ替えるダイヤを「手動で選ぶ」')
     expect(store.getState().draft).toBeNull()
   })
 
-  it('グループ分けが未確定なら、画面の平日の service だけで作り、groups_note で確定を促す', async () => {
+  it('Jev の答えを待っている間(unconfirmed)は、画面の平日の service だけで作り、groups_note で待っていることを書く', async () => {
     const { store, deps } = setup({ weekday: '01001', saturday: '03001', sundayHoliday: null, groups: { status: 'unconfirmed' } })
     const r = await runTool('apply_policy', POLICY, deps)
     expect(r.isError).toBe(false)
-    expect(String(parse(r.content).groups_note)).toContain('01001 だけを入れ替える')
+    const note = String(parse(r.content).groups_note)
+    expect(note).toContain('Jev の答えを待っているため')
+    expect(note).toContain('01001 だけを入れ替える')
+    // 確定の操作は無いので、確定を頼むようには書かない
+    expect(note).not.toContain('確定')
     const draft = store.getState().draft
     if (draft?.kind !== 'op' || draft.record.op.type !== 'applyPolicy') throw new Error('下書きのはず')
     expect(draft.record.op.settings.pairs).toBeUndefined()

@@ -1,12 +1,12 @@
 import { create } from 'zustand'
-import { canConfirm, editGroups, resetToProposal } from '@/gtfs/groups/edit'
+import type { PolicyKind } from '@/gtfs/edit/ops'
+import { editGroups, resetToProposal } from '@/gtfs/groups/edit'
 import { computeServiceFeatures } from '@/gtfs/groups/features'
 import { fetchJevStatus, judgeServices } from '@/gtfs/groups/jevClient'
 import { buildJevRequest } from '@/gtfs/groups/jevRequest'
 import { dropJevAnswers, mergeJevAnswers } from '@/gtfs/groups/merge'
-import { proposeGroups } from '@/gtfs/groups/rules'
+import { buildByKind, editsOf, proposeGroups } from '@/gtfs/groups/rules'
 import {
-  POLICY_KINDS,
   type GroupEdit,
   type JevFailureKind,
   type JevJudgeRequest,
@@ -67,15 +67,25 @@ export interface JevInfo {
   sent: boolean
 }
 
+/**
+ * Jev の答えを待っているか(送るかを聞いている・使えるかを確かめている・答えを待っている)。
+ * 待っている間は、グループ分けが変わりうるので、減便の方針の手順と AI はダイヤ単位で選ばない(groupedPolicyServices の ready が false)
+ */
+export function jevPending(state: JevState): boolean {
+  return state === 'awaitingConsent' || state === 'checking' || state === 'sending'
+}
+
 export type GroupsStatus = 'idle' | 'waitingHolidays' | 'ready'
 
 export interface ServiceGroupsState {
   /** idle:GTFS が無い。waitingHolidays:祝日一覧の読み込みを待っている。ready:グループ分けを計算した */
   status: GroupsStatus
-  /** 判断材料・規則の案・Jev の答え・利用者の直し(A の proposeGroups・mergeJevAnswers・editGroups の結果) */
+  /**
+   * 判断材料・規則の案・Jev の答え・利用者の直し(A の proposeGroups・mergeJevAnswers・editGroups の結果)。
+   * 確定のしくみは持たない(指摘19。docs/tasks-1105.md の U04)。読み込みの手順は結果を見せるだけで、直しは減便の方針の手順の
+   * 詳しい設定(GroupReplaceFields の手動の欄)から edit で入れる。最後の確かめは減便の方針の「対象便を確かめる」
+   */
   groups: ServiceGroups | null
-  /** 「このグループ分けで進める」を押した(単純な GTFS は読み込んだ時点で確定) */
-  confirmed: boolean
   jev: JevInfo
 
   /**
@@ -95,21 +105,16 @@ export interface ServiceGroupsState {
   stopJev: () => void
   /** 得た答えを捨て、規則の案にする(利用者が直した行は残す) */
   dropJev: () => void
-  /** 区分・割り当て・扱いを直す */
-  edit: (edit: GroupEdit) => void
+  /**
+   * 割り当て・扱いを直す。複数の直しは順に当てて、1回で反映する(手動の欄の1つの操作が、割り当ての付け替えと扱いの両方を変えるため)
+   */
+  edit: (edit: GroupEdit | readonly GroupEdit[]) => void
   /** その service の直しを捨てて、規則と Jev の案に戻す */
   resetRow: (serviceId: string) => void
-  /** 「このグループ分けで進める」。決まらない行が残っている間・Jev を待っている間はできない(false を返す) */
-  confirm: () => boolean
+  /** その方針の種類の直しをすべて捨てて、規則と Jev の案に戻す(減便の方針の詳しい設定で「自動」に戻したとき) */
+  resetKind: (kind: PolicyKind) => void
   /** GTFS を読み込み直したとき・削除したとき(store/reset.ts の resetAll)。送っている問い合わせも、利用者の答えを待っている状態も捨てる */
   reset: () => void
-  /**
-   * 表を開く頼みの番号。減便の方針の手順の「読み込みの手順の表で直す」が進め、読み込みの手順の表(ServiceGroupsCard)が
-   * 変わったのを見て表を開く。reset では戻さない(番号が変わったかだけを見るため)
-   */
-  tableRequest: number
-  /** 読み込みの手順の表を開くよう頼む */
-  showTable: () => void
 }
 
 export interface ServiceGroupsDeps {
@@ -123,8 +128,8 @@ export interface ServiceGroupsDeps {
 
 const IDLE_JEV: JevInfo = { state: 'idle', status: null, response: null, omitted: [], asking: 0, message: null, sent: false }
 
-function initial(): Pick<ServiceGroupsState, 'status' | 'groups' | 'confirmed' | 'jev'> {
-  return { status: 'idle', groups: null, confirmed: false, jev: { ...IDLE_JEV, omitted: [] } }
+function initial(): Pick<ServiceGroupsState, 'status' | 'groups' | 'jev'> {
+  return { status: 'idle', groups: null, jev: { ...IDLE_JEV, omitted: [] } }
 }
 
 function defaultCompute(feed: GtfsFeed, holidays: HolidayList | null): ServiceGroups {
@@ -158,25 +163,6 @@ export function failureSummary(failures: JevJudgeResponse['failures']): string {
   const kinds = [...new Set(failures.map((f) => FAILURE_LABELS[f.error]))]
   return `${failures.length} 件は答えを得られませんでした(${kinds.join('・')})。`
 }
-
-/** 確定を外す理由になる違いがあるか:割り当て・扱い、または確かめが要る行(決まらない・食い違い)の集まりが変わった */
-export function groupingChanged(a: ServiceGroups, b: ServiceGroups): boolean {
-  for (const kind of POLICY_KINDS) {
-    const before = new Map(a.byKind[kind].rows.map((r) => [r.serviceId, r]))
-    const rows = b.byKind[kind].rows
-    if (rows.length !== before.size) return true
-    for (const r of rows) {
-      const p = before.get(r.serviceId)
-      if (!p || p.into !== r.into || p.treatment !== r.treatment) return true
-      const attention = (m: string | null) => m === 'undecided' || m === 'conflict'
-      if (attention(p.intoMark) !== attention(r.intoMark) || attention(p.basisMark) !== attention(r.basisMark)) return true
-    }
-  }
-  return false
-}
-
-/** 確定のあとで Jev の答えによってグループ分けが変わったときの文 */
-export const UNCONFIRMED_BY_JEV = 'Jev の答えでグループ分けが変わったため、確定を外しました。表を確かめて、もう一度「このグループ分けで進める」を押してください。'
 
 /** グループ分けの store を作る(テストでは問い合わせを差し替える) */
 export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
@@ -275,22 +261,13 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
         return
       }
       const merged = mergeJevAnswers(current, response)
-      // 確定したあとに問い合わせ直して(askJev)分け方が変わったら、確定を外す(読み込みの手順と減便の方針の手順の言うことをそろえる)
-      const unconfirm = get().confirmed && groupingChanged(current, merged)
-      const parts = [
-        response.failures.length > 0 ? `${failureSummary(response.failures)}その service は規則で分けています。` : '',
-        unconfirm ? UNCONFIRMED_BY_JEV : '',
-      ].join('')
       set({
         groups: merged,
-        confirmed: get().confirmed && !unconfirm,
-        // 確定を外したら、閉じていた表を開く(「表を確かめて」と言うため)
-        tableRequest: unconfirm ? get().tableRequest + 1 : get().tableRequest,
         jev: {
           ...get().jev,
           state: response.failures.length > 0 ? 'partial' : 'done',
           response,
-          message: parts === '' ? null : parts,
+          message: response.failures.length > 0 ? `${failureSummary(response.failures)}その service は規則で分けています。` : null,
         },
       })
     }
@@ -298,14 +275,12 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
     function computeNow(feed: GtfsFeed, list: HolidayList | null) {
       pending = null
       const groups = compute(feed, list)
-      set({ status: 'ready', groups, confirmed: groups.simple, jev: { ...IDLE_JEV, omitted: [] } })
+      set({ status: 'ready', groups, jev: { ...IDLE_JEV, omitted: [] } })
       requestConsent()
     }
 
     return {
       ...initial(),
-      tableRequest: 0,
-      showTable: () => set({ tableRequest: get().tableRequest + 1 }),
 
       start: (feed) => {
         abort()
@@ -353,10 +328,8 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
       dropJev: () => {
         const { groups, jev } = get()
         if (!groups || (jev.state !== 'done' && jev.state !== 'partial')) return
-        const next = dropJevAnswers(groups)
         set({
-          groups: next,
-          confirmed: get().confirmed && canConfirm(next),
+          groups: dropJevAnswers(groups),
           jev: { ...jev, state: 'dropped', message: 'Jev の判断を使わず、規則だけで分けています。' },
         })
       },
@@ -364,23 +337,25 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
       edit: (e) => {
         const { groups } = get()
         if (!groups) return
-        const next = editGroups(groups, e)
-        // 決まらない行が戻ったら確定を外す(減便の方針の手順は undecidedReplacement で止まるため、表示をそろえる)
-        set({ groups: next, confirmed: get().confirmed && canConfirm(next) })
+        const list: readonly GroupEdit[] = Array.isArray(e) ? e : [e as GroupEdit]
+        const next = list.reduce((g, one) => editGroups(g, one), groups)
+        if (next !== groups) set({ groups: next })
       },
 
       resetRow: (serviceId) => {
         const { groups } = get()
         if (!groups) return
-        const next = resetToProposal(groups, serviceId)
-        set({ groups: next, confirmed: get().confirmed && canConfirm(next) })
+        set({ groups: resetToProposal(groups, serviceId) })
       },
 
-      confirm: () => {
-        const { groups, jev } = get()
-        if (!groups || !canConfirm(groups) || jev.state === 'awaitingConsent' || jev.state === 'checking' || jev.state === 'sending') return false
-        set({ confirmed: true })
-        return true
+      resetKind: (kind) => {
+        const { groups } = get()
+        if (!groups) return
+        const edits = editsOf(groups)
+        if (edits[kind].into.size === 0 && edits[kind].treatment.size === 0) return
+        edits[kind].into.clear()
+        edits[kind].treatment.clear()
+        set({ groups: { ...groups, byKind: buildByKind(groups.features, groups.jev, edits) } })
       },
 
       reset: () => {

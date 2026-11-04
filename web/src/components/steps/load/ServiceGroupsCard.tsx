@@ -2,12 +2,10 @@ import { Fragment, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { PolicyKind } from '@/gtfs/edit/ops'
-import { canConfirm } from '@/gtfs/groups/edit'
 import { jevChoiceOf } from '@/gtfs/groups/rules'
 import {
   POLICY_KINDS,
@@ -24,13 +22,13 @@ import { formatDateJa } from '@/lib/dates'
 import { draftName, useEditStore } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { useServiceGroupsStore, type JevInfo } from '@/store/serviceGroups'
-import { SERVICE_GROUPS_ID } from '../stepIds'
 import JevConsentDialog from './JevConsentDialog'
 import {
   attentionCount,
   BASIS_LABELS,
   complexSummary,
   conflictCount,
+  GROUPS_FIX_NOTE,
   coverageParts,
   JEV_DESTINATION,
   JEV_SENT_TEXT,
@@ -40,16 +38,15 @@ import {
   orderRows,
   PROVIDER_NAMES,
   ROLE_LABELS,
+  rowValueText,
   SIDE_LABELS,
   simpleSummary,
   tripsText,
+  undecidedCount,
 } from './serviceGroupsText'
 
 /** タブの文字(狭い欄に収める。読み上げの名前は KIND_LABELS) */
 const TAB_LABELS: Record<PolicyKind, string> = { weekdayToSaturday: '土曜ダイヤに', weekdayToSundayHoliday: '日祝ダイヤに' }
-
-/** 「使わない」の選択肢の値(Radix の Select は空文字の選択肢を持てない) */
-const UNUSED = '__unused__'
 
 /** 押したボタンが消えるとき、焦点を body に落とさないよう、描き直したあとで代わりの要素に移す */
 function focusAfter(action: () => void, id: string) {
@@ -61,8 +58,6 @@ function focusAfter(action: () => void, id: string) {
 const JEV_STATUS_ID = 'jev-status'
 /** 「Jev に問い合わせる」の下の、送り先の1文 */
 const JEV_ASK_NOTE_ID = 'jev-ask-note'
-/** 確定したあとの「表を開く」 */
-const TABLE_TOGGLE_ID = 'service-groups-table-toggle'
 
 const AMBER_TEXT = 'text-amber-900 dark:text-amber-300'
 
@@ -104,64 +99,23 @@ function ProblemList({ problems }: { problems: readonly GroupProblem[] }) {
   )
 }
 
-/** 行の部品の id(焦点を移す先) */
-function controlId(kind: PolicyKind, serviceId: string): string {
-  return `sg-${kind}-${serviceId}-control`
-}
-function detailToggleId(kind: PolicyKind, serviceId: string): string {
-  return `sg-${kind}-${serviceId}-detail-toggle`
-}
-function resetButtonId(kind: PolicyKind, serviceId: string): string {
-  return `sg-${kind}-${serviceId}-reset`
-}
-
-/** 扱い・入れる先の列の Select。役割で中身が変わる */
-function RowControl({ kind, row, kg }: { kind: PolicyKind; row: KindRow; kg: KindGroups }) {
-  const edit = useServiceGroupsStore((s) => s.edit)
-  if (row.side === 'replacement') {
-    const weekdays = kg.rows.filter((r) => r.side === 'weekdayOnly').map((r) => r.serviceId)
-    const value = row.into ?? (row.intoMark === 'undecided' ? '' : UNUSED)
-    return (
-      <Select value={value} onValueChange={(v) => edit({ kind, serviceId: row.serviceId, into: v === UNUSED ? null : v })}>
-        <SelectTrigger
-          id={controlId(kind, row.serviceId)}
-          size="sm"
-          aria-label={`${row.serviceId} の便を入れる平日の service`}
-          className="max-w-full font-normal"
-        >
-          <SelectValue placeholder="選んでください" />
-        </SelectTrigger>
-        <SelectContent>
-          {weekdays.map((w) => (
-            <SelectItem key={w} value={w}>
-              <span className="font-mono">{w}</span>
-            </SelectItem>
-          ))}
-          <SelectItem value={UNUSED}>使わない</SelectItem>
-        </SelectContent>
-      </Select>
-    )
-  }
-  if (row.side === 'weekdayOnly' || row.side === 'unsupported') {
-    const assigned = kg.rows.some((r) => r.side === 'replacement' && r.into === row.serviceId)
-    return (
-      <Select
-        value={row.treatment ?? ''}
-        onValueChange={(v) => edit({ kind, serviceId: row.serviceId, treatment: v as 'erase' | 'keep' })}
-      >
-        <SelectTrigger id={controlId(kind, row.serviceId)} size="sm" aria-label={`${row.serviceId} の扱い`} className="max-w-full font-normal">
-          <SelectValue placeholder="選んでください" />
-        </SelectTrigger>
-        <SelectContent>
-          {row.side === 'weekdayOnly' && <SelectItem value="erase">{assigned ? '入れ替える' : 'なくす'}</SelectItem>}
-          <SelectItem value="keep" disabled={assigned}>
-            残す
-          </SelectItem>
-        </SelectContent>
-      </Select>
-    )
-  }
-  return <span className="text-xs text-muted-foreground">手を付けない</span>
+/**
+ * 扱い・入れる先の列。読む専用(指摘19:直すのは減便の方針の手順の詳しい設定の手動の欄。docs/tasks-1105.md の U04)
+ */
+function RowValue({ row, kg }: { row: KindRow; kg: KindGroups }) {
+  const text = rowValueText(row, kg)
+  const mono = row.side === 'replacement' && row.into !== null
+  return (
+    <span className={`text-xs ${row.side === 'both' || row.side === 'unrelated' ? 'text-muted-foreground' : ''}`}>
+      {mono ? (
+        <>
+          入れる先 <span className="font-mono">{row.into}</span>
+        </>
+      ) : (
+        text
+      )}
+    </span>
+  )
 }
 
 const COLUMNS = 2
@@ -183,11 +137,7 @@ function GroupRow({
   jevChoice: ReturnType<typeof jevChoiceOf>
 }) {
   const [open, setOpen] = useState(false)
-  const edit = useServiceGroupsStore((s) => s.edit)
-  const resetRow = useServiceGroupsStore((s) => s.resetRow)
   const mark = markOf(row)
-  const conflict = row.intoMark === 'conflict' || row.basisMark === 'conflict'
-  const edited = row.intoMark === 'edited' || row.basisMark === 'edited'
   const detailId = `sg-${kind}-${row.serviceId}`
   return (
     <>
@@ -210,7 +160,6 @@ function GroupRow({
           </div>
           <div className="text-xs text-muted-foreground tabular-nums">{tripsText(feature)}</div>
           <Button
-            id={detailToggleId(kind, row.serviceId)}
             type="button"
             variant="link"
             size="xs"
@@ -225,24 +174,12 @@ function GroupRow({
         </TableCell>
         <TableCell className="align-top whitespace-normal">
           <div className="flex flex-col items-start gap-1">
-            <RowControl kind={kind} row={row} kg={kg} />
+            <RowValue row={row} kg={kg} />
             {mark && <MarkBadge mark={mark} />}
             {row.intoMark === 'conflict' && jevChoice.into !== undefined && (
-              <div className="flex flex-col items-start gap-1 text-xs">
-                <span>
-                  Jev:<span className={jevChoice.into === null ? undefined : 'font-mono'}>{jevChoice.into ?? '使わない'}</span>
-                </span>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  onClick={() =>
-                    focusAfter(() => edit({ kind, serviceId: row.serviceId, into: jevChoice.into ?? null }), controlId(kind, row.serviceId))
-                  }
-                >
-                  Jev の値を使う
-                </Button>
-              </div>
+              <span className="text-xs">
+                Jev:<span className={jevChoice.into === null ? undefined : 'font-mono'}>{jevChoice.into ?? '使わない'}</span>
+              </span>
             )}
             {row.basisMark === 'conflict' && jevChoice.basis !== undefined && (
               <span className="text-xs">
@@ -264,33 +201,6 @@ function GroupRow({
               )}
               {feature.headsigns.length > 0 && <li>主な行き先:{feature.headsigns.join('、')}</li>}
             </ul>
-            {(conflict || edited) && (
-              <div className="mt-1 flex flex-wrap gap-2">
-                {conflict && (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      focusAfter(() => edit({ kind, serviceId: row.serviceId, acceptConflict: true }), resetButtonId(kind, row.serviceId))
-                    }
-                  >
-                    規則の値のまま進める
-                  </Button>
-                )}
-                {edited && (
-                  <Button
-                    id={resetButtonId(kind, row.serviceId)}
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    onClick={() => focusAfter(() => resetRow(row.serviceId), detailToggleId(kind, row.serviceId))}
-                  >
-                    案に戻す
-                  </Button>
-                )}
-              </div>
-            )}
           </TableCell>
         </TableRow>
       )}
@@ -533,27 +443,20 @@ function HolidayNote({ groups }: { groups: ServiceGroups }) {
 }
 
 /**
- * 読み込みの手順の「ダイヤのグループ分け」(docs/design-service-groups.md §5.1・§3.6)。
- * 単純な GTFS(道北バスなど)は1行の要約と「詳しく見る」、単純でない GTFS は要約・Jev の欄・方針の種類ごとの表・確定のボタン
+ * 読み込みの手順の「ダイヤのグループ分け」(docs/design-service-groups.md §5.1・§3.6)。分けた結果を読む専用で見せる。
+ * 単純な GTFS(道北バスなど)は1行の要約と「表を開く」、単純でない GTFS は要約・Jev の欄・方針の種類ごとの表。
+ * 扱い・入れる先の直しと確定のボタンは置かない(指摘19。docs/tasks-1105.md の U04)。直すのは減便の方針の手順の詳しい設定
+ * (「手動で選ぶ」)で、最後の確かめは減便の方針の「対象便を確かめる」
  */
 export default function ServiceGroupsCard() {
   const status = useServiceGroupsStore((s) => s.status)
   const groups = useServiceGroupsStore((s) => s.groups)
-  const confirmed = useServiceGroupsStore((s) => s.confirmed)
   const jev = useServiceGroupsStore((s) => s.jev)
-  const confirm = useServiceGroupsStore((s) => s.confirm)
   const approved = useEditStore((s) => s.history.some((r) => r.op.type === 'applyPolicy'))
-  // 承認待ちの減便の方針の下書き。グループ分けを直しても、その下書きの組は変わらない
+  // 承認待ちの減便の方針の下書き。グループ分けが変わっても、その下書きの組は変わらない
   const policyDraftId = useEditStore((s) => (s.draft?.kind === 'op' && s.draft.record.op.type === 'applyPolicy' ? s.draft.id : null))
-  // 単純でない GTFS は、確定するまで表を開いておく。確定したら閉じる
+  // 単純な GTFS は閉じておき、単純でない GTFS は開いておく(利用者が開け閉めしたらそれに従う)
   const [open, setOpen] = useState<boolean | null>(null)
-  // 減便の方針の手順の「読み込みの手順の表で直す」から来たら、表を開く
-  const tableRequest = useServiceGroupsStore((s) => s.tableRequest)
-  const [seenRequest, setSeenRequest] = useState(tableRequest)
-  if (tableRequest !== seenRequest) {
-    setSeenRequest(tableRequest)
-    setOpen(true)
-  }
 
   if (status === 'idle') return null
   if (status === 'waitingHolidays' || !groups) {
@@ -565,33 +468,23 @@ export default function ServiceGroupsCard() {
     )
   }
 
-  const tableOpen = open ?? (!groups.simple && !confirmed)
-  const busy = jev.state === 'awaitingConsent' || jev.state === 'checking' || jev.state === 'sending'
-  const confirmable = canConfirm(groups)
+  const tableOpen = open ?? !groups.simple
   const staleNote = approved ? (
-    <p className={`text-xs ${AMBER_TEXT}`}>グループ分けを直しても、減便の方針を承認し直すまで、出力には反映されません。</p>
+    <p className={`text-xs ${AMBER_TEXT}`}>グループ分けが変わっても、減便の方針を承認し直すまで、出力には反映されません。</p>
   ) : policyDraftId !== null ? (
     <p className={`text-xs ${AMBER_TEXT}`}>
-      グループ分けを直しても、承認待ちの{draftName(policyDraftId)} には反映されません。減便の方針の手順で、下書きを作り直してください。
+      グループ分けが変わっても、承認待ちの{draftName(policyDraftId)} には反映されません。減便の方針の手順で、下書きを作り直してください。
     </p>
   ) : null
   const toggle = (
-    <Button
-      id={TABLE_TOGGLE_ID}
-      type="button"
-      variant="ghost"
-      size="xs"
-      className="self-start"
-      aria-expanded={tableOpen}
-      onClick={() => setOpen(!tableOpen)}
-    >
+    <Button type="button" variant="ghost" size="xs" className="self-start" aria-expanded={tableOpen} onClick={() => setOpen(!tableOpen)}>
       {tableOpen ? '表を閉じる' : '表を開く'}
     </Button>
   )
 
   if (groups.simple) {
     return (
-      <section id={SERVICE_GROUPS_ID} tabIndex={-1} aria-label="ダイヤのグループ分け" className="flex flex-col gap-1.5 outline-none">
+      <section aria-label="ダイヤのグループ分け" className="flex flex-col gap-1.5">
         <h3 className="text-sm font-medium">ダイヤのグループ分け</h3>
         <p className="text-sm" data-testid="service-groups-summary" role="status">
           {simpleSummary(groups)}
@@ -610,8 +503,9 @@ export default function ServiceGroupsCard() {
 
   const attention = attentionCount(groups)
   const conflicts = conflictCount(groups)
+  const undecided = undecidedCount(groups)
   return (
-    <section id={SERVICE_GROUPS_ID} tabIndex={-1} aria-label="ダイヤのグループ分け" className="flex flex-col gap-2 outline-none">
+    <section aria-label="ダイヤのグループ分け" className="flex flex-col gap-2">
       <h3 className="text-sm font-medium">ダイヤのグループ分け</h3>
       <p className="text-sm" data-testid="service-groups-summary" role="status">
         {complexSummary(groups, attention)}
@@ -623,42 +517,17 @@ export default function ServiceGroupsCard() {
       ) : (
         jev.message && <p className="text-xs text-muted-foreground">{jev.message}</p>
       )}
-      {confirmed && (
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-sm">グループ分けを確定しました。直すときは表を開きます。</p>
-          {toggle}
-        </div>
-      )}
+      <div className="flex flex-col gap-0.5 text-xs text-muted-foreground" data-testid="service-groups-next">
+        {undecided > 0 && <p className="text-destructive">入れる平日の service が決まらないものが {undecided} 件あります。</p>}
+        {conflicts > 0 && <p>規則と Jev が食い違っている {conflicts} 件は、規則の値で入れ替えます。</p>}
+        <p>{GROUPS_FIX_NOTE}</p>
+      </div>
+      {toggle}
       {tableOpen && (
         <>
           {staleNote}
           <GroupTabs groups={groups} />
         </>
-      )}
-      {!confirmed && (
-        <div className="flex flex-col items-start gap-1">
-          <Button
-            type="button"
-            size="sm"
-            disabled={!confirmable || busy}
-            onClick={() =>
-              focusAfter(() => {
-                if (confirm()) setOpen(false)
-              }, TABLE_TOGGLE_ID)
-            }
-          >
-            このグループ分けで進める
-          </Button>
-          {jev.state === 'awaitingConsent' ? (
-            <p className="text-xs text-muted-foreground">Jev に送るかを選んでください。</p>
-          ) : busy ? (
-            <p className="text-xs text-muted-foreground">Jev の答えを待っています。</p>
-          ) : !confirmable ? (
-            <p className="text-xs text-destructive">「選んでください」の行が残っているため、まだ進められません。</p>
-          ) : (
-            conflicts > 0 && <p className="text-xs text-muted-foreground">規則と Jev が食い違っている {conflicts} 件は、規則の値で進めます。</p>
-          )}
-        </div>
       )}
     </section>
   )

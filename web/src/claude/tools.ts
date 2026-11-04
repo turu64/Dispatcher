@@ -144,8 +144,8 @@ export interface PolicyServices {
   saturday: string | null
   sundayHoliday: string | null
   /**
-   * 読み込みの手順のダイヤのグループ分け(docs/design-service-groups.md §5.3)。confirmed なら apply_policy は
-   * その組の表で減便の方針を作り、weekday などは使わない。unconfirmed なら weekday などで作り、結果に未確定と書く。
+   * 読み込みの手順のダイヤのグループ分け(docs/design-service-groups.md §5.3)。confirmed(ダイヤ単位で選べる)なら apply_policy は
+   * その組の表で減便の方針を作り、weekday などは使わない。unconfirmed(Jev の答えを待っている間)なら weekday などで作り、結果にその旨を書く。
    * 省く(単純な GTFS で1組の形で足りる、まだ計算していない)なら今のまま
    */
   groups?: GroupedPolicyServices
@@ -649,7 +649,7 @@ function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
   const groupChoice = grouped?.status === 'confirmed' ? grouped.byKind[kind] : null
   if (groupChoice && 'error' in groupChoice) {
     return fail(
-      `読み込みの手順で確定したダイヤのグループ分けでは、この減便の方針を作れません。${groupChoice.error.map((p) => p.message).join(' ')} 利用者に、手順「読み込み」のダイヤのグループ分けの表で直すよう伝えてください。下書きは作っていません。`,
+      `今のダイヤのグループ分けでは、この減便の方針を作れません。${groupChoice.error.map((p) => p.message).join(' ')} 利用者に、手順「減便の方針」の詳しい設定で、入れ替えるダイヤを「手動で選ぶ」にして直すよう伝えてください。下書きは作っていません。`,
     )
   }
   const weekday = groupChoice ? groupChoice.weekdayService : (services?.weekday ?? null)
@@ -723,8 +723,9 @@ function groupsJson(
   }
 }
 
+/** グループ分けが Jev の答えを待っている間(unconfirmed)に作った下書きの断り書き。グループ分けを確定する操作は無い(指摘19) */
 function groupsUnconfirmedNote(weekday: string): string {
-  return `ダイヤのグループ分けが確定していないため、平日の service ${weekday} だけを入れ替える下書きにしました。ほかの平日の service の便は平日のまま残ります。ダイヤ単位で入れ替えるには、利用者に手順「読み込み」でダイヤのグループ分けを確定してもらい、apply_policy を使い直してください。`
+  return `ダイヤのグループ分けが Jev の答えを待っているため、平日の service ${weekday} だけを入れ替える下書きにしました。ほかの平日の service の便は平日のまま残ります。ダイヤ単位で入れ替えるには、Jev の答えが届いてから(または利用者が手順「読み込み」で Jev への問い合わせをやめてから)、apply_policy を使い直してください。`
 }
 
 /** 編集の下書き(kind 'op')の結果 */

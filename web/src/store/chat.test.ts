@@ -675,6 +675,26 @@ describe('調べた結果の対象を、セッションを作るたびに登録�
     fake.last().push(saved('e3', 1, 3))
     await vi.waitFor(() => expect(s().research).toMatchObject({ saved: 1, total: 3 }))
   })
+
+  it('サーバーの targets が空・一部欠けで返っても、分母は選んだ対象の数で、調べている最中に「調べ終えました」と出さない', async () => {
+    const { s, research } = setupWithResearch()
+    const start = research.api.start as ReturnType<typeof vi.fn>
+    // targets が空
+    start.mockImplementationOnce(async () => ({ targets: [], total: 2, maxTargets: 30 }))
+    await s().startResearch(['P04:1', 'P04:2', 'P04:1'])
+    expect(s().research).toMatchObject({ active: true, saved: 0, total: 2, outcome: null })
+    expect(researchText(s().research)).toBe('調べています 0 / 2 件')
+    // 一部欠け(返った1件は保存済み)
+    s().startOver()
+    start.mockImplementationOnce(async () => ({
+      targets: [{ targetId: 'P04:1', kind: 'hospital' as const, name: 'P04:1', municipality: null, lat: 43, lon: 142, cached: { status: 'found' as const, checkedAt: '2026-11-04T10:00:00+09:00', facts: 2 } }],
+      total: 2,
+      maxTargets: 30,
+    }))
+    await s().startResearch(['P04:1', 'P04:2'])
+    expect(s().research).toMatchObject({ active: true, saved: 1, total: 2, outcome: null })
+    expect(researchText(s().research)).toBe('調べています 1 / 2 件')
+  })
 })
 
 describe('ツールを使いすぎて止めた知らせ(指摘15.2)', () => {

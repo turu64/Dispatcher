@@ -109,8 +109,11 @@ export interface ServiceGroupsState {
    * 割り当て・扱いを直す。複数の直しは順に当てて、1回で反映する(手動の欄の1つの操作が、割り当ての付け替えと扱いの両方を変えるため)
    */
   edit: (edit: GroupEdit | readonly GroupEdit[]) => void
-  /** その service の直しを捨てて、規則と Jev の案に戻す */
-  resetRow: (serviceId: string) => void
+  /**
+   * その service の直しを捨てて、規則と Jev の案に戻す。kind を渡せば、その方針の種類の直しだけを捨てる
+   * (手動の欄の「案に戻す」。いま見ている種類だけを戻し、ほかの種類の直しは残す)。省けば、すべての種類で捨てる
+   */
+  resetRow: (serviceId: string, kind?: PolicyKind) => void
   /** その方針の種類の直しをすべて捨てて、規則と Jev の案に戻す(減便の方針の詳しい設定で「自動」に戻したとき) */
   resetKind: (kind: PolicyKind) => void
   /** GTFS を読み込み直したとき・削除したとき(store/reset.ts の resetAll)。送っている問い合わせも、利用者の答えを待っている状態も捨てる */
@@ -342,10 +345,18 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
         if (next !== groups) set({ groups: next })
       },
 
-      resetRow: (serviceId) => {
+      resetRow: (serviceId, kind) => {
         const { groups } = get()
         if (!groups) return
-        set({ groups: resetToProposal(groups, serviceId) })
+        if (kind === undefined) {
+          set({ groups: resetToProposal(groups, serviceId) })
+          return
+        }
+        const edits = editsOf(groups)
+        const had = edits[kind].into.delete(serviceId)
+        const hadTreatment = edits[kind].treatment.delete(serviceId)
+        if (!had && !hadTreatment) return
+        set({ groups: { ...groups, byKind: buildByKind(groups.features, groups.jev, edits) } })
       },
 
       resetKind: (kind) => {

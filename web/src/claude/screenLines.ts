@@ -79,8 +79,8 @@ export function researchStateLine(r: { count: number; demo: number } | null): st
 }
 
 /**
- * 確定したダイヤのグループ分けの文(docs/design-service-groups.md §5.3)。
- * 「ダイヤのグループ分け(確定):土曜ダイヤに変えるとき、平日のダイヤ 01001 ほか 8 を土曜のダイヤ 03001 ほか 4 に入れ替える
+ * ダイヤのグループ分けの文(docs/design-service-groups.md §5.3)。
+ * 「ダイヤのグループ分け:土曜ダイヤに変えるとき、平日のダイヤ 01001 ほか 8 を土曜のダイヤ 03001 ほか 4 に入れ替える
  * (なくす:01005_MSN、平日のまま残す:01002_RIT ほか 2)。日祝ダイヤに変えるとき、…。」
  */
 export function groupsText(byKind: Record<PolicyKind, GroupChoice>): string {
@@ -96,7 +96,7 @@ export function groupsText(byKind: Record<PolicyKind, GroupChoice>): string {
         : `入れ替える組はなく、平日の便をなくす`
     return `${label}ダイヤに変えるとき、${main}${extra.length > 0 ? `(${extra.join('、')})` : ''}`
   })
-  return `ダイヤのグループ分け(確定):${parts.join('。')}。`
+  return `ダイヤのグループ分け:${parts.join('。')}。`
 }
 
 /** Claude の下書きの行方の行(docs/interfaces-1104.md §10 の3つの文) */

@@ -312,6 +312,35 @@ describe('読み込んだ GTFS の削除', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull()
   })
 
+  it('開いたまま読み込みを始めたら、焦点は削除のボタンに戻さず、読み込みが終わってから「ファイルを選ぶ」に移す', async () => {
+    const worker = deferred<GtfsFeed>()
+    mocks.loadGtfsInWorker.mockResolvedValueOnce(smallFeed()).mockReturnValueOnce(worker.promise)
+    render(<LoadStep />)
+    await loadFile()
+    fireEvent.click(screen.getByRole('button', { name: DELETE }))
+    expect(screen.getByRole('alertdialog', { name: CONFIRM })).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('GTFS の ZIP ファイル'), { target: { files: [zipFile('b.zip', 2048)] } })
+    const picking = await screen.findByRole('button', { name: '読み込み中' })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    // 読み込み中は、削除のボタンは無く、「ファイルを選ぶ」も無効
+    expect(screen.queryByRole('button', { name: DELETE })).toBeNull()
+    expect((picking as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => worker.resolve(smallFeed()))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'ファイルを選ぶ' })))
+  })
+
+  it('開いたまま読み込みを始め、閉じる前に読み込みが終わっていても、焦点は新しい削除のボタンではなく「ファイルを選ぶ」に移す', async () => {
+    mocks.loadGtfsInWorker.mockResolvedValue(smallFeed())
+    render(<LoadStep />)
+    await loadFile()
+    fireEvent.click(screen.getByRole('button', { name: DELETE }))
+    expect(screen.getByRole('alertdialog', { name: CONFIRM })).toBeTruthy()
+    // 読み込みを始めたら、ダイアログは閉じる。読み込みはすぐ終わる
+    fireEvent.change(screen.getByLabelText('GTFS の ZIP ファイル'), { target: { files: [zipFile('b.zip', 2048)] } })
+    await waitFor(() => expect(useGtfsStore.getState().label).toBe('b.zip'))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'ファイルを選ぶ' })))
+  })
+
   it('確かめの文に、承認待ちの下書きと承認済みの編集の数を添える', async () => {
     mocks.loadGtfsInWorker.mockResolvedValue(smallFeed())
     render(<LoadStep />)

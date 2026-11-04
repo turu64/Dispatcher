@@ -896,12 +896,15 @@ export function createChatStore(deps: ChatStoreDeps) {
               // 保存済み(cached)の対象は調べない(§3.2)。調べる対象が無ければ、進み具合は「調べ終えました」から始める
               const chosenIds = new Set(targetIds)
               const chosen = [...new Map(view.targets.filter((t) => chosenIds.has(t.targetId)).map((t) => [t.targetId, t])).values()]
-              researchChosen = chosen.length
+              // 分母は選んだ対象の数(重複を除く)。targets が空・一部欠けで返っても、調べている最中に「調べ終えました」と出さない
+              // (欠けた対象は保存済みか分からないので、調べるものとして数える)
+              const total = chosenIds.size
+              researchChosen = total
               const saved = chosen.filter((t) => t.cached !== null).length
-              const active = saved < chosen.length
+              const active = saved < total
               set({
                 replying: true,
-                research: { ...EMPTY_RESEARCH, active, saved, total: chosen.length, outcome: active ? null : 'done' },
+                research: { ...EMPTY_RESEARCH, active, saved, total, outcome: active ? null : 'done' },
               })
               return view
             } catch (e) {

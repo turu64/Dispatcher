@@ -202,7 +202,7 @@ function WeekdayRow({ groups, kg, row, feature }: { groups: ServiceGroups; kg: K
               variant="outline"
               onClick={() =>
                 focusAfter(() => {
-                  for (const id of editedIds) resetRow(id)
+                  for (const id of editedIds) resetRow(id, kind)
                 }, toggleId)
               }
             >
@@ -272,7 +272,7 @@ function OrphanRow({ groups, kg, row, feature }: { groups: ServiceGroups; kg: Ki
         </div>
       )}
       {row.intoMark === 'edited' && (
-        <Button type="button" size="xs" variant="outline" className="self-start" onClick={() => focusAfter(() => resetRow(row.serviceId), selectId)}>
+        <Button type="button" size="xs" variant="outline" className="self-start" onClick={() => focusAfter(() => resetRow(row.serviceId, kind), selectId)}>
           案に戻す
         </Button>
       )}

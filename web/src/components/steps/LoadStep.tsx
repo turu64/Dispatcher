@@ -111,6 +111,10 @@ export default function LoadStep() {
   const deleted = useRef(false)
   const deleteButton = useRef<HTMLButtonElement>(null)
   const pickButton = useRef<HTMLButtonElement>(null)
+  // ダイアログを開いたまま読み込みを始めた(読み込みがダイアログを閉じた)。閉じた後の焦点は削除のボタンではなく「ファイルを選ぶ」へ
+  const closedByLoad = useRef(false)
+  // ダイアログを閉じたとき、焦点を移せるボタンが無かった(読み込み中で「ファイルを選ぶ」も無効)。読み込みが終わったら移す
+  const focusPickWhenIdle = useRef(false)
   const pendingDraft = useEditStore((s) => s.draft)
   const committedEdits = useEditStore((s) => s.history.length)
   const label = useGtfsStore((s) => s.label)
@@ -118,6 +122,14 @@ export default function LoadStep() {
   const loadedSample = useGtfsStore((s) => s.sample)
   const loadedSize = useGtfsStore((s) => s.size)
   const loadedAt = useGtfsStore((s) => s.loadedAt)
+
+  useEffect(() => {
+    if (busy !== null || !focusPickWhenIdle.current) return
+    focusPickWhenIdle.current = false
+    // そのあいだに利用者がほかへ焦点を移していたら、動かさない
+    const active = document.activeElement
+    if (active === null || active === document.body) pickButton.current?.focus()
+  }, [busy])
 
   useEffect(() => {
     fetchSampleGtfsInfo()
@@ -135,6 +147,7 @@ export default function LoadStep() {
     setAttempt({ name, size: knownSize, isSample: kind === 'sample', status: 'loading' })
     setError(null)
     // 読み込みを始めたら、削除の確かめは閉じる
+    closedByLoad.current = true
     setConfirmingDelete(false)
     // 前の GTFS と、その編集の履歴・下書き・到達圏・前提情報・AI との会話を捨てる(削除と同じ初期化。store/reset.ts)
     resetAll('reload')
@@ -174,6 +187,8 @@ export default function LoadStep() {
 
   function askDelete(isSample: boolean) {
     deleted.current = false
+    closedByLoad.current = false
+    focusPickWhenIdle.current = false
     setDeleteMessage(deleteConfirmMessage({ draft: pendingDraft, committed: committedEdits, sample: isSample }))
     setConfirmingDelete(true)
   }
@@ -301,10 +316,14 @@ export default function LoadStep() {
         >
           <AlertDialogContent
             onCloseAutoFocus={(e) => {
-              // 削除したら「ファイルを選ぶ」へ、やめたら削除のボタンへ焦点を戻す
+              // 削除したら「ファイルを選ぶ」へ、やめたら削除のボタンへ焦点を戻す。開いたまま読み込みを始めたとき・削除のボタンが
+              // 無効か消えていたときは「ファイルを選ぶ」へ。それも無効(読み込み中)なら、読み込みが終わってから移す(焦点を body に落とさない)
               e.preventDefault()
-              const target = deleted.current ? pickButton.current : (deleteButton.current ?? pickButton.current)
-              target?.focus()
+              const candidates =
+                deleted.current || closedByLoad.current ? [pickButton.current] : [deleteButton.current, pickButton.current]
+              const target = candidates.find((b): b is HTMLButtonElement => b !== null && b.isConnected && !b.disabled)
+              if (target) target.focus()
+              else focusPickWhenIdle.current = true
             }}
           >
             <AlertDialogHeader>

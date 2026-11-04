@@ -138,6 +138,26 @@ describe('画面', () => {
     expect(row(useServiceGroupsStore.getState().groups!, '03001_A').intoMark).toBe('conflict')
   })
 
+  it('「案に戻す」は、いま見ている種類(土曜)の直しだけを戻し、「平日を日祝に」の直しは残す', () => {
+    const SUN = 'weekdayToSundayHoliday' as const
+    const base = proposeGroups(kyotoLike())
+    const edited = [
+      { kind: SAT, serviceId: '01005_MSN', treatment: 'keep' as const },
+      { kind: SUN, serviceId: '01005_MSN', treatment: 'keep' as const },
+    ].reduce((g, e) => editGroups(g, e), base)
+    const sunRow = () => useServiceGroupsStore.getState().groups!.byKind[SUN].rows.find((r) => r.serviceId === '01005_MSN')!
+    expect(row(edited, '01005_MSN')).toMatchObject({ treatment: 'keep', basisMark: 'edited' })
+    show(edited)
+    expect(sunRow()).toMatchObject({ treatment: 'keep', basisMark: 'edited' })
+    fireEvent.click(within(manualRow('01005_MSN')).getByRole('button', { name: '案に戻す' }))
+    const g = useServiceGroupsStore.getState().groups!
+    expect(row(g, '01005_MSN')).toMatchObject({ treatment: row(base, '01005_MSN').treatment, basisMark: row(base, '01005_MSN').basisMark })
+    expect(hasKindEdits(g, SAT)).toBe(false)
+    // 日祝の直しは残る
+    expect(sunRow()).toMatchObject({ treatment: 'keep', basisMark: 'edited' })
+    expect(hasKindEdits(g, SUN)).toBe(true)
+  })
+
   it('入れ替えないにした行は、入れ替え先を出さない', () => {
     show(proposeGroups(kyotoLike()))
     expect(within(manualRow('01002_RIT')).queryByRole('combobox')).toBeNull()

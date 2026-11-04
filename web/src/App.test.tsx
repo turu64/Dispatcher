@@ -437,7 +437,7 @@ describe('左の欄のタブ(編集と AI に相談)', () => {
     act(() => {
       useChatStore.setState({ replying: false, items: [{ id: 1, kind: 'assistant', messageId: 'm1', text: '平日を土曜ダイヤにします。', streaming: false }] })
     })
-    expect(tab(/^AI に相談/).textContent).toBe('AI に相談(新しい発言あり)')
+    expect(tab(/^AI に相談/).textContent).toBe('AI に相談1(未読の返信 1 件)')
   })
 
   it('「編集」のタブを開いている間、AI が返答していればスピナー、見ていない発言があれば点を「AI に相談」のタブに出す。開けば消える', () => {
@@ -452,14 +452,39 @@ describe('左の欄のタブ(編集と AI に相談)', () => {
         items: [{ id: 1, kind: 'assistant', messageId: 'm1', text: '平日を土曜ダイヤにします。', streaming: false }],
       })
     })
-    expect(tab(/^AI に相談/).textContent).toBe('AI に相談(新しい発言あり)')
+    expect(tab(/^AI に相談/).textContent).toBe('AI に相談1(未読の返信 1 件)')
     fireEvent.mouseDown(tab(/^AI に相談/))
     expect(tab(/^AI に相談/).textContent).toBe('AI に相談')
     // AI のタブを開いている間は、返答中でも印を出さない
     act(() => useChatStore.setState({ replying: true }))
     expect(tab(/^AI に相談/).textContent).toBe('AI に相談')
-    // 編集に戻っても、見た発言には点を付けない
+    // 編集に戻っても、見た発言には印を付けない
     act(() => useChatStore.setState({ replying: false }))
+    fireEvent.mouseDown(tab('編集'))
+    expect(tab(/^AI に相談/).textContent).toBe('AI に相談')
+  })
+
+  it('未読の返信は件数のバッジで出し、AI の下書きとエラーも数える。流れている途中の返答は数えない', () => {
+    load()
+    render(<App />)
+    act(() => {
+      useChatStore.setState({
+        items: [
+          { id: 1, kind: 'user', text: '質問', at: '2026-11-04T09:00:00+09:00' },
+          { id: 2, kind: 'assistant', messageId: 'm1', text: '返答1', streaming: false },
+          { id: 3, kind: 'error', text: 'エラー' },
+          { id: 4, kind: 'assistant', messageId: 'm2', text: '返答2の途中', streaming: true },
+        ],
+      })
+    })
+    expect(tab(/^AI に相談/).textContent).toBe('AI に相談2(未読の返信 2 件)')
+    act(() => {
+      useChatStore.setState((s) => ({
+        items: s.items.map((i) => (i.kind === 'assistant' && i.messageId === 'm2' ? { ...i, text: '返答2', streaming: false } : i)),
+      }))
+    })
+    expect(tab(/^AI に相談/).textContent).toBe('AI に相談3(未読の返信 3 件)')
+    fireEvent.mouseDown(tab(/^AI に相談/))
     fireEvent.mouseDown(tab('編集'))
     expect(tab(/^AI に相談/).textContent).toBe('AI に相談')
   })

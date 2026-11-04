@@ -33,33 +33,44 @@ function noticeKey(item: ChatItem | undefined): string | undefined {
   return item.kind === 'assistant' ? `${item.id}:${item.streaming ? 1 : 0}` : String(item.id)
 }
 
+/** 未読に数える発言(AI の返答は流れ終わったもの・下書きの知らせ・エラー) */
+function isCountable(item: ChatItem): boolean {
+  if (item.kind === 'assistant') return !item.streaming
+  return item.kind === 'draft' || item.kind === 'error'
+}
+
 /**
  * 「AI に相談」のタブの名前の横の印。「編集」のタブを開いている間に、AI が返答している(スピナー)、
- * または見ていない新しい発言がある(点)ときに出す。AI のタブを開いたら、見ていない印を消す
+ * または未読の返信がある(件数のバッジ)ときに出す。AI のタブを開いたら、そのとき見えている発言を既読にする。
+ * 既読は noticeKey で覚える(返答の流れ始めを見てから「編集」に移ったときも、流れ終わった返答は未読に数えるため)
  */
 function ChatTabMark({ store, open }: { store: ChatStoreHook; open: boolean }) {
   const replying = store((s) => s.replying)
-  const latest = store((s) => noticeKey(lastNoticeable(s.items)))
-  const [seen, setSeen] = useState(latest)
-  if (open && seen !== latest) setSeen(latest)
+  const items = store((s) => s.items)
+  const latest = noticeKey(lastNoticeable(items))
+  const [seen, setSeen] = useState<{ latest: string | undefined; keys: ReadonlySet<string> }>(() => ({
+    latest,
+    keys: new Set(items.filter(isCountable).map((i) => noticeKey(i)!)),
+  }))
+  if (open && seen.latest !== latest) setSeen({ latest, keys: new Set(items.filter(isCountable).map((i) => noticeKey(i)!)) })
   if (open) return null
-  if (replying) {
-    return (
-      <>
-        <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />
-        <span className="sr-only">(返答中)</span>
-      </>
-    )
-  }
-  if (latest !== undefined && latest !== seen) {
-    return (
-      <>
-        <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
-        <span className="sr-only">(新しい発言あり)</span>
-      </>
-    )
-  }
-  return null
+  const unread = items.filter((i) => isCountable(i) && !seen.keys.has(noticeKey(i)!)).length
+  return (
+    <>
+      {replying && (
+        <>
+          <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />
+          <span className="sr-only">(返答中)</span>
+        </>
+      )}
+      {unread > 0 && (
+        <Badge className="h-4 min-w-4 px-1 text-[10px] tabular-nums">
+          <span aria-hidden="true">{unread}</span>
+          <span className="sr-only">(未読の返信 {unread} 件)</span>
+        </Badge>
+      )}
+    </>
+  )
 }
 
 /** 「編集」のタブを開いている間に増えた発言の、読み上げの文 */

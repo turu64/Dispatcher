@@ -1,5 +1,4 @@
-import { useCallback, useId, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
+import { useCallback, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import HolidayCalendar from '@/components/HolidayCalendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -9,7 +8,7 @@ import { holidaysBetween, uncoveredRanges } from '@/gtfs/holidays'
 import { formatDateJa, todayInJapan } from '@/lib/dates'
 import { cn } from '@/lib/utils'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
-import { nextPeriodFor, periodDays, type PeriodTarget } from './periodRange'
+import { pickStartDate, type PeriodTarget } from './periodRange'
 
 /** 入れ替えに使うダイヤの選択肢(値は方針の種類) */
 const TARGET_OPTIONS: ReadonlyArray<{ kind: PolicyKind; label: string }> = [
@@ -101,15 +100,13 @@ function remToPx(rem: number): number {
 
 /**
  * 要素の幅が minRem 以上か。幅は ResizeObserver で追う(使えない環境では wide のまま)。
- * 幅が 0(まだ描いていない・テストの jsdom)のときは決めない。要素そのもの(焦点を移すため)も返す
+ * 幅が 0(まだ描いていない・テストの jsdom)のときは決めない
  */
-function useWideEnough(minRem: number): [React.RefCallback<HTMLElement>, boolean, React.RefObject<HTMLElement | null>] {
+function useWideEnough(minRem: number): [React.RefCallback<HTMLElement>, boolean] {
   const [wide, setWide] = useState(true)
   const observer = useRef<ResizeObserver | null>(null)
-  const element = useRef<HTMLElement | null>(null)
   const ref = useCallback(
     (el: HTMLElement | null) => {
-      element.current = el
       observer.current?.disconnect()
       observer.current = null
       if (!el || typeof ResizeObserver === 'undefined') return
@@ -124,34 +121,7 @@ function useWideEnough(minRem: number): [React.RefCallback<HTMLElement>, boolean
     },
     [minRem],
   )
-  return [ref, wide, element]
-}
-
-/**
- * カレンダーの下に出す、選んだ期間の文。「期間:2026年11月9日(月)〜11月30日(月)(22日間)」「期間:2026年11月9日(月)から当面の間」、
- * 1日だけなら「期間:2026年11月9日(月)の1日間」
- */
-function describePeriod(start: string, end: string, indefinite: boolean): string {
-  if (!start) return '開始日をカレンダーで選んでください。'
-  const from = formatDateJa(start)
-  if (indefinite) return `期間:${from}から当面の間`
-  if (!end) return `開始日:${from}。終了日をカレンダーで選んでください。`
-  // 終了日が開始日より前(既存の方針など)。理由は文の下の確認の結果(badPeriod)に出す
-  if (end < start) return `開始日:${from}、終了日:${formatDateJa(end)}`
-  if (end === start) return `期間:${from}の1日間`
-  // 同じ年なら終了日の年を省く
-  const to = end.slice(0, 4) === start.slice(0, 4) ? formatDateJa(end).replace(/^\d+年/, '') : formatDateJa(end)
-  return `期間:${from}〜${to}(${periodDays(start, end)}日間)`
-}
-
-/** カレンダーの上の案内。終了日の穴から開いたときは、終了日を押すよう案内する */
-function periodHint(target: PeriodTarget, start: string, indefinite: boolean): string {
-  if (indefinite) {
-    const base = 'カレンダーで開始日を押してください。開始日から入力の末日までを薄い帯で示します。'
-    return target === 'end' ? `${base}終了日を決めるときは「当面の間」を外してください。` : base
-  }
-  if (target === 'end' && start) return 'カレンダーで終了日を押してください。開始日より前の日を押すと、その日が新しい開始日になります。'
-  return 'カレンダーで開始日、終了日の順に押してください。開始日と同じ日を押すと1日だけの期間になります。期間を決めたあとに押すと、その日から選び直します。'
+  return [ref, wide]
 }
 
 interface PeriodValue {
@@ -167,114 +137,54 @@ interface PeriodValue {
 }
 
 /**
- * 減便の期間(開始日・終了日・当面の間)を選ぶ欄。減便の文の開始日・終了日の穴から開く Popover の中身。
- * 期間は祝日の色つきカレンダー1つで選ぶ。1回目に押した日が開始日、2回目に押した日が終了日(開始日より前の日なら新しい開始日)。
- * 終了日の穴から開いたときは、開始日と同じ日か後を押すと終了日だけを変える(nextPeriodFor)。
- * 当面の間なら押した日が開始日になる。選べるのは入力の GTFS の有効期間の中だけ。
- * 日付は GTFS と同じ 'YYYYMMDD'(まだ決まっていなければ '')。出力の有効期間・期間の誤り・期間の中の祝日は、文の下(PeriodChecks)に出す
+ * 減便の期間の日付を1つ選ぶカレンダー(文の日付の穴から開く Popover の中身)。中身は祝日の色つきカレンダーだけで、
+ * 押した日を onPick で返す。カレンダーには今の期間(開始日〜終了日、当面の間なら開始日から入力の末日まで)を帯で示す。
+ * 選べるのは min〜max の日だけ(開始日は入力の有効期間、終了日は開始日から入力の末日まで)。
+ * 欄が狭ければ1か月、広ければ2か月を並べる
  */
-export function PeriodFields({
-  input,
+function PeriodCalendar({
   start,
-  onStartChange,
   end,
-  onEndChange,
   indefinite,
-  onIndefiniteChange,
+  min,
+  max,
   holidayState,
-  target = 'start',
-  onClose,
+  onPick,
   boxRef: outerBoxRef,
-}: PeriodValue & {
-  /** どちらの穴から開いたか */
-  target?: PeriodTarget
-  /** 「閉じる」を押したとき(無ければボタンを出さない) */
-  onClose?: () => void
+}: {
+  start: string
+  end: string
+  indefinite: boolean
+  min: string
+  max: string
+  holidayState: HolidayState
+  onPick: (date: string) => void
   /** カレンダーの箱(開いたときに焦点を日に移すため) */
-  boxRef?: React.RefObject<HTMLElement | null>
+  boxRef: React.RefObject<HTMLElement | null>
 }) {
   const holidays = holidayState.status === 'ready' ? holidayState.list : null
-  const [measureRef, wide, boxEl] = useWideEnough(TWO_MONTHS_MIN_WIDTH_REM)
+  const [measureRef, wide] = useWideEnough(TWO_MONTHS_MIN_WIDTH_REM)
   const boxRef = useCallback(
     (el: HTMLElement | null) => {
       measureRef(el)
-      if (outerBoxRef) outerBoxRef.current = el
+      outerBoxRef.current = el
     },
     [measureRef, outerBoxRef],
   )
-  const hintId = useId()
-  const summaryId = useId()
-  const pick = (date: string) => {
-    const next = nextPeriodFor({ start, end, indefinite }, date, target)
-    if (next.start !== start) onStartChange(next.start)
-    if (next.end !== end) onEndChange(next.end)
-  }
-  const complete = start !== '' && (indefinite || end !== '')
-  const reset = () => {
-    // 押したボタンは選び直しで押せなくなり焦点が外れるので、描き直してから焦点をカレンダーの日(Tab で入る日)に移す
-    flushSync(() => {
-      onStartChange('')
-      onEndChange('')
-    })
-    boxEl.current?.querySelector<HTMLButtonElement>('td[data-day] button[tabindex="0"]')?.focus()
-  }
   return (
-    // fieldset は既定で中身の幅(min-inline-size: min-content)より狭くならず、欄が狭くても2か月の幅に広がるので、min-w-0 で欄に合わせる
-    <fieldset className="flex min-w-0 flex-col gap-2" aria-describedby={`${hintId} ${summaryId}`}>
-      <legend className="mb-1 text-sm font-medium">減便の期間</legend>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={indefinite}
-          onChange={(e) => {
-            // 外したら終了日を空にして、次に押した日を終了日として選べるようにする
-            if (!e.target.checked) onEndChange('')
-            onIndefiniteChange(e.target.checked)
-          }}
-          className="size-4 accent-primary"
-        />
-        当面の間(終わりを決めない)
-      </label>
-      <p id={hintId} className="text-xs text-muted-foreground">
-        {periodHint(target, start, indefinite)}
-      </p>
-      <div ref={boxRef} className="w-full">
-        <HolidayCalendar
-          mode="range"
-          start={start || null}
-          end={end || null}
-          openEnd={indefinite}
-          onDayClick={pick}
-          min={input.start}
-          max={input.end}
-          holidays={holidays}
-          numberOfMonths={wide ? 2 : 1}
-        />
-      </div>
-      <p id={summaryId} data-testid="period-summary" aria-live="polite" className={complete ? 'text-sm font-medium' : 'text-sm'}>
-        {describePeriod(start, end, indefinite)}
-      </p>
-      <p className="text-xs text-muted-foreground">
-        選べる範囲は入力の GTFS の有効期間({formatDateJa(input.start)}〜{formatDateJa(input.end)})です。
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          // 当面の間では終了日を使わないので、開始日が空なら選び直すものは無い
-          disabled={start === '' && (indefinite || end === '')}
-          onClick={reset}
-        >
-          期間を選び直す
-        </Button>
-        {onClose && (
-          <Button type="button" size="sm" onClick={onClose}>
-            閉じる
-          </Button>
-        )}
-      </div>
-    </fieldset>
+    <div ref={boxRef} data-testid="period-calendar" className="w-full min-w-0">
+      <HolidayCalendar
+        mode="range"
+        start={start || null}
+        end={end || null}
+        openEnd={indefinite}
+        onDayClick={onPick}
+        min={min}
+        max={max}
+        holidays={holidays}
+        numberOfMonths={wide ? 2 : 1}
+      />
+    </div>
   )
 }
 
@@ -288,21 +198,43 @@ function holeDate(date: string, thisYear: string): string {
 export const HOLE_CLASS = 'h-7 px-2 text-sm font-normal'
 export const EMPTY_HOLE_CLASS = 'border-dashed border-muted-foreground/60 text-muted-foreground'
 
+/** 終了日のセレクトの値。当面の間か、終了日を決めるか */
+type EndMode = 'indefinite' | 'date'
+
 /**
- * 減便の文の「[開始日] から [終了日] までの間、」の部分。どちらの穴を押しても、同じ期間のカレンダーを Popover で開く
- * (開いた穴によって案内と押した日の扱いが変わる)。当面の間なら終了日の穴に「当面の間」と出し、「までの間」を出さない。
- * Popover は Escape・欄の外の押下で閉じ、焦点は押した穴に戻る
+ * 減便の文の「[開始日] から [当面の間▼]、」「[開始日] から [終了日▼] [11月14日(土)] までの間、」の部分。
+ *
+ * - 開始日の穴を押すと、開始日を選ぶカレンダーを Popover で開く(入力の有効期間の中で選べる)。
+ *   終了日より後の日を選ぶと、終了日を空にする(文の下の確認の結果に「終了日を選んでください」と出る)
+ * - 終了日の穴はセレクト(当面の間/終了日)。「終了日」を選ぶと右に日付の穴が出て、終了日を選ぶカレンダーをすぐに開く
+ *   (開始日より前は選べない)。終了日の値は空から選び直す
+ * - カレンダーで日を押すと、その日が穴に入り、Popover を閉じて焦点を穴に戻す。Escape・欄の外の押下でも閉じる
  */
-export function PeriodHoles(props: PeriodValue) {
-  const { start, end, indefinite } = props
+export function PeriodHoles({ input, start, onStartChange, end, onEndChange, indefinite, onIndefiniteChange, holidayState }: PeriodValue) {
   const [open, setOpen] = useState<PeriodTarget | null>(null)
   const [thisYear] = useState(() => todayInJapan(new Date()).slice(0, 4))
   const boxRef = useRef<HTMLElement | null>(null)
+  // 「終了日」を選んだあと、セレクトの選択肢が閉じて焦点を戻すときに、終了日のカレンダーを開く
+  const openEndAfterSelect = useRef(false)
 
-  const hole = (target: PeriodTarget) => {
+  const pick = (target: PeriodTarget, date: string) => {
+    if (target === 'start') {
+      const next = pickStartDate({ start, end, indefinite }, date)
+      if (next.start !== start) onStartChange(next.start)
+      if (next.end !== end) onEndChange(next.end)
+    } else {
+      onEndChange(date)
+    }
+    // 閉じると、Radix が焦点を押した穴に戻す
+    setOpen(null)
+  }
+
+  const calendarHole = (target: PeriodTarget) => {
     const name = target === 'start' ? '開始日' : '終了日'
     const value = target === 'start' ? start : end
-    const text = target === 'end' && indefinite ? '当面の間' : value ? holeDate(value, thisYear) : null
+    const text = value ? holeDate(value, thisYear) : null
+    // 終了日は開始日より前を選べない(開始日が入力の開始日より前・空なら入力の開始日から)
+    const min = target === 'end' && start > input.start ? start : input.start
     return (
       <Popover open={open === target} onOpenChange={(o) => setOpen(o ? target : null)}>
         <PopoverTrigger asChild>
@@ -313,22 +245,21 @@ export function PeriodHoles(props: PeriodValue) {
             aria-label={text ? `${name}:${text}` : `${name}(未選択)`}
             className={cn(HOLE_CLASS, !text && EMPTY_HOLE_CLASS)}
           >
-            {text ?? name}
+            {text ?? (target === 'start' ? '開始日' : '日付')}
           </Button>
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          // 画面の端に貼りつかないよう余白を取り、低い画面では高さを画面に収めて中を送る(「閉じる」が画面の外に出ないように)
+          // 画面の端に貼りつかないよう余白を取り、低い画面では高さを画面に収めて中を送る
           collisionPadding={8}
           // 2か月を並べられる幅にする(狭い画面では画面の幅に収める)。左の欄より広くてよい(地図の上に重なる)
           className="max-h-(--radix-popover-content-available-height) w-[min(36rem,calc(100vw-2rem))] max-w-(--radix-popover-content-available-width) overflow-y-auto"
-          aria-label={target === 'end' ? '減便の期間(終了日を選ぶ)' : '減便の期間(開始日を選ぶ)'}
+          aria-label={`減便の${name}を選ぶ`}
           onOpenAutoFocus={(e) => {
-            // 最初の焦点は、当面の間のチェックではなく、カレンダーの日に置く。
-            // 終了日の穴から開いたときは終了日の日(案内「終了日を押してください」と合わせる)、なければ Tab で入る日(選んでいる日など)
+            // 最初の焦点はカレンダーの日に置く。選んでいる日(開始日・終了日)、なければ Tab で入る日
             const box = boxRef.current
             const day =
-              (target === 'end' ? box?.querySelector<HTMLButtonElement>('td[data-day] button[aria-label*="終了日"]') : null) ??
+              box?.querySelector<HTMLButtonElement>(`td[data-day] button[aria-label*="、${name}"]:not([disabled])`) ??
               box?.querySelector<HTMLButtonElement>('td[data-day] button[tabindex="0"]')
             if (day) {
               e.preventDefault()
@@ -336,17 +267,54 @@ export function PeriodHoles(props: PeriodValue) {
             }
           }}
         >
-          <PeriodFields {...props} target={target} onClose={() => setOpen(null)} boxRef={boxRef} />
+          <PeriodCalendar
+            start={start}
+            end={end}
+            indefinite={indefinite}
+            min={min}
+            max={input.end}
+            holidayState={holidayState}
+            onPick={(date) => pick(target, date)}
+            boxRef={boxRef}
+          />
         </PopoverContent>
       </Popover>
     )
   }
 
+  const chooseEndMode = (mode: EndMode) => {
+    if (mode === 'indefinite') {
+      onIndefiniteChange(true)
+      return
+    }
+    // 終了日は空から選ぶ(当面の間の間に残っていた値・入力の末日を、選んだ日として出さない)
+    onEndChange('')
+    onIndefiniteChange(false)
+    openEndAfterSelect.current = true
+  }
+
   return (
     <>
-      {hole('start')}
+      {calendarHole('start')}
       <span>から</span>
-      {hole('end')}
+      <Select value={indefinite ? 'indefinite' : 'date'} onValueChange={(v) => chooseEndMode(v as EndMode)}>
+        <SelectTrigger size="sm" aria-label="減便の期間の終わり" className="min-w-18">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent
+          onCloseAutoFocus={(e) => {
+            // 「終了日」を選んだら、焦点をセレクトに戻さず、終了日のカレンダーを開く(開いたカレンダーが焦点を日に移す)
+            if (!openEndAfterSelect.current) return
+            openEndAfterSelect.current = false
+            e.preventDefault()
+            setOpen('end')
+          }}
+        >
+          <SelectItem value="indefinite">当面の間</SelectItem>
+          <SelectItem value="date">終了日</SelectItem>
+        </SelectContent>
+      </Select>
+      {!indefinite && calendarHole('end')}
       {/* 読点だけのときは、穴との間の空きを詰める(「当面の間 、」と離れて見えないように) */}
       <span className={indefinite ? '-ml-1.5' : undefined}>{indefinite ? '、' : 'までの間、'}</span>
     </>

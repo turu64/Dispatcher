@@ -326,7 +326,8 @@ export function PolicyForm({
       <section aria-label="確認の結果" className="flex flex-col gap-1.5 rounded-md bg-muted/50 px-2.5 py-2">
         {period === null && (
           <p className="text-xs text-muted-foreground">
-            {!startDate ? (indefinite ? '開始日を選んでください。' : '開始日と終了日を選ぶか、当面の間にしてください。') : '終了日を選ぶか、当面の間にしてください。'}
+            {/* 終了日は、セレクトで「終了日」を選んだときと、開始日を終了日より後にしたときに空になる */}
+            {[!startDate && '開始日', !indefinite && !endDate && '終了日'].filter(Boolean).join('と')}を選んでください。
           </p>
         )}
         <PeriodChecks validity={validity} periodProblems={periodProblems} holidayState={holidayState} />

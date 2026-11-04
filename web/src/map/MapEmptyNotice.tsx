@@ -1,4 +1,3 @@
-import { ArrowLeft } from 'lucide-react'
 import { useEditStore } from '@/store/edit'
 
 /**
@@ -10,8 +9,7 @@ export default function MapEmptyNotice() {
   if (loaded) return null
   return (
     <div className="print-hide pointer-events-none absolute inset-0 flex items-center justify-center p-4">
-      <p className="pointer-events-auto flex items-center gap-2 rounded-lg border bg-background/90 px-4 py-3 text-sm font-medium shadow-sm backdrop-blur-sm">
-        <ArrowLeft className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <p className="pointer-events-auto rounded-lg border bg-background/90 px-4 py-3 text-sm font-medium shadow-sm backdrop-blur-sm">
         左の欄から GTFS を読み込んでください
       </p>
     </div>

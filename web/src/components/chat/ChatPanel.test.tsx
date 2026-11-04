@@ -367,6 +367,44 @@ describe('「AI に相談」のタブ', () => {
     expect(within(screen.getByRole('list', { name: '会話' })).getByText('止めました')).toBeTruthy()
   })
 
+  it('AI がツールを使いすぎて止めたら、知らせを1件だけ出し、「続きを頼む」で続きを送る(指摘15.2)', async () => {
+    const { store, fake } = setup()
+    render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    await typeAndSend('便を全部調べて')
+    const stopped = 'AI がこの相談でツールを 12 回使ったので、ここで止めました。続けるときは「続きを頼む」を押してください'
+    act(() => {
+      fake.last().push(
+        { type: 'error', id: 'e1', message: stopped, code: 'too_many_tool_calls' },
+        { type: 'error', id: 'e2', message: stopped, code: 'too_many_tool_calls' },
+        { type: 'error', id: 'e3', message: stopped, code: 'too_many_tool_calls' },
+        status('e4', 'idle', 'interrupted'),
+      )
+    })
+    const list = screen.getByRole('list', { name: '会話' })
+    const button = (await within(list).findByRole('button', { name: '続きを頼む' })) as HTMLButtonElement
+    await waitFor(() => expect(store.getState().replying).toBe(false))
+    expect(within(list).getAllByText(stopped)).toHaveLength(1)
+    expect(within(list).queryByText('止めました')).toBeNull()
+    // 送っている間は押せない
+    act(() => store.setState({ sending: true }))
+    expect(button.disabled).toBe(true)
+    act(() => store.setState({ sending: false }))
+    expect(button.disabled).toBe(false)
+    await act(async () => {
+      fireEvent.click(button)
+    })
+    const sent = fake.posts.filter((p) => p.body.kind === 'message').at(-1)!.body as Extract<SessionPostBody, { kind: 'message' }>
+    expect(sent.content).toEqual([
+      { type: 'text', text: '[画面の操作] 利用者が、止まった作業の続きを頼みました。' },
+      { type: 'text', text: '続けてください。' },
+    ])
+    // 続きを頼んだら、ボタンは消える
+    await waitFor(() => expect(within(list).queryByRole('button', { name: '続きを頼む' })).toBeNull())
+    expect(within(list).getByText('続きを頼みました。')).toBeTruthy()
+    expect(within(list).getByText('続けてください。')).toBeTruthy()
+  })
+
   it('上限に達したら入力欄を閉じて上限の文を出し、「新しく始める」で入力欄が戻る', async () => {
     const { store, fake } = setup()
     render(<ChatPanel store={store} />)

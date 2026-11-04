@@ -1,12 +1,14 @@
-import { ArrowRight, Check, CircleAlert, CircleMinus, FileText, Info, Loader2, Sparkles, TriangleAlert } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowRight, Check, CircleAlert, CircleMinus, CirclePause, FileText, Info, Loader2, Sparkles, TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { describeRecord } from '@/components/steps/editText'
 import { jumpToStep } from '@/components/steps/stepIds'
-import type { ChatItem } from '@/store/chat'
+import { useChatStore, type ChatItem } from '@/store/chat'
 import { draftName, useEditStore, type Draft } from '@/store/edit'
+import { askRestoreBlockedReason, type ChatStoreHook } from './chatStatus'
 import SimpleMarkdown from './simpleMarkdown'
 import { stepTitle } from './stepLabel'
 
@@ -142,8 +144,53 @@ function DraftCard({ item }: { item: Extract<ChatItem, { kind: 'draft' }> }) {
   )
 }
 
-/** 発言の並び。利用者の文、AI の返答、ツールの動き、下書きの知らせ(「編集で確かめる」ボタンつき)、知らせ、エラー */
-export default function ChatMessages({ items }: { items: readonly ChatItem[] }) {
+/**
+ * AI がツールを使いすぎてサーバーが止めた知らせ(1回の発言につき1件)と、「続きを頼む」ボタン(指摘15.2)。
+ * 押すと「続けてください。」を送る。送れないとき(送っている・ツールを実行している・予算に達したなど)は押せず、理由を出す。
+ * 続きを頼んだ後はボタンを出さない
+ */
+function StoppedCard({ item, store }: { item: Extract<ChatItem, { kind: 'stopped' }>; store: ChatStoreHook }) {
+  const reason = store((s) => askRestoreBlockedReason(s))
+  const [pending, setPending] = useState(false)
+  return (
+    <Alert className="border-primary/25 bg-primary/5 px-3 py-2 text-xs">
+      <CirclePause aria-hidden="true" />
+      <AlertDescription className="flex flex-col items-start gap-1.5 text-xs break-words text-foreground">
+        <span>{item.text}</span>
+        {item.continued ? (
+          <span className="text-muted-foreground">続きを頼みました。</span>
+        ) : (
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={reason !== null}
+              loading={pending}
+              loadingLabel="送信中"
+              onClick={() => {
+                setPending(true)
+                void store
+                  .getState()
+                  .continueStopped()
+                  .finally(() => setPending(false))
+              }}
+            >
+              続きを頼む
+            </Button>
+            {reason !== null && !pending && <span className="text-muted-foreground">{reason}</span>}
+          </>
+        )}
+      </AlertDescription>
+    </Alert>
+  )
+}
+
+/**
+ * 発言の並び。利用者の文、AI の返答、ツールの動き、下書きの知らせ(「編集で確かめる」ボタンつき)、知らせ、エラー、
+ * 止めた知らせ(「続きを頼む」ボタンつき)。store は「続きを頼む」で送る先(テストでは別の store を渡す)
+ */
+export default function ChatMessages({ items, store = useChatStore }: { items: readonly ChatItem[]; store?: ChatStoreHook }) {
   // 入力中の点は、最後の発言が流れている返答のときだけ、その吹き出しに出す
   // (返答の途中でツールの行が加わったときは、下の「考えています…」の行にだけ出し、点を二重にしない)
   const lastIndex = items.length - 1
@@ -191,6 +238,12 @@ export default function ChatMessages({ items }: { items: readonly ChatItem[] }) 
               <li key={item.id} data-kind="notice" className="flex items-start gap-1.5 px-2 text-xs leading-relaxed text-muted-foreground">
                 <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 <span className="min-w-0 break-words">{item.text}</span>
+              </li>
+            )
+          case 'stopped':
+            return (
+              <li key={item.id} data-kind="stopped">
+                <StoppedCard item={item} store={store} />
               </li>
             )
           case 'error':

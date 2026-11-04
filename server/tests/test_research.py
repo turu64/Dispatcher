@@ -498,10 +498,34 @@ def test_post_research_sets_targets_and_puts_the_screen_line_into_the_conversati
     row_id = row_id_of(handle)
     assert get_store().research_target_ids(row_id) == [HOSPITAL, SCHOOL]
     assert get_store().get_session(row_id)["messages"] == 1
-    # 次の POST は対象を置き換える
-    response = client.post("/api/claude/session/research", json={"target_ids": [OPERATOR]}, headers=headers(handle))
+    # 次の POST は対象の後ろに足す(重なりは除く)。返す一覧は足した後の対象
+    response = client.post("/api/claude/session/research", json={"target_ids": [OPERATOR, SCHOOL]}, headers=headers(handle))
     assert response.status_code == 200
-    assert get_store().research_target_ids(row_id) == [OPERATOR]
+    assert get_store().research_target_ids(row_id) == [HOSPITAL, SCHOOL, OPERATOR]
+    assert [target["target_id"] for target in response.json()["targets"]] == [HOSPITAL, SCHOOL, OPERATOR]
+    # 会話に入れる行の件数は、送った対象の数
+    assert fake.sent[-1][0]["content"][0]["text"] == "[画面の操作] 利用者が前提情報の調査を始めました(対象 2 件)。"
+
+
+def test_post_research_keeps_the_targets_registered_from_saved_results(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic, tmp_path: Path) -> None:
+    # 保存済みの結果(デモ)で登録した対象は、利用者が調査を始めても消えない(調整役が読み続けられる)
+    enable(monkeypatch)
+    seed = tmp_path / "demo.json"
+    seed.write_text(json.dumps([seed_item(SCHOOL), seed_item(HOSPITAL)], ensure_ascii=False), encoding="utf-8")
+    assert research.run_seed([str(seed)]) == 0
+    handle = create(client)
+    row_id = row_id_of(handle)
+    assert post_known(client, handle, {"target_ids": [SCHOOL, HOSPITAL]}).json() == {"registered": 2, "total": 2}
+    response = client.post("/api/claude/session/research", json={"target_ids": [CLINIC, SCHOOL]}, headers=headers(handle))
+    assert response.status_code == 200, response.text
+    assert get_store().research_target_ids(row_id) == [SCHOOL, HOSPITAL, CLINIC]
+    body = response.json()
+    assert body["total"] == 3
+    assert [(target["target_id"], target["cached"] is not None) for target in body["targets"]] == [(SCHOOL, True), (HOSPITAL, True), (CLINIC, False)]
+    results, is_error = run("get_research_results", {"target_ids": None}, now=time.time(), row=row_id)
+    assert not is_error
+    assert [r["target_id"] for r in results["results"]] == [SCHOOL, HOSPITAL]
+    assert results["missing"] == [CLINIC]
 
 
 @pytest.mark.parametrize(

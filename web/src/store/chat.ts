@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { ScreenLineTracker, type EditSnapshot, type ScreenState } from '../claude/screenLines'
 import { ClaudeSession, createSessionApi, type ConnectionState, type DisplayStreamEvent, type SessionApi, type SessionDeps, type SessionEvent, type TextBlock } from '../claude/session'
-import { createResearchApi, type ResearchApi, type ResearchOverview, type ResearchStartView } from '../claude/research'
+import { createResearchApi, MAX_KNOWN_IDS, type ResearchApi, type ResearchOverview, type ResearchStartView } from '../claude/research'
 import { ClaudeRequestError, NOT_CONNECTED } from '../claude/sse'
 import { byteLength, runTool, toolLabel, type PolicyServices, type ToolDeps, type ToolOutcome } from '../claude/tools'
 import { planOf } from '../gtfs/edit/ops'
@@ -13,6 +13,7 @@ import { todayInJapan } from '../lib/dates'
 import { draftName, japanIso, useEditStore, type DraftNotice } from './edit'
 import { useHolidayStore } from './holidays'
 import { useReachStore } from './reach'
+import { useResearchStore } from './research'
 import { buildRestoreHintContext } from './restoreHintContext'
 import { useServiceGroupsStore } from './serviceGroups'
 
@@ -58,6 +59,15 @@ export function researchStartLine(count: number): string {
 
 /** 調査の API がつながっていないとき(テストで research を渡していないなど) */
 export const RESEARCH_UNAVAILABLE = '調査の API が使えません。'
+/** 調べた結果(デモを含む)の対象を、AI の会話に登録できなかったとき(送信は止めない。指摘15.1) */
+export const RESEARCH_KNOWN_FAILED = '調べた結果を AI に渡せませんでした。AI は前提情報の結果を読めないことがあります。'
+
+/** AI がツールを使いすぎて、サーバーが止めたときの error の code(server の agent_session.py。指摘15.2) */
+export const TOO_MANY_TOOL_CALLS = 'too_many_tool_calls'
+/** 止まった作業の「続きを頼む」で送る利用者の文 */
+export const CONTINUE_PROMPT = '続けてください。'
+/** 「続きを頼む」で [画面の操作] の行の後ろに足す行 */
+export const CONTINUE_LINE = '[画面の操作] 利用者が、止まった作業の続きを頼みました。'
 
 export const ASK_RESTORE_PROMPT =
   '減便の方針でなくなる平日の便のうち、通勤・通学・通院などのために平日に戻したほうがよい便を、判断材料と停留所名から選び、理由をつけて、便を平日に戻す下書きにしてください。数は多くても 10 便くらいにしてください。'
@@ -105,6 +115,11 @@ export type ChatItem =
   | { id: number; kind: 'draft'; draftId: string; text: string; step: DraftStep }
   | { id: number; kind: 'notice'; text: string }
   | { id: number; kind: 'error'; text: string }
+  /**
+   * AI がこの相談でツールを使いすぎたので、サーバーが止めた知らせ(1回の発言につき1件。文はサーバーの error の文)。
+   * 「続きを頼む」のボタンを付ける。continued は続きを頼んだ後(ボタンを出さない)
+   */
+  | { id: number; kind: 'stopped'; text: string; continued: boolean }
 
 /** id を除いた項目(項目の種類ごとに Omit する) */
 type NewChatItem = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, 'id'> : never) : never
@@ -211,6 +226,11 @@ export interface ChatState {
   /** 足し戻しの手順の「AI に候補を聞く」 */
   askRestore: () => Promise<boolean>
   /**
+   * 止めた知らせの「続きを頼む」。「続けてください。」を送り、[画面の操作] の行で続きを頼んだことを伝える。
+   * 送れたら、止めた知らせのボタンを消す
+   */
+  continueStopped: () => Promise<boolean>
+  /**
    * 前提情報の手順の「前提情報を調べる」。セッションが無ければ作り、ストリームをつないでから
    * POST /api/claude/session/research に target_ids だけを送る([画面の操作] の行はサーバーが会話に入れる)。
    * 始められたら対象の一覧、始められなければ null(理由は researchError か、会話の欄の文)
@@ -270,6 +290,13 @@ export interface ChatStoreDeps {
   watchBase?: (onChange: () => void) => void
   /** 前提情報の調査の API(createResearchApi)。省けば調査は始められない */
   research?: ResearchApi
+  /**
+   * 前提情報の store に結果がある target_id(デモと Web の両方)。セッションを作ったときと、結果が増えたときに
+   * POST /api/claude/session/research/known で登録する(AI が get_research_results で読めるように。指摘15.1)。省けば登録しない
+   */
+  knownResearchTargets?: () => readonly string[]
+  /** 前提情報の結果が変わったときに onChange を呼ぶように見張る。省けば、発言を送るときにだけ登録する */
+  watchResearch?: (onChange: () => void) => void
   /** セッションの待ち時間(テストで差し替える) */
   session?: Pick<SessionDeps, 'sleep' | 'reconnectDelays' | 'retryDelays' | 'batchDelayMs'>
 }
@@ -287,12 +314,17 @@ function errorText(e: unknown, fallback: string): string {
 export function createChatStore(deps: ChatStoreDeps) {
   // store の中の関数から使う。store を作る関数の中で作る(onEvent が store の set を使うため)
   let session: ClaudeSession
+  // 調べた結果の対象の登録(store の中で作る。前提情報の見張りから呼ぶ)
+  let registerKnownRef: () => Promise<void> = async () => undefined
   const tracker = new ScreenLineTracker({ screen: deps.screen, edits: deps.edits, takeDraftNotices: deps.takeDraftNotices })
 
   const store = create<ChatState>()((set, get) => {
     let nextId = 1
     // 会話の世代。消した(reset)・新しく始めた(startOver)ら増やし、それより前に始めた送信の結果は表示に使わない
     let generation = 0
+    // この発言で、サーバーが「ツールを使いすぎたので止めた」を知らせた(知らせを1件にし、続く「止めました」を出さない)。
+    // 利用者が発言を送ったら戻す
+    let stoppedLong = false
 
     function push(item: NewChatItem): void {
       set({ items: [...get().items, { ...item, id: nextId++ } as ChatItem] })
@@ -371,7 +403,13 @@ export function createChatStore(deps: ChatStoreDeps) {
         case 'error':
           // Anthropic への接続が切れた(サーバーがストリームを閉じる)。つなぎ直すので、文は出さない
           if (e.code === 'upstream') return
-          push({ kind: 'error', text: e.message })
+          if (e.code === TOO_MANY_TOOL_CALLS) {
+            // 並行の呼び出しなどで同じ発言の中に何度来ても、知らせは1件だけ
+            if (!stoppedLong) push({ kind: 'stopped', text: e.message, continued: false })
+            stoppedLong = true
+          } else {
+            push({ kind: 'error', text: e.message })
+          }
           set({ replying: false })
           closeStreaming()
           return
@@ -399,7 +437,8 @@ export function createChatStore(deps: ChatStoreDeps) {
         set({ budgetReached: true })
         push({ kind: 'notice', text: budgetReachedMessage(get().budgetCents) })
       } else if (reason === 'interrupted') {
-        push({ kind: 'notice', text: STOPPED_NOTICE })
+        // サーバーがツールの使いすぎで止めたときは、その知らせ(「続きを頼む」つき)だけにする
+        if (!stoppedLong) push({ kind: 'notice', text: STOPPED_NOTICE })
         if (research.openRuns.length > 0) push({ kind: 'notice', text: RESEARCH_PAUSED })
       }
     }
@@ -456,6 +495,38 @@ export function createChatStore(deps: ChatStoreDeps) {
       onEvent: onSessionEvent,
       ...deps.session,
     })
+
+    // このセッションに登録した(登録を頼んでいる)調べた結果の対象。セッションが変わったら作り直す
+    let known: { handle: string; ids: Set<string> } | null = null
+
+    /**
+     * 前提情報の store に結果がある対象のうち、このセッションにまだ登録していないものを登録する
+     * (POST /api/claude/session/research/known。1回に MAX_KNOWN_IDS 件まで送れるので分ける)。
+     * 同じセッションに同じ対象を2度送らない。失敗しても送信は止めず、researchError に短い文を出す(次の機会に送り直す)
+     */
+    async function registerKnown(): Promise<void> {
+      const api = deps.research
+      const handle = session.handle
+      if (!api || !handle || !deps.knownResearchTargets) return
+      if (known?.handle !== handle) known = { handle, ids: new Set() }
+      const ids = known.ids
+      const fresh = [...new Set(deps.knownResearchTargets())].filter((id) => !ids.has(id))
+      if (fresh.length === 0) return
+      // 送る前に印を付ける(見張りと送信が同時に呼んでも、同じ対象を2度送らない)
+      for (const id of fresh) ids.add(id)
+      for (let i = 0; i < fresh.length; i += MAX_KNOWN_IDS) {
+        try {
+          await api.registerKnown(get().token, handle, fresh.slice(i, i + MAX_KNOWN_IDS))
+        } catch {
+          // 届かなかった分は印を戻し、次に送るときに送り直す
+          for (const id of fresh.slice(i)) ids.delete(id)
+          if (session.handle === handle) set({ researchError: RESEARCH_KNOWN_FAILED })
+          return
+        }
+      }
+    }
+
+    registerKnownRef = registerKnown
 
     /** 送る前の確かめ。送れなければ理由を出して false。text が null(調査を始めるとき)なら、入力欄に戻す文は無い */
     async function ready(text: string | null): Promise<boolean> {
@@ -545,12 +616,17 @@ export function createChatStore(deps: ChatStoreDeps) {
           if (gen !== generation) return false
           push({ kind: 'user', text: t, at: japanIso(deps.now()) })
           set({ unsent: null })
+          // 新しい発言(サーバーも、この発言で止めた印を戻す)
+          stoppedLong = false
           // 取っ手が使えなくなっていたら(404・410)、1回だけ新しいセッションで送り直す
           for (let attempt = 0; ; attempt++) {
             try {
               if (!session.handle) tracker.reset()
               const created = await session.start()
               if (created) set({ budgetCents: session.budgetCents, usage: null, research: EMPTY_RESEARCH })
+              // 調べた結果の対象を、発言より先に登録する(AI が最初の返答から get_research_results で読めるように)
+              await registerKnown()
+              if (gen !== generation) return false
               const prepared = tracker.prepare(options.extraLines ?? [])
               const content: TextBlock[] = []
               if (prepared.lines.length > 0) content.push({ type: 'text', text: prepared.lines.join('\n') })
@@ -576,6 +652,12 @@ export function createChatStore(deps: ChatStoreDeps) {
 
       askRestore() {
         return get().send(ASK_RESTORE_PROMPT)
+      },
+
+      async continueStopped() {
+        const ok = await get().send(CONTINUE_PROMPT, { extraLines: [CONTINUE_LINE] })
+        if (ok) set({ items: get().items.map((i) => (i.kind === 'stopped' && !i.continued ? { ...i, continued: true } : i)) })
+        return ok
       },
 
       async startResearch(targetIds) {
@@ -612,9 +694,16 @@ export function createChatStore(deps: ChatStoreDeps) {
               if (created) set({ budgetCents: session.budgetCents, usage: null, research: EMPTY_RESEARCH })
               const handle = session.handle
               if (!handle) throw new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます。')
+              await registerKnown()
+              if (gen !== generation) return null
               const view = await api.start(get().token, handle, targetIds)
               if (gen !== generation) return null
-              log([{ kind: 'screen', text: researchStartLine(view.total) }])
+              // 調査の対象はセッションに入ったので、結果が保存されても登録し直さない
+              if (known?.handle === handle) for (const t of view.targets) known.ids.add(t.targetId)
+              // サーバーが会話に入れる行の件数は、送った対象の数(view.total は登録済みの調べた結果の対象も含む)
+              log([{ kind: 'screen', text: researchStartLine(new Set(targetIds).size) }])
+              // 調査を始めると、サーバーは user.message を送る(この発言で止めた印も戻る)
+              stoppedLong = false
               // 保存済み(cached)の対象は調べない(§3.2)。調べる対象が無ければ、進み具合は「調べ終えました」から始める
               const saved = view.targets.filter((t) => t.cached !== null).length
               const active = saved < view.total
@@ -670,6 +759,8 @@ export function createChatStore(deps: ChatStoreDeps) {
         generation++
         session.close()
         tracker.reset()
+        known = null
+        stoppedLong = false
         closeStreaming()
         skipRunning()
         set({ sending: false, replying: false, toolRunning: false, connection: 'none', usage: null, budgetCents: null, budgetReached: false, research: EMPTY_RESEARCH, researchError: null })
@@ -680,6 +771,8 @@ export function createChatStore(deps: ChatStoreDeps) {
         generation++
         session.close()
         tracker.reset()
+        known = null
+        stoppedLong = false
         set({
           items: [],
           sentLog: [],
@@ -706,6 +799,10 @@ export function createChatStore(deps: ChatStoreDeps) {
     const s = store.getState()
     const hadConversation = s.items.length > 0 || s.sending || session.handle !== null
     s.reset(hadConversation ? RELOAD_NOTICE : undefined)
+  })
+  // 前提情報の結果が増えたら、セッションがある間はすぐ登録する(無ければ、次にセッションを作ったときに登録する)
+  deps.watchResearch?.(() => {
+    if (session.handle) void registerKnownRef()
   })
   return store
 }
@@ -854,11 +951,18 @@ export const chatToolDeps: ToolDeps = {
 export function currentScreenState(): ScreenState {
   const { base } = useEditStore.getState()
   const reach = useReachStore.getState()
+  const results = [...useResearchStore.getState().results.values()]
   return {
     today: todayInJapan(new Date()),
     gtfs: base ? { label: base.label, validity: feedValidity(base.feed), services: policyServices(null) } : null,
     reach: base ? { date: reach.date, stepHours: reach.stepHours } : null,
+    research: { count: results.length, demo: results.filter((r) => r.origin === 'demo').length },
   }
+}
+
+/** 前提情報の store に結果がある target_id(デモと Web の両方) */
+function knownResearchTargets(): string[] {
+  return [...useResearchStore.getState().results.keys()]
 }
 
 /**
@@ -876,6 +980,12 @@ export const useChatStore = createChatStore({
     return { history, versions }
   },
   takeDraftNotices: () => useEditStore.getState().takeDraftNotices(),
+  knownResearchTargets,
+  watchResearch: (onChange) => {
+    useResearchStore.subscribe((state, prev) => {
+      if (state.results !== prev.results) onChange()
+    })
+  },
   storage: sessionTokenStorage,
   now: () => new Date(),
   watchBase: (onChange) => {

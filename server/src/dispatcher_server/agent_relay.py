@@ -469,7 +469,8 @@ async def start_research(request: Request) -> dict[str, Any]:
     """調査の対象を決め、[画面の操作] の行を会話に入れる。返すのは正規化した対象の一覧。
 
     対象の名前・種類・市町村・位置は、サーバーの参照データから入れる(ブラウザが送るのは target_ids だけ)。
-    対象は、このセッションの前の対象を置き換える。会話に入れられなければ(ツールの結果待ちなど)、前の対象に戻す。
+    対象は、このセッションの今の対象の後ろに足す(重なりは除く。保存済みの結果で登録した対象(/session/research/known)を
+    消さないため)。会話に入れられなければ(ツールの結果待ちなど)、前の対象に戻す。返す一覧は足した後のこのセッションの対象。
     """
     _check_available_and_token(request)
     row = _session_row(request)
@@ -486,7 +487,7 @@ async def start_research(request: Request) -> dict[str, Any]:
     store = get_store()
     # 調整役がすぐ get_research_targets を呼んでも対象が見えるよう、送る前に入れる
     previous = store.research_target_ids(row["row_id"])
-    store.set_research_targets(row["row_id"], target_ids, time.time())
+    store.add_research_targets(row["row_id"], target_ids, time.time())
     try:
         await agent_session.send_message(
             state, client, [{"type": "text", "text": research.start_line(len(target_ids))}]

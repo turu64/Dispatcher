@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { basePlan, smallFeed } from '../gtfs/edit/form2.fixture'
 import type { EditOp, PolicySettings } from '../gtfs/edit/ops'
 import { createEditStore, type BaseGtfs } from '../store/edit'
-import { approvedSummaryLine, researchStartedLine, ScreenLineTracker, stateLines, userEditLines, type ScreenState } from './screenLines'
+import { approvedSummaryLine, researchStartedLine, researchStateLine, ScreenLineTracker, stateLines, userEditLines, type ScreenState } from './screenLines'
 
 const NOW = new Date('2026-11-04T00:30:00Z')
 
@@ -73,6 +73,34 @@ describe('[画面の状態] はセッションの最初の発言と、変わっ�
     tracker.reset()
     expect(tracker.first).toBe(true)
     expect(send()).toEqual(['[画面の状態] 今日は 2026年11月4日(水)です(日本時間)。'])
+  })
+})
+
+describe('[画面の状態] の前提情報の行(指摘15.1)', () => {
+  it('調べた結果の件数と、デモを含むかを1行で書く。0 件・省いたときは出さない', () => {
+    expect(researchStateLine({ count: 30, demo: 30 })).toBe(
+      '[画面の状態] 前提情報:調査の結果 30 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。',
+    )
+    expect(researchStateLine({ count: 2, demo: 0 })).toBe('[画面の状態] 前提情報:調査の結果 2 件。get_research_results で読めます。')
+    expect(researchStateLine({ count: 0, demo: 0 })).toBeNull()
+    expect(researchStateLine(null)).toBeNull()
+    expect(stateLines({ today: '20261104', gtfs: null, reach: null, research: { count: 0, demo: 0 } }).map((l) => l.key)).toEqual(['today'])
+    expect(stateLines({ today: '20261104', gtfs: null, reach: null, research: { count: 30, demo: 30 } }).map((l) => l.key)).toEqual(['today', 'research'])
+  })
+
+  it('件数が変わったときだけ入れ、セッションを新しくしたらまた入れる', () => {
+    let research = { count: 30, demo: 30 }
+    const { tracker, send } = setup(() => ({ today: '20261104', gtfs: null, reach: null, research }))
+    expect(send()).toEqual([
+      '[画面の状態] 今日は 2026年11月4日(水)です(日本時間)。',
+      '[画面の状態] 前提情報:調査の結果 30 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。',
+    ])
+    expect(send()).toEqual([])
+    research = { count: 32, demo: 30 }
+    expect(send()).toEqual(['[画面の状態] 前提情報:調査の結果 32 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。'])
+    expect(send()).toEqual([])
+    tracker.reset()
+    expect(send()).toHaveLength(2)
   })
 })
 

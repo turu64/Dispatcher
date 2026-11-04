@@ -25,6 +25,11 @@ export interface ScreenState {
   gtfs: { label: string; validity: { start: string; end: string } | null; services: PolicyServices | null } | null
   /** 到達圏を比べる日と時間帯の幅。無ければ null */
   reach: { date: string | null; stepHours: 1 | 3 } | null
+  /**
+   * 前提情報の手順の調べた結果の数(count)と、そのうち保存済みの結果(デモ)の数(demo)。省く・null・0 件なら行を出さない。
+   * 結果のある対象は、chat の store が会話に登録する(AI が get_research_results で読める。指摘15.1)
+   */
+  research?: { count: number; demo: number } | null
 }
 
 /** 編集の store の承認済みの履歴と版 */
@@ -59,7 +64,18 @@ export function stateLines(s: ScreenState): { key: string; line: string }[] {
       line: `[画面の状態] 比較する日付:${s.reach.date ? formatDateJa(s.reach.date) : '未選択'}、時間帯の幅:${s.reach.stepHours}時間。`,
     })
   }
+  const research = researchStateLine(s.research ?? null)
+  if (research) lines.push({ key: 'research', line: research })
   return lines
+}
+
+/**
+ * 前提情報の行。「[画面の状態] 前提情報:調査の結果 30 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。」
+ * 結果が 0 件なら null(行を出さない)
+ */
+export function researchStateLine(r: { count: number; demo: number } | null): string | null {
+  if (!r || r.count <= 0) return null
+  return `[画面の状態] 前提情報:調査の結果 ${r.count} 件${r.demo > 0 ? '(保存済みの結果(デモ)を含む)' : ''}。get_research_results で読めます。`
 }
 
 /**

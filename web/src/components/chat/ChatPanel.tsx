@@ -203,7 +203,7 @@ function ChatPanelBody({ store, active }: { store: ChatStoreHook; active: boolea
             if (active) savedTop.current = e.currentTarget.scrollTop
           }}
         >
-          <ChatMessages items={s.items} />
+          <ChatMessages items={s.items} store={store} />
           {(preparing || s.replying) && (
             <div className={`flex items-center gap-2 ${streaming ? 'mt-1.5 pl-9' : 'mt-3'}`}>
               {!streaming && (

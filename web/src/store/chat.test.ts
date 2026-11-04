@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fakeApi } from '../claude/session.fixture'
+import type { ResearchApi } from '../claude/research'
 import type { SessionPostBody } from '../claude/session'
 import { ClaudeRequestError, NOT_CONNECTED, type SessionStreamEvent } from '../claude/sse'
 import { runTool, type ToolDeps, type ToolOutcome } from '../claude/tools'
@@ -8,6 +9,8 @@ import {
   budgetReachedMessage,
   canStop,
   CLAUDE_UNAVAILABLE,
+  CONTINUE_LINE,
+  CONTINUE_PROMPT,
   createChatStore,
   draftMessage,
   dollars,
@@ -15,7 +18,9 @@ import {
   ENDED_NOTICE,
   RELOAD_NOTICE,
   researchText,
+  RESEARCH_KNOWN_FAILED,
   RESEARCH_PAUSED,
+  researchStartLine,
   sendBlockedReason,
   sessionTokenStorage,
   STATUS_SHAPE,
@@ -493,5 +498,186 @@ describe('調査の進み具合(11/6)', () => {
     fake.last().push(r('saved', { saved: 4, total: 5 }), r('run_ended', { result: 'completed' }))
     await vi.waitFor(() => expect(researchText(s().research)).toBe('一部を調べられませんでした'))
     expect(s().research.openRuns).toEqual([])
+  })
+})
+
+// ---- A06(指摘15.1・15.2) ----
+
+/** 調査の API の偽物。登録(registerKnown)と調査の開始(start)を記録する */
+function fakeResearch() {
+  const known: { handle: string; ids: string[] }[] = []
+  const knownFailures: unknown[] = []
+  const api: ResearchApi = {
+    start: vi.fn(async (_token, _handle, ids) => ({
+      targets: ids.map((targetId: string) => ({ targetId, kind: 'school' as const, name: targetId, municipality: null, lat: 43, lon: 142, cached: null })),
+      total: ids.length + 2,
+      maxTargets: 30,
+    })),
+    registerKnown: vi.fn(async (_token, handle, ids) => {
+      known.push({ handle, ids: [...ids] })
+      const failure = knownFailures.shift()
+      if (failure) throw failure
+      return { registered: ids.length, total: ids.length }
+    }),
+    overview: vi.fn(async () => {
+      throw new Error('使わない')
+    }),
+  }
+  return { api, known, knownFailures }
+}
+
+const demoIds = (n: number) => Array.from({ length: n }, (_, i) => `P29:${String(i + 1).padStart(4, '0')}`)
+const RESEARCH_LINE_51 = '[画面の状態] 前提情報:調査の結果 51 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。'
+
+/** 前提情報の store の代わり(結果のある target_id と、そのうちデモの数)。changed で見張りを呼ぶ */
+function setupWithResearch(initial: string[] = []) {
+  const research = fakeResearch()
+  let ids = initial
+  let demo = initial.length
+  let onResearch: () => void = () => undefined
+  const t = setup({
+    research: research.api,
+    knownResearchTargets: () => ids,
+    watchResearch: (fn) => {
+      onResearch = fn
+    },
+    screen: () => ({ today: '20261104', gtfs: null, reach: null, research: { count: ids.length, demo } }),
+  })
+  const changed = (next: string[], nextDemo = demo) => {
+    ids = next
+    demo = nextDemo
+    onResearch()
+  }
+  return { ...t, research, changed }
+}
+
+describe('調べた結果の対象を、セッションを作るたびに登録する(指摘15.1)', () => {
+  it('デモを読み込んでから最初の発言をすると、50 件ずつに分けて登録してから、前提情報の行と発言を送る', async () => {
+    const { s, fake, research, messages } = setupWithResearch(demoIds(51))
+    expect(await s().send('平日を土曜ダイヤにしてください')).toBe(true)
+    expect(research.known).toEqual([
+      { handle: 'h1', ids: demoIds(51).slice(0, 50) },
+      { handle: 'h1', ids: demoIds(51).slice(50) },
+    ])
+    // 登録 → 送信の順
+    const knownOrder = (research.api.registerKnown as ReturnType<typeof vi.fn>).mock.invocationCallOrder
+    const postOrder = (fake.api.post as ReturnType<typeof vi.fn>).mock.invocationCallOrder
+    expect(Math.max(...knownOrder)).toBeLessThan(Math.min(...postOrder))
+    expect(messages()).toEqual([
+      [
+        { type: 'text', text: `${TODAY_LINE}\n${RESEARCH_LINE_51}` },
+        { type: 'text', text: '平日を土曜ダイヤにしてください' },
+      ],
+    ])
+    // 同じセッションには同じ集まりを2度送らない。件数が変わらなければ前提情報の行も入れない
+    expect(await s().send('二つ目')).toBe(true)
+    expect(research.known).toHaveLength(2)
+    expect(messages()[1]).toEqual([{ type: 'text', text: '二つ目' }])
+    expect(s().researchError).toBeNull()
+  })
+
+  it('結果が 0 件なら登録も前提情報の行も無い。セッションがある間に結果が増えたら、増えた分だけすぐ登録し、次の発言で件数を伝える', async () => {
+    const { s, research, messages, changed } = setupWithResearch()
+    // セッションが無い間は登録しない
+    changed(demoIds(3))
+    expect(research.known).toEqual([])
+    changed([])
+    expect(await s().send('一つ目')).toBe(true)
+    expect(research.known).toEqual([])
+    expect(messages()[0]).toEqual([
+      { type: 'text', text: TODAY_LINE },
+      { type: 'text', text: '一つ目' },
+    ])
+    changed(demoIds(3), 3)
+    await vi.waitFor(() => expect(research.known).toEqual([{ handle: 'h1', ids: demoIds(3) }]))
+    // Web で調べた結果が1件増えた(デモではない)
+    changed([...demoIds(3), 'P04:1'], 3)
+    await vi.waitFor(() => expect(research.known).toHaveLength(2))
+    expect(research.known[1]).toEqual({ handle: 'h1', ids: ['P04:1'] })
+    expect(await s().send('二つ目')).toBe(true)
+    expect(research.known).toHaveLength(2)
+    expect(messages()[1]).toEqual([
+      { type: 'text', text: '[画面の状態] 前提情報:調査の結果 4 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。' },
+      { type: 'text', text: '二つ目' },
+    ])
+    // デモが無ければ括弧の補足を付けない
+    changed(['P04:1'], 0)
+    expect(await s().send('三つ目')).toBe(true)
+    expect(messages()[2][0]).toEqual({ type: 'text', text: '[画面の状態] 前提情報:調査の結果 1 件。get_research_results で読めます。' })
+  })
+
+  it('セッションを作り直したら(新しく始める・取っ手が使えなくなった)、また登録する', async () => {
+    const { s, fake, research } = setupWithResearch(demoIds(2))
+    await s().send('一つ目')
+    expect(research.known).toEqual([{ handle: 'h1', ids: demoIds(2) }])
+    s().startOver()
+    await s().send('二つ目')
+    expect(research.known.at(-1)).toEqual({ handle: 'h2', ids: demoIds(2) })
+    // 404 で作り直して送り直すときも
+    fake.postFailures.push(new ClaudeRequestError(404, 'AI との会話が見つかりません。新しく始めます'))
+    expect(await s().send('三つ目')).toBe(true)
+    expect(research.known.map((k) => k.handle)).toEqual(['h1', 'h2', 'h3'])
+  })
+
+  it('登録に失敗しても発言は送り、前提情報の手順に短い文を出す。次の発言で登録し直す', async () => {
+    const { s, research, messages } = setupWithResearch(demoIds(2))
+    research.knownFailures.push(new ClaudeRequestError(429, '回数の上限です'))
+    expect(await s().send('一つ目')).toBe(true)
+    expect(messages()).toHaveLength(1)
+    expect(s().researchError).toBe(RESEARCH_KNOWN_FAILED)
+    expect(await s().send('二つ目')).toBe(true)
+    expect(research.known).toEqual([
+      { handle: 'h1', ids: demoIds(2) },
+      { handle: 'h1', ids: demoIds(2) },
+    ])
+  })
+
+  it('「前提情報を調べる」でセッションを作ったときも、調査を始める前に登録する。「AI に送る情報」の件数は送った対象の数', async () => {
+    const { s, research } = setupWithResearch(demoIds(2))
+    const view = await s().startResearch(['P04:1', 'P04:2', 'P04:1'])
+    expect(view).not.toBeNull()
+    expect(research.known).toEqual([{ handle: 'h1', ids: demoIds(2) }])
+    const knownOrder = (research.api.registerKnown as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+    const startOrder = (research.api.start as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+    expect(knownOrder).toBeLessThan(startOrder)
+    // サーバーの返す total(4)は登録済みの対象も含む。会話に入る行は送った対象の数(2)
+    expect(s().sentLog.at(-1)!.parts).toEqual([{ kind: 'screen', text: researchStartLine(2) }])
+  })
+})
+
+describe('ツールを使いすぎて止めた知らせ(指摘15.2)', () => {
+  const tooMany = (id: string): SessionStreamEvent => ({
+    type: 'error',
+    id,
+    message: 'AI がこの相談でツールを 12 回使ったので、ここで止めました。続けるときは「続きを頼む」を押してください',
+    code: 'too_many_tool_calls',
+  })
+
+  it('同じ発言の中で4回来ても知らせは1件で、そのあとの interrupted で「止めました」を足さない。「続きを頼む」で続きを送る', async () => {
+    const { s, fake, messages } = setup()
+    await s().send('便を全部調べて')
+    fake.last().push(tooMany('e1'), tooMany('e2'), tooMany('e3'), tooMany('e4'), status('e5', 'idle', 'interrupted'))
+    await vi.waitFor(() => expect(s().replying).toBe(false))
+    expect(s().items.filter((i) => i.kind === 'stopped')).toHaveLength(1)
+    expect(s().items.filter((i) => i.kind === 'error')).toHaveLength(0)
+    expect(s().items.some((i) => i.kind === 'notice' && i.text === STOPPED_NOTICE)).toBe(false)
+    expect(s().items.at(-1)).toMatchObject({ kind: 'stopped', continued: false })
+
+    expect(await s().continueStopped()).toBe(true)
+    expect(messages().at(-1)).toEqual([
+      { type: 'text', text: CONTINUE_LINE },
+      { type: 'text', text: CONTINUE_PROMPT },
+    ])
+    expect(CONTINUE_LINE).toBe('[画面の操作] 利用者が、止まった作業の続きを頼みました。')
+    expect(s().items.find((i) => i.kind === 'stopped')).toMatchObject({ continued: true })
+    expect(s().items.at(-1)).toMatchObject({ kind: 'user', text: '続けてください。' })
+
+    // 次の発言でまた上限を超えたら、また1回出す。利用者が「止める」で止めたときは「止めました」を出す
+    fake.last().push(tooMany('e6'), tooMany('e7'), status('e8', 'idle', 'interrupted'))
+    await vi.waitFor(() => expect(s().items.filter((i) => i.kind === 'stopped')).toHaveLength(2))
+    expect(s().items.some((i) => i.kind === 'notice' && i.text === STOPPED_NOTICE)).toBe(false)
+    await s().send('別の質問')
+    fake.last().push(status('e9', 'idle', 'interrupted'))
+    await vi.waitFor(() => expect(s().items.at(-1)).toMatchObject({ kind: 'notice', text: STOPPED_NOTICE }))
   })
 })

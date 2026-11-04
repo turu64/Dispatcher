@@ -256,6 +256,49 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
   - `validityUnder30`:新しい有効期間が 30 日未満(GTFS-JP は可能であれば 30 日以上を望ましいとしている)
 - 道北バスでは `replacementNotActive`・`replacementPartial`・`tripReferences` は起きない(03・06 は有効期間の全体を覆い、transfers は無く、translations の `record_id` は全行が空)。正解データの 5 つの場面はどれも減便の方針を適用できる
 
+### 組の表(複数の service。2026-11-04 追記、`docs/design-service-groups.md` §4)
+
+平日のダイヤや土曜(日祝)のダイヤが複数の service に分かれる GTFS(京都市営バス、北海道中央バスなど)のために、`PolicySettings` に省略できる項目を2つ足した。省いたときの処理・出力・report は今と同じ。
+
+```ts
+// web/src/gtfs/edit/ops.ts
+export interface ServicePair {
+  weekday: string          // 入れ替え元のダイヤ(平日)の service_id。期間の間、この service の便はなくなる
+  replacements: string[]   // 入れ替えに使うダイヤ(土曜/日祝)の service_id。空なら便をなくすだけ(「なくす」)
+}
+export interface PolicySettings {
+  // …今の項目…
+  pairs?: ServicePair[]              // 主の組が先頭、あとは weekday の昇順。replacements は主の入れ替えに使う service が先頭、あとは昇順
+  keptWeekdayServices?: string[]     // 「残す」と決めた平日の service。便は変えず、警告で知らせるだけ
+}
+export function pairsOf(settings): ServicePair[]            // pairs が無ければ [{ weekday: weekdayService, replacements: [replacementService] }]
+export function weekdayServicesOf(settings): Set<string>    // pairsOf の weekday の集合(残す service は入らない)
+export function keptServicesOf(settings): string[]          // pairs が無ければ空
+```
+
+- `pairs` があるときは、`weekdayService === pairs[0].weekday`、`replacementService === (pairs[0].replacements[0] ?? '')`。`replacementService` が `''` になるのは、主の組に入れ替えに使う service が無いとき(名士バス・羽幌町)だけ
+- `planOf` は、`pairs`・`keptWeekdayServices` が入っているときだけ計画に写す(`undefined` の項目を作らない)
+- 組の表は、グループ分け(`web/src/gtfs/groups/policy.ts` の `policyServicesFor`)が作る。画面と AI のツールは、今は `pairs` を渡さない(画面からの渡し方は後の画面のワークフロー)
+- `checkPolicy` が `pairs` があるときに足す確かめ(`pairs` が無いときは今のまま):
+
+| 確かめること | 重さ | code |
+| --- | --- | --- |
+| `pairs` が空でない。先頭が `weekdayService`・`replacementService` と合う。空の service_id が無い | エラー | `badPairs` |
+| 1つの service が、組の間・組の中・平日の service・入れ替えに使う service・`keptWeekdayServices` のうち2か所以上に出てこない | エラー | `duplicateService` |
+| 組ごとに、平日の service と入れ替えに使う service に便がある(主の組に入れ替えに使う service が無いときは見ない) | エラー | `noWeekdayTrips`・`noReplacementTrips` |
+| 平日の service の calendar の行に、土曜か日曜の列が 1 のものがない(祝日一覧は使わない) | エラー | `weekdayServiceRunsOnWeekend` |
+| 入れ替えに使う service の calendar の行に、月〜金の列が 1 のものがない(平日の service の走る日に加えると、その便が2回走る。calendar_dates だけの重なりは `replacementRunsWithWeekday` の警告) | エラー | `replacementRunsOnWeekday` |
+| 主の組:`weekdayCalendarOutside`・`weekdayNotActive` | 今のまま | |
+| 主でない組の平日の service が、新しい有効期間に1日も走らない(組ごと出力から除く) | 警告 | `pairWeekdayNotActive` |
+| 入れ替えに使う service が、新しい有効期間に1日も走らない(便は、その組の平日の service の走る日に加わる)。**主の組も主でない組も同じ** | 警告 | `replacementNotActiveAdded` |
+| 主の組の、便のある入れ替えに使う service がすべて新しい有効期間に1日も走らない | エラー | `replacementNotActive` |
+| 入れ替えに使う service が、新しい有効期間の X の日(土曜に:土曜、日祝に:日曜。祝日は数えない。年末年始 12/29〜1/3 は除く)のうち走らない日がある。組ごとに1つの警告にまとめ、service ごとの日数と日付(5 つまで)を文に入れる | 警告 | `replacementPartial` |
+| `tripReferences`・`excludedRouteWithoutWeekdayTrips` | 今のまま | すべての組の平日の service の便で見る |
+
+- `sameService` は `pairs` が無いときだけ見る(`pairs` があるときは `duplicateService` が同じことを確かめる)
+- `pairs` が無いときの `replacementNotActive`(エラー)・`replacementPartial`(calendar の範囲で見る)は今のまま。`pairs` があるときは上の表の規則で、calendar の範囲は見ない(北海道中央バスの土日の service は calendar が 3/28 で終わるが、その後 3/31 までに土曜が無いので警告にしない)
+- 期間に1日も走らない入れ替えに使う service を、季節のダイヤ(北海道中央バスの冬ダイヤ `S000041`・`S000042`)では外し、迂回の版(京都 `03001_C`)では加える、という分け方はまだしていない(設計 §6.2-7)
+
 ### 系統の除外
 
 - 減便の方針に系統の除外を含めることは、Notion ではまだ決まっていない(§12.1-8)。関数(`excludedRoutes`)は作り、画面は 11/4 の中で最初に削る候補にする(§1)
@@ -484,7 +527,7 @@ export interface Form2Report {
   inputValidity: { start: string; end: string }
   validity: { start: string; end: string; days: number }   // days は両端を含む日数
   tripIds: {
-    rule: 'replace-service-part' | 'append-service'        // §5.4
+    rule: TripIdRule                                         // §5.4。主の組(主の入れ替えに使う service)の規則
     /** service_id の部分の位置(0 始まり)。'append-service' なら null */
     servicePartIndex: number | null
     derived: { from: string; to: string }[]                  // from の昇順
@@ -501,6 +544,8 @@ export interface Form2Report {
     notWeekday: string[]
     notFound: string[]
     duplicate: string[]
+    alreadyKept?: string[]                                   // pairs があるときだけ(§5.3)
+    notActive?: string[]                                     // pairs があるときだけ(§5.3)
   }
   calendarDates: { kept: number; dropped: { service_id: string; date: string; exception_type: string }[] }
   /** 新しい有効期間のどの日にも走らなくなり、便ごと出力から除いた service(§5.6) */
@@ -508,8 +553,18 @@ export interface Form2Report {
   rowOrder: { trips: 'service_id,trip_id' | 'trip_id' | 'input'; stop_times: 'trips' | 'input' }
   feedVersion: { before: string; after: string }
   warnings: { code: string; message: string }[]
+  /** 組ごとの結果。plan に pairs があるときだけ置く(plan の pairs の順) */
+  pairs?: {
+    weekday: string
+    dropped: boolean                                         // 平日の service が新しい有効期間に走らないため、組ごと除いた
+    removed: number                                          // なくなる平日の便の数
+    replacements: { serviceId: string; rule: TripIdRule; servicePartIndex: number | null; added: number }[]
+  }[]
 }
+export type TripIdRule = 'replace-service-part' | 'replace-family-part' | 'append-service'
 ```
+
+- `pairs` が無いときは `report.pairs`・`addBack.alreadyKept`・`addBack.notActive` を置かない。`pairs: [{ weekday, replacements: [replacementService] }]`・`keptWeekdayServices: []` のときの出力は、`pairs` が無いときとバイト単位で同じで、report はこの3つの項目が増えるだけ(`form2.multi.test.ts`・`form2.multi.verify.test.ts` で確かめる)
 
 - `tripIds`(`rule` と `servicePartIndex` を除く)・`addBack`・`calendarDates`・`rowOrder` は、参照実装 `form2_ref.py` の `summary.json` と同じ名前・同じ並びにしてあり、そのまま比べられる。`inputValidity`・`validity`・`feedVersion` は `summary.json` の `input`・`output` の値を組み直したもの、`droppedServices` は参照実装に無い(§11)
 - 参照実装と違うのは、キーの空白を取って照合すること(道北バスには空白が無いので結果は同じ)と、§5.6 の `droppedServices`・§5.7 の feed_info を作る場合・§5.9 の frequencies の扱い(いずれも正解データには出てこない)
@@ -538,6 +593,11 @@ export function tripSignature(routeId: string, rows: readonly GtfsRow[]): string
 4. **消す(removed)**:平日の便のうち、上のどれにも入らない便
 5. 平日でも入れ替えに使うダイヤでもない service の便は、そのまま残す(入れ替えに使うダイヤの便も、土曜(日祝)の便として残る)
 
+**組が複数のとき**(`pairs`。§3 の組の表):平日の便 = `service_id` が `weekdayServicesOf(plan)` にある便。組ごとに、入れ替えに使う service の便(除外した系統を除く)を写し、`service_id` をその組の `weekday` にする。残す service(`keptWeekdayServices`)の便はそのまま残す。
+
+- 主でない組の平日の service が新しい有効期間に走らない(§5.6 の `droppedServices` に入る)ときは、その組の便を写さない(`report.pairs[].dropped`)。その平日の service の便は、なくなる便(`tripIds.removed`)ではなく、走らなくなった service の便として `droppedServices` に数える
+- 入れ替えに使う service が新しい有効期間に走らなくても、組の平日の service が走れば便は写す(京都 `03001_C` → `01001_C`。`replacementNotActiveAdded`)。入れ替えに使う service 自身の便は §5.6 で除かれる
+
 加わる便の trip_id が、消した平日便の trip_id と同じになることがある(消した便の id は空くため)。1つのフィードの中では一意なので GTFS の誤りではなく、道北バスの 10/29 版も `0904_01_01_01_0735` を 9/17 版とは別の便に使っている。ただし trip_id だけで前後を比べると取り違えるので、比べるときは署名を使い、画面とツールでは trip_id にどちらのフィードの id かを添える(§6 の `TripBrief.feed`、§10)。9/17 版では、除外なしで 16 便、0051・0151 を除外すると 15 便がこれに当たる(例 `0004_01_01_01_0710`)。`validateEdit` の `tripIdReused`(info)で一覧を出す。
 
 **便を指すほかの表の行**(transfers の `from_trip_id`・`to_trip_id`、attributions の `trip_id`、translations の `table_name` が `trips` か `stop_times` の行の `record_id`):
@@ -558,12 +618,16 @@ export function tripSignature(routeId: string, rows: readonly GtfsRow[]): string
 | --- | --- | --- |
 | 1 | `duplicate` | 同じ trip_id の2回目以降 |
 | 2 | `notFound` | 減便前の trips に無い |
+| 2.5 | `alreadyKept` | `pairs` があるときだけ。その便の service が `keptWeekdayServices` にある(平日のまま走るので戻す必要がない) |
 | 3 | `notWeekday` | 平日の service の便でない |
+| 3.5 | `notActive` | `pairs` があるときだけ。その便の service が、新しい有効期間に1日も走らないため組ごと出力から除く平日の service(`droppedServices`)にある。出力に入らないので戻さない。受け付けた便と違い、その trip_id を押さえない(§5.4) |
 | 4 | `ignoredExcludedRoute` | 除外した系統の便(すでに残っている) |
 | 5 | `ignoredAlreadyPresent` | 署名が加わる便(§5.2 の 2)と同じ(`sameAs` は、同じ署名の入れ替えに使うダイヤの便のうち減便前の trips の並びで最初のものの trip_id)、または先に受け付けた便と同じ(`sameAs` はその便) |
 | 6 | `accepted` | 平日に戻す |
 
+- 組が複数のときの 5:同じ署名の加わる便(組をまたいで1つの表)か先に受け付けた便があり、**その便の service が、戻そうとする便の service の走る日(新しい有効期間の中)をすべて含む**ときだけ `ignoredAlreadyPresent` にする(加わる便の service は、その組の平日の service)。含まなければ受け付ける。同じ service なら常に含むので、1組のときは今と同じ。`sameAs` は、含む便のうち減便前の trips の並びで最初のもの
 - 受け付けた便は、元の平日便を trip_id・時刻とも変えずに残す
+- 組ごと除く平日の service の除外した系統の便も、出力に入らないので `tripIds.kept` に数えない
 - 画面は、受け付けなかった便を分類ごとに理由をつけて出す(「土曜ダイヤに同じ時刻の便があるため、平日に戻す必要がありません」など)
 
 ### 5.4 加わる便の trip_id
@@ -574,6 +638,10 @@ export function tripSignature(routeId: string, rows: readonly GtfsRow[]): string
 - 道北バス:trip_id は `{運用 4桁}_{運用内の順番 2桁}_{01}_{service_id 2桁}_{始発の発時刻 HHMM}` で、k = 3(4つ目)。両版の全便(1,169 便・1,099 便)が当てはまる。例 `0026_01_01_03_0705` → `0026_01_01_01_0705`
 - `replace-service-part`:入れ替えに使う便の trip_id の k 番目の部分を `plan.weekdayService` に置き換える。k 番目が入れ替えに使う service_id でない便(起きない想定)は `append-service` と同じにする
 - `append-service`(仮の規則):`{入れ替えに使う便の trip_id}_{plan.weekdayService}`
+- **頭の部分を置き換える(`replace-family-part`。2026-11-04 追記)**:`replace-service-part` で決まらなければ、平日の便と入れ替えに使うダイヤの便のすべてで、左から k 番目の部分が自分の service_id の頭(最初の `_` より前。`_` が無ければ全体)と等しい k を探す。部分の数はそろっていなくてよい。すべての便に共通の k のうち最も右を使い、部分が k+1 個に足りない便が1つでもあればその k は使わない。部分が1つしかない便があるとき、2つの service の頭が同じときは使わない。置き換えは k 番目の部分を入れ替えに使う service の頭から平日の service の頭にする(京都 `00100_03001_9389` → `00100_01001_9389`、`05800_03001_11011_A` → `05800_01001_11011_A`)。どちらでも決まらなければ `append-service`
+- 規則は、平日の service と入れ替えに使う service の組み合わせごとに1つ決める(`pairs` の有無で規則を変えない)。`tripIds.rule`・`servicePartIndex` は主の組の値(主の組に入れ替えに使う service が無ければ `'append-service'`・null)、組ごとの値は `report.pairs[].replacements[]`
+- 組が複数のとき、押さえる trip_id は平日の service に無いすべての便(残す service の便を含む)、残す便、平日に戻す便。割り当て済みの trip_id は全部の組で1つの集合にする。割り当ての順は `pairs` の順、組の中は `replacements` の順、その中は元の trip_id の昇順。`tripIds.derived` は from の昇順に並べ直す
+- 道北バスは `replace-service-part` で決まるので、規則を足しても正解データは変わらない。京都の1組の出力は `append-service` から `replace-family-part` に変わる
 - **重なり**:先に、平日以外のすべての便、残す便、平日に戻す便の trip_id を押さえる。加わる便は入れ替えに使う便の trip_id の昇順に割り当て、候補が押さえた id か先に割り当てた id と重なれば、候補の後ろに `_2`、`_3` … を付ける(`0004_01_01_01_0710` → `0004_01_01_01_0710_2`)。重なりは `tripIds.collisions` に残す(`collidedWithService` は、候補と同じ trip_id の減便前の便の service_id。無ければ null)
 - 正解データの main の場面では重なりは 0。9/17 版の平日便 447 便のどれを平日に戻しても、重なるのは最大 89 便。そのうち 76 便は、写すどれかの便と署名が同じなので §5.3 の 5 で平日に戻さず、`_2` が付くのは 13 便(0051・0151 を除外すると 86・74・12 便)。レビューの全件集計
 - 平日に戻した便と残す便は、元の trip_id のまま
@@ -627,6 +695,13 @@ export function tripSignature(routeId: string, rows: readonly GtfsRow[]): string
 | `otherWeekdayServices` | 平日の役割の service がほかにもあり、入れ替えていない |
 | `blockIdCopied` | 加わる便に空でない block_id がある(運用が重なるかは確かめていない) |
 | `orphanStopTimesDropped` | 減便前の trips に無い trip_id の stop_times の行を除いた(§5.5) |
+| `weekdayServicesKept` | `pairs` があるときだけ。残す平日の service のうち、便があり期間に走るもの(便数と、走る日。10 日以下なら日付) |
+| `weekdayServicesErased` | `pairs` があるときだけ。入れ替えに使う service の無い組(なくす service)と、なくなる便の数 |
+| `replacementRunsWithWeekday` | `pairs` があるときだけ。入れ替えに使う service と、その組の平日の service が、新しい有効期間の同じ日に走る(組み合わせごとに5日まで) |
+
+- `otherWeekdayServices` は、平日の service にも `keptWeekdayServices` にも無い月〜金の service だけを数える
+- `validateEdit` の `holidayWithoutException` は、組が複数のときは便の残るすべての組の平日の service で見る。平日ダイヤが走る日・`weekdayNotRunning`・`yearEnd` は主の組(`weekdayService`)で見る(一部の日だけ走る service で知らせがあふれないため)
+- `applyRevert` の `services` に `pairs` を渡すと、元のダイヤに戻す版の計画に入り、祝日の確かめに使う(便は変えない)
 
 - 便を指すほかの表の行は、11/4 は `checkPolicy` のエラー(`tripReferences`)で止めるので、ここには出ない(§5.2)
 - 新しい確かめ(`tripIdReused`・`validityUnder30` など)は `Form2Report.warnings` に入れず、`validateEdit` で出す。`Form2Report.warnings` の code は上の表のものに限る
@@ -752,8 +827,12 @@ export interface WeekdayDiff {
   /** 全曜日で便がなくなる系統の数(byRoute の vanishes の数) */
   vanishingRoutes: number
 }
-export function diffWeekdayTrips(base: GtfsFeed, edited: GtfsFeed, weekdayService: string): WeekdayDiff
+export function diffWeekdayTrips(base: GtfsFeed, edited: GtfsFeed, weekdayService: string | Iterable<string>, excludedRoutes?: readonly string[]): WeekdayDiff
+/** form2.ts。weekdayServicesOf(plan) から report.droppedServices を引いたもの */
+export function activeWeekdayServicesOf(result: Pick<Form2Result, 'plan' | 'report'>): Set<string>
 ```
+
+- 組が複数のときは `activeWeekdayServicesOf(result)` を渡す。`weekdayServicesOf(plan)` を渡すと、組ごと除いた service の便(新しい有効期間に1日も走らない)まで「なくなる便」と平日に戻す候補に入る
 
 - 署名の多重集合で突き合わせる。同じ署名が複数あれば、trip_id の昇順に先頭から組にする(余りがなくなる便・加わる便)
 - 平日の service だけを比べる(ほかの service は変えないため)。`vanishes` だけは減便後のフィードの全便で見る
@@ -1236,6 +1315,20 @@ export function writeGtfsZip(input: WriteGtfsZipInput): Promise<Blob>
   - main の減便の方針で、`lostCells` が最も多い時間帯が 18〜21時か 21〜24時になる(Notion の 11/4 の到達点「夜の空白が地図で見える」)。ならなければ、テストを直さず指示役に返す
   - main の減便の方針(平日に戻す操作あり)は、replaceOnly(平日に戻す操作なし)より 6〜9時の `lostCells` が少ない(11/5 の到達点「平日に戻すと空白が減る」)
   - 根拠(レビューの集計):平日の出発のある停留所は main で 18〜21時 772 → 708(−8.3%)、21〜24時 180 → 169(−6.1%)、6〜9時 1,044 → 1,009(−3.4%)。時ごとの出発は 19時台 820 → 636、20時台 500 → 351
+
+### 組が複数のとき(2026-11-04 追記、`docs/design-service-groups.md` §7.6)
+
+- `web/src/gtfs/edit/form2.multi.test.ts`:手で作るフィード `multiFeed()`(`form2.fixture.ts`)で、1組の `pairs` が `pairs` 無しと同じ出力になること、組ごとの便の分け方、trip_id の3つの規則(`tripIdRuleFor`)、組をまたぐ署名と走る日の包含、`alreadyKept`・`notActive`、`replacementNotActiveAdded`(主の組も)・`replacementNotActive`(主の組がすべて走らない)・`replacementPartial`(X の日の数)・`replacementRunsOnWeekday`・`pairWeekdayNotActive`、`activeWeekdayServicesOf`、`badPairs`・`duplicateService`・`weekdayServiceRunsOnWeekend`、新しい警告、名士バスの形(主の組に入れ替えに使う service が無い)、`diffWeekdayTrips`・平日に戻す判断材料・`applyRevert`・`validateEdit` の組の扱い
+- `web/src/gtfs/edit/form2.multi.verify.test.ts`(実データ。ファイルと祝日一覧が無ければ飛ばす):組の表は `policyServicesFor` で作る
+  - 京都市営バス、土曜に、期間 20261105〜:`validateEdit` のエラー 0、trip_id のぶつかり 0、主の組は `replace-family-part`・位置 1、11/11 に走る便 5,417(署名の多重集合が、入力の 11/14 の便と残した大学の便を足したものと同じ)、`01001_C`・`03001_C` は出力から除く、`weekdayNotRunning` は主の組の分の1件
+  - 京都市営バス、期間 20261101〜:エラー 0、`replacementNotActiveAdded` は `03001_C` の1件、11/2 に走る便 5,377。日祝に(期間 20261105〜)も署名の多重集合で確かめる
+  - 北海道中央バス、土曜に、期間 20261109〜(`S000039`・`S000044` を残す):11/11 に走る便 3,739 で、署名の多重集合が入力の 11/14 の便と残した 3 便を足したものと同じ。日祝に(`S000040` を残す):3,636。`S000039` を組に入れると `weekdayServiceRunsOnWeekend`
+  - 北海道中央バスの translations.txt は、平日の便(`S000001` ほか)を `record_id` で指す行を持つので、そのままでは §5.2 の `tripReferences` で止まる。便の数の照合は translations.txt を除いたフィードで行う。この制限を外すかは決めていない(§5.2 の 11/6 以降の規則)
+  - `tripReferences` で止まる GTFS の表:北海道中央バス・士別軌道・北門バス・羽幌町・空知中央バス・沿岸バス・名士バスは止まり、道北バス(2つの版)・旭川電気軌道・京都市営バスは止まらない(グループ分けの規則の案、土曜に、期間 11/9〜。設計 §4.7)
+  - 京都(土曜に 11/5〜・11/1〜・日祝に・平日に戻す便を混ぜた場面)と北海道中央バス(土曜に・日祝に)で、新しい有効期間の毎日、出力のその日の便の署名の多重集合が「平日の組でない service の入力の便 + 走る平日の組の入れ替えに使う便 + 除外した系統の便・平日に戻した便」と同じ(`checkEveryDay`)
+  - 北海道中央バス、土曜に、期間 11/9〜:`replacementPartial` は1件で `S000049` の 3 日だけ。期間 10/5〜10/31:止まらず、`S000041`・`S000042` が `replacementNotActiveAdded`
+  - 道北バス:`pairs: [{01, [03]}]`・`keptWeekdayServices: []` の ZIP が、`pairs` 無しの ZIP とバイト単位で同じ
+- **参照実装と照らさない**:`pairs` の場面と規則 `replace-family-part` は、参照実装 `form2_ref.py` と照らさない(参照実装は1組と `replace-service-part`・`append-service` だけを扱う。直さない)。正解データ(道北バスの5場面)は1組で、`replace-service-part` で決まるので変わらない
 
 ### 実データのテストの規則
 

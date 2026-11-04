@@ -206,3 +206,102 @@ trip_id,arrival_time,departure_time,stop_id,stop_sequence
     feed_info: rowsOf(FEED_INFO),
   })
 }
+
+/**
+ * 組が複数ある形2を確かめる小さなフィード(docs/design-service-groups.md §7.6 の受け入れ条件 3)。京都市営バスの形をまねる。
+ *
+ * - calendar はすべて 20261001〜20261130。土曜に入れ替えるときの組(multiServices):
+ *   - 主の組 01001(月〜金)← 03001(土)。trip_id は {系統}_{頭}_{時刻}(と接尾辞)で、部分の数が 3 と 4 で混ざる(規則 2、位置 1)
+ *   - 接尾辞の組 01001_A(月〜金。11/2・11/10 は運休の例外)← 03001_A(土)
+ *   - 01001_C(calendar_dates だけ。11/2)← 03001_C(calendar_dates だけ。10/31)
+ *   - なくす 01005_MSN(月〜金)
+ *   - 入れ替えに使う service が2つの組 WB(月〜金)← SB1(土。規則 1、位置 2)・SB2(土。trip_id に '_' が無く、後ろに付ける)
+ *   - 残す 01002_RIT(calendar_dates だけ。11/5・11/6)
+ *   - 月〜土の MS(組に入れない)
+ * - 停留所は A→B の2つ。署名は系統と時刻で決まる:R1_01001_0700 と R1_03001_0700(07:00)、R1_01001_0800_K と
+ *   R1_03001_0800_A(08:00)、R1_01001_0900_A と R1_03001_0900(09:00)が同じ署名
+ */
+export const MULTI_CALENDAR = `
+service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
+01001,1,1,1,1,1,0,0,20261001,20261130
+01001_A,1,1,1,1,1,0,0,20261001,20261130
+01005_MSN,1,1,1,1,1,0,0,20261001,20261130
+03001,0,0,0,0,0,1,0,20261001,20261130
+03001_A,0,0,0,0,0,1,0,20261001,20261130
+MS,1,1,1,1,1,1,0,20261001,20261130
+SB1,0,0,0,0,0,1,0,20261001,20261130
+SB2,0,0,0,0,0,1,0,20261001,20261130
+WB,1,1,1,1,1,0,0,20261001,20261130`
+
+export const MULTI_CALENDAR_DATES = `
+service_id,date,exception_type
+01001_A,20261102,2
+01001_A,20261110,2
+01001_C,20261102,1
+03001_C,20261031,1
+01002_RIT,20261105,1
+01002_RIT,20261106,1`
+
+/** [route_id, service_id, trip_id, 発車の時刻 HH:MM] */
+const MULTI_TRIPS: [string, string, string, string][] = [
+  ['R1', '01001', 'R1_01001_0700', '07:00'],
+  ['R1', '01001', 'R1_01001_0800_K', '08:00'],
+  ['R3', '01001', 'R3_01001_0730', '07:30'],
+  ['R1', '01001_A', 'R1_01001_0900_A', '09:00'],
+  ['R1', '01001_C', 'R1_01001_1000_C', '10:00'],
+  ['R4', '01002_RIT', 'R4_01002_1300_RIT', '13:00'],
+  ['R1', '01005_MSN', 'R1_01005_1200_MSN', '12:00'],
+  ['R1', '03001', 'R1_03001_0700', '07:00'],
+  ['R1', '03001', 'R1_03001_0805_K', '08:05'],
+  ['R1', '03001', 'R1_03001_0900', '09:00'],
+  ['R1', '03001_A', 'R1_03001_0800_A', '08:00'],
+  ['R1', '03001_C', 'R1_03001_1005_C', '10:05'],
+  ['R1', 'MS', 'R1_MS_1400', '14:00'],
+  ['R2', 'SB1', 'R2_1000_SB1', '10:00'],
+  ['R2', 'SB2', 'X1100', '11:00'],
+  ['R2', 'WB', 'R2_0900_WB', '09:00'],
+]
+
+/** 組が複数ある小さなフィード(呼ぶたびに新しく作る)。trips は (service_id, trip_id) の昇順、stop_times は trips の順 */
+export function multiFeed(): GtfsFeed {
+  const later = (hhmm: string) => {
+    const [h, m] = hhmm.split(':').map(Number)
+    const t = h * 60 + m + 10
+    return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}:00`
+  }
+  return feedOf({
+    agency: rowsOf(AGENCY),
+    routes: rowsOf(`${ROUTES}
+R4,1,4,大学線,3`),
+    stops: rowsOf(STOPS),
+    calendar: rowsOf(MULTI_CALENDAR),
+    calendar_dates: rowsOf(MULTI_CALENDAR_DATES),
+    trips: MULTI_TRIPS.map(([route_id, service_id, trip_id]) => ({ route_id, service_id, trip_id, trip_headsign: '市役所', block_id: '' })),
+    stop_times: MULTI_TRIPS.flatMap(([, , trip_id, time]) => [
+      { trip_id, arrival_time: `${time}:00`, departure_time: `${time}:00`, stop_id: 'A', stop_sequence: '1', pickup_type: '0', drop_off_type: '1' },
+      { trip_id, arrival_time: later(time), departure_time: later(time), stop_id: 'B', stop_sequence: '2', pickup_type: '1', drop_off_type: '0' },
+    ]),
+    feed_info: rowsOf(FEED_INFO),
+  })
+}
+
+/** multiFeed を土曜ダイヤに入れ替える計画(組は主の組が先頭、あとは平日の service の昇順) */
+export function multiPlan(overrides: Partial<Form2Plan> = {}): Form2Plan {
+  return {
+    kind: 'weekdayToSaturday',
+    weekdayService: '01001',
+    replacementService: '03001',
+    period: { start: '20261103', end: null },
+    excludedRoutes: [],
+    pairs: [
+      { weekday: '01001', replacements: ['03001'] },
+      { weekday: '01001_A', replacements: ['03001_A'] },
+      { weekday: '01001_C', replacements: ['03001_C'] },
+      { weekday: '01005_MSN', replacements: [] },
+      { weekday: 'WB', replacements: ['SB1', 'SB2'] },
+    ],
+    keptWeekdayServices: ['01002_RIT'],
+    addBackTripIds: [],
+    ...overrides,
+  }
+}

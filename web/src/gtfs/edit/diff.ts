@@ -193,20 +193,22 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, 
 /**
  * 基準と編集後の平日便を、署名の多重集合で突き合わせる。同じ署名が複数あれば trip_id の昇順に先頭から組にし、
  * 余りが消える便・入る便になる。平日の service だけを比べる(vanishes だけは編集後の全便で見る)。
+ * weekdayService は1つの service_id か、平日の service の集合(組が複数のときは form2.ts の activeWeekdayServicesOf(result)。
+ * weekdayServicesOf(plan) だと、新しい有効期間に走らないため組ごと除いた service の便まで、なくなる便に数える)。
  * excludedRoutes は RouteDiff.excluded に使う(方針で入れ替えから外した系統。フィードからは推定しない)
  */
 export function diffWeekdayTrips(
   base: GtfsFeed,
   edited: GtfsFeed,
-  weekdayService: string,
+  weekdayService: string | Iterable<string>,
   excludedRoutes: readonly string[] = [],
 ): WeekdayDiff {
-  const wk = weekdayService.trim()
+  const weekdays = typeof weekdayService === 'string' ? new Set([weekdayService.trim()]) : new Set([...weekdayService].map((s) => s.trim()))
   const briefBase = createTripBriefer(base, 'base')
   const briefEdited = createTripBriefer(edited, 'edited')
-  const before = (base.tables.get('trips')?.rows ?? []).filter((t) => trimmed(t.service_id) === wk).map(briefBase)
+  const before = (base.tables.get('trips')?.rows ?? []).filter((t) => weekdays.has(trimmed(t.service_id))).map(briefBase)
   const editedTrips = edited.tables.get('trips')?.rows ?? []
-  const after = editedTrips.filter((t) => trimmed(t.service_id) === wk).map(briefEdited)
+  const after = editedTrips.filter((t) => weekdays.has(trimmed(t.service_id))).map(briefEdited)
 
   const byTripId = (a: TripBrief, b: TripBrief) => compareStrings(a.tripId, b.tripId)
   const beforeBySig = groupBy(before, (b) => b.signature)

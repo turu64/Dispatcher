@@ -1,6 +1,6 @@
 import { isValidGtfsDate } from '../calendar'
 import type { Form2Result } from '../edit/form2'
-import { formatDate } from '../edit/ops'
+import { formatDate, weekdayServicesOf } from '../edit/ops'
 import { compareStrings, sortByStopSequence, stopTimesByTrip, tripSignature } from '../edit/signature'
 import type { GtfsFeed, GtfsRow } from '../load'
 
@@ -398,11 +398,11 @@ const ATTRIBUTE_FIELDS = ['trip_headsign', 'direction_id', 'stop_headsign', 'pic
  * 前後の比較と足し戻しでは同じ便として扱うので、warning で知らせる
  */
 function signatureColumnMismatchIssue(base: GtfsFeed, result: Form2Result): ValidationIssue | null {
-  const wk = result.plan.weekdayService.trim()
+  const weekdays = weekdayServicesOf(result.plan)
   const baseGroups = stopTimeGroups(base)
   const bySignature = new Map<string, Record<string, string>[]>()
   for (const t of rowsOf(base, 'trips')) {
-    if (trimmed(t.service_id) !== wk) continue
+    if (!weekdays.has(trimmed(t.service_id))) continue
     const rows = baseGroups.get(trimmed(t.trip_id)) ?? []
     const sig = tripSignature(trimmed(t.route_id), rows)
     const list = bySignature.get(sig)
@@ -416,7 +416,7 @@ function signatureColumnMismatchIssue(base: GtfsFeed, result: Form2Result): Vali
   const mismatched: string[] = []
   const fieldCounts = new Map<string, number>()
   for (const t of rowsOf(result.feed, 'trips')) {
-    if (trimmed(t.service_id) !== wk) continue
+    if (!weekdays.has(trimmed(t.service_id))) continue
     const id = trimmed(t.trip_id)
     const rows = editedGroups.get(id) ?? []
     const candidates = bySignature.get(tripSignature(trimmed(t.route_id), rows))
@@ -441,7 +441,7 @@ function signatureColumnMismatchIssue(base: GtfsFeed, result: Form2Result): Vali
     severity: 'warning',
     code: 'signatureColumnMismatch',
     file: 'trips.txt',
-    message: `平日ダイヤ(${wk})の便のうち ${mismatched.length} 便は、入力の平日便と停留所・時刻が同じですが、行き先か乗降の扱いが違います(${detail})。前後の比較と、便を平日に戻す処理では、同じ便として扱います。行き先・乗降の扱いを確かめてください。`,
+    message: `平日ダイヤ(${[...weekdays].join('・')})の便のうち ${mismatched.length} 便は、入力の平日便と停留所・時刻が同じですが、行き先か乗降の扱いが違います(${detail})。前後の比較と、便を平日に戻す処理では、同じ便として扱います。行き先・乗降の扱いを確かめてください。`,
     count: mismatched.length,
     examples: examplesOf(mismatched),
   }

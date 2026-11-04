@@ -7,7 +7,7 @@ import { distanceM, meshCenter, type LatLon } from '../../reach/mesh'
 import type { ReachParams, ReachResult } from '../../reach/reach'
 import { createTripBriefer, notice47BandOf, type TripBrief } from './diff'
 import { formatMinutes, type FacilityHintKind, type FacilityTiming, type FacilityWindow, type FacilityWindows, type LongBreak } from './facilityHours'
-import type { Form2Plan } from './ops'
+import { pairsOf, weekdayServicesOf, type Form2Plan } from './ops'
 import { compareStrings, sortByStopSequence, stopTimesByTrip } from './signature'
 
 /**
@@ -473,7 +473,8 @@ function compareNear(a: NearFacility & { raw: number }, b: NearFacility & { raw:
  * 系統と時刻は基準の便と等しい)。
  *
  * ctx を渡すと、到達圏を使う2つ(onlyServiceAtStop・restoresLostCells)も判定する(docs/interfaces-1105.md §7)。
- * - 対象は、feed が base で、ctx.date に基準で走る平日(plan.weekdayService)の便だけ。ほかの便には2つを出さない
+ * - 対象は、feed が base で、ctx.date に基準で走る平日(weekdayServicesOf(plan) のどれか)の便だけ。ほかの便には2つを出さない
+ * - weekdayOnlyRoute は、すべての組の入れ替えに使う service の便の系統の和集合で見る
  * - 乗れる行(pickup_type が 1 でなく、最後の行でない)の出発の時刻が入る時間帯で数える(出発が空の行は数えない)。6〜24時の外は数えない
  * - 停留所ごとのまわりの外れたセルは ctx ごとに1回だけ探して覚えておくので、候補の一覧をまとめて調べても速い
  * - ctx は、edited から作った到達圏の比較を渡す(別の版の比較を渡すと、出発の数が合わない)
@@ -491,13 +492,13 @@ export function createRestoreHinter(
   baseWeekday: readonly TripBrief[],
   editedWeekday: readonly TripBrief[],
 ): (trip: TripBrief, ctx?: RestoreHintContext) => RestoreHintDetail {
-  const replacement = plan.replacementService.trim()
-  const weekday = plan.weekdayService.trim()
+  const replacements = new Set(pairsOf(plan).flatMap((p) => p.replacements))
+  const weekdays = weekdayServicesOf(plan)
   const replacementRoutes = new Set<string>()
   // 基準の便の service_id(到達圏を使う手がかりで、比較の日付に走るかを調べる)
   const serviceOfTrip = new Map<string, string>()
   for (const t of base.tables.get('trips')?.rows ?? []) {
-    if (trimmed(t.service_id) === replacement) replacementRoutes.add(trimmed(t.route_id))
+    if (replacements.has(trimmed(t.service_id))) replacementRoutes.add(trimmed(t.route_id))
     const id = trimmed(t.trip_id)
     if (!serviceOfTrip.has(id)) serviceOfTrip.set(id, trimmed(t.service_id))
   }
@@ -531,7 +532,7 @@ export function createRestoreHinter(
 
   function runsOn(tripId: string, date: string): boolean {
     const service = serviceOfTrip.get(tripId)
-    if (service === undefined || service !== weekday) return false
+    if (service === undefined || !weekdays.has(service)) return false
     let active = activeOn.get(date)
     if (!active) {
       active = activeServiceIds(base, date)
@@ -692,10 +693,10 @@ export function restoreHints(
   trip: TripBrief,
   ctx?: RestoreHintContext,
 ): RestoreHintDetail {
-  const wk = plan.weekdayService.trim()
+  const weekdays = weekdayServicesOf(plan)
   const weekdayOf = (feed: GtfsFeed, side: 'base' | 'edited') => {
     const brief = createTripBriefer(feed, side)
-    return (feed.tables.get('trips')?.rows ?? []).filter((t) => trimmed(t.service_id) === wk).map(brief)
+    return (feed.tables.get('trips')?.rows ?? []).filter((t) => weekdays.has(trimmed(t.service_id))).map(brief)
   }
   return createRestoreHinter(base, edited, plan, weekdayOf(base, 'base'), weekdayOf(edited, 'edited'))(trip, ctx)
 }

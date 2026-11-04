@@ -1,7 +1,27 @@
 import { isValidGtfsDate } from '../calendar'
 import type { GtfsFeed, GtfsRow, GtfsTable } from '../load'
-import { checkPolicy, formatDate, type Form2Plan, type PolicySettings } from './ops'
-import { describeServices, feedValidity, indexServiceDays, policyValidity, runsAnyDay } from './services'
+import {
+  checkPolicy,
+  formatDate,
+  keptServicesOf,
+  pairsOf,
+  shortDates,
+  weekdayServicesOf,
+  type Form2Plan,
+  type PolicySettings,
+  type ServicePair,
+} from './ops'
+import {
+  describeServices,
+  feedValidity,
+  forEachDay,
+  indexFeedServiceDays,
+  indexServiceDays,
+  policyValidity,
+  runsAnyDay,
+  runsOn,
+  type ServiceDays,
+} from './services'
 import { compareStrings, stopTimesByTrip, tripSignature } from './signature'
 
 /**
@@ -40,8 +60,9 @@ export interface Form2Report {
   /** days は両端を含む日数 */
   validity: { start: string; end: string; days: number }
   tripIds: {
-    rule: 'replace-service-part' | 'append-service'
-    /** service_id の部分の位置(0 始まり)。'append-service' なら null */
+    /** 主の組(平日の service と、主の入れ替えに使う service)の規則。主の組に入れ替えに使う service が無ければ 'append-service' */
+    rule: TripIdRule
+    /** service_id(または頭)の部分の位置(0 始まり)。'append-service' なら null */
     servicePartIndex: number | null
     /** from の昇順 */
     derived: { from: string; to: string }[]
@@ -60,6 +81,13 @@ export interface Form2Report {
     notWeekday: string[]
     notFound: string[]
     duplicate: string[]
+    /** その便の service が残す平日の service(keptWeekdayServices)にある。pairs があるときだけ置く(昇順) */
+    alreadyKept?: string[]
+    /**
+     * その便の service が、新しい有効期間に1日も走らないため組ごと出力から除く平日の service(droppedServices)にある。
+     * 出力に入らないので戻さない。pairs があるときだけ置く(昇順)
+     */
+    notActive?: string[]
   }
   calendarDates: { kept: number; dropped: { service_id: string; date: string; exception_type: string }[] }
   /** 新しい有効期間のどの日にも走らなくなり、便ごと出力から除いた service(§5.6) */
@@ -67,6 +95,36 @@ export interface Form2Report {
   rowOrder: { trips: 'service_id,trip_id' | 'trip_id' | 'input'; stop_times: 'trips' | 'input' }
   feedVersion: { before: string; after: string }
   warnings: { code: string; message: string }[]
+  /** 組ごとの結果。plan に pairs があるときだけ置く(plan の pairs の順) */
+  pairs?: Form2PairReport[]
+}
+
+/**
+ * 加わる便の trip_id の規則(§5.4、docs/design-service-groups.md §4.4)。
+ * - replace-service-part:service_id と等しい部分を置き換える
+ * - replace-family-part:service_id の頭(最初の '_' より前)と等しい部分を、入れ替えに使う service の頭から平日の service の頭にする
+ * - append-service:後ろに '_{平日の service_id}' を付ける
+ */
+export type TripIdRule = 'replace-service-part' | 'replace-family-part' | 'append-service'
+
+export interface Form2PairReport {
+  weekday: string
+  /** 平日の service が新しい有効期間に走らないため、組ごと除いた(加わる便を作らない) */
+  dropped: boolean
+  /** なくなる平日の便の数 */
+  removed: number
+  replacements: { serviceId: string; rule: TripIdRule; servicePartIndex: number | null; added: number }[]
+}
+
+/**
+ * 前後の比較(diffWeekdayTrips)に渡す平日の service:weekdayServicesOf(plan) から、新しい有効期間に走らないため
+ * 組ごと出力から除いた service(report.droppedServices)を引いたもの。除いた service の便は期間に1日も走らないので、
+ * 「なくなる便」や平日に戻す候補に数えない
+ */
+export function activeWeekdayServicesOf(result: Pick<Form2Result, 'plan' | 'report'>): Set<string> {
+  const weekdays = weekdayServicesOf(result.plan)
+  for (const d of result.report.droppedServices) weekdays.delete(d.serviceId)
+  return weekdays
 }
 
 const GENERATED_AT = /^\d{12}$/
@@ -119,13 +177,56 @@ function findServicePart(rows: readonly GtfsRow[]): number | null {
   return null
 }
 
-/** 写した便の trip_id の候補(重なりを調べる前) */
-function candidateTripId(from: string, servicePart: number | null, replacement: string, weekday: string): string {
-  if (servicePart !== null) {
+/** service_id の頭(最初の '_' より前。'_' が無ければ全体) */
+function headOf(serviceId: string): string {
+  const i = serviceId.indexOf('_')
+  return i < 0 ? serviceId : serviceId.slice(0, i)
+}
+
+/**
+ * 規則 2(replace-family-part)の位置:すべての便の trip_id を '_' で分け、左から k 番目の部分が自分の service_id の頭と
+ * 等しい k のうち、すべての便に共通で最も右のもの。部分の数はそろっていなくてよいが、k+1 個に足りない便が1つでもあれば
+ * その k は使わない。部分が1つしかない便(trip_id 全体を置き換えることになる)があれば決めない
+ */
+function findFamilyPart(rows: readonly GtfsRow[]): number | null {
+  if (rows.length === 0) return null
+  const parts = rows.map((r) => trimmed(r.trip_id).split('_'))
+  if (parts.some((p) => p.length < 2)) return null
+  const heads = rows.map((r) => headOf(trimmed(r.service_id)))
+  const shortest = Math.min(...parts.map((p) => p.length))
+  for (let k = shortest - 1; k >= 0; k--) {
+    if (parts.every((p, i) => p[k] === heads[i])) return k
+  }
+  return null
+}
+
+/**
+ * 平日の service weekday と入れ替えに使う service replacement の組み合わせの trip_id の規則(§5.4)。
+ * rows はその2つの service のすべての便(除外した系統の便も含む)。規則 1 → 規則 2 → 後ろに付ける、の順。
+ * 規則 2 は2つの頭が同じなら使わない(置き換えても trip_id が変わらないため)
+ */
+export function tripIdRuleFor(
+  rows: readonly GtfsRow[],
+  weekday: string,
+  replacement: string,
+): { rule: TripIdRule; index: number | null } {
+  const servicePart = findServicePart(rows)
+  if (servicePart !== null) return { rule: 'replace-service-part', index: servicePart }
+  if (headOf(weekday) !== headOf(replacement)) {
+    const familyPart = findFamilyPart(rows)
+    if (familyPart !== null) return { rule: 'replace-family-part', index: familyPart }
+  }
+  return { rule: 'append-service', index: null }
+}
+
+/** 加わる便の trip_id の候補(重なりを調べる前) */
+function candidateTripId(from: string, rule: { rule: TripIdRule; index: number | null }, replacement: string, weekday: string): string {
+  if (rule.index !== null) {
     const parts = from.split('_')
-    // 位置 k が写す元の service_id でない便(起きない想定)は、後ろに付ける規則と同じにする
-    if (parts[servicePart] === replacement) {
-      parts[servicePart] = weekday
+    const [was, to] = rule.rule === 'replace-family-part' ? [headOf(replacement), headOf(weekday)] : [replacement, weekday]
+    // 位置 k が入れ替えに使う service_id(頭)でない便(起きない想定)は、後ろに付ける規則と同じにする
+    if (parts[rule.index] === was) {
+      parts[rule.index] = to
       return parts.join('_')
     }
   }
@@ -171,8 +272,11 @@ function sortedIds(ids: Iterable<string>): string[] {
 
 /**
  * 形2を適用する。checkPolicy に error があれば ok: false(理由は error の文をつないだもの)。
- * 足し戻しの分類(§5.3)、写した便の trip_id(§5.4)、行の並び(§5.5)、有効期間と calendar・calendar_dates(§5.6)、
- * feed_info(§5.7)の規則は取り決めのとおり
+ * 平日に戻す便の分類(§5.3)、加わる便の trip_id(§5.4)、行の並び(§5.5)、有効期間と calendar・calendar_dates(§5.6)、
+ * feed_info(§5.7)の規則は取り決めのとおり。
+ *
+ * plan に pairs があるときは、組ごとに平日の service の便をなくし、入れ替えに使う service の便を加える
+ * (docs/design-service-groups.md §4.3〜§4.5)。pairs が無いときは pairsOf の1組で同じ処理を通り、出力と report は今と同じ
  */
 export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options): Form2Outcome {
   if (!GENERATED_AT.test(opts.generatedAt)) {
@@ -192,127 +296,19 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   const warnings: { code: string; message: string }[] = []
   const warn = (code: string, message: string) => warnings.push({ code, message })
 
+  const multi = plan.pairs !== undefined
+  const pairs = pairsOf(plan)
+  const weekdaySet = new Set(pairs.map((p) => p.weekday))
+  const keptServices = new Set(keptServicesOf(plan))
+  /** 入れ替えに使う service → 便を加える平日の service(checkPolicy が重なりを止めるので1つ) */
+  const intoOf = new Map<string, string>()
+  for (const p of pairs) for (const r of p.replacements) if (!intoOf.has(r)) intoOf.set(r, p.weekday)
   const wk = plan.weekdayService.trim()
-  const rp = plan.replacementService.trim()
   const excluded = new Set(plan.excludedRoutes.map((r) => r.trim()))
 
-  const stopTimesTable = base.tables.get('stop_times')
-  const stopTimeRows = stopTimesTable?.rows ?? []
-  const groups = stopTimesByTrip(stopTimeRows)
-  const signatures = new Map<GtfsRow, string>()
-  const signatureOf = (row: GtfsRow): string => {
-    let s = signatures.get(row)
-    if (s === undefined) {
-      s = tripSignature(trimmed(row.route_id), groups.get(trimmed(row.trip_id)) ?? [])
-      signatures.set(row, s)
-    }
-    return s
-  }
-
-  // ---- §5.2 便の分け方 ----
-  const tripRows = tripsTable.rows
-  const tripById = new Map<string, GtfsRow>()
-  const weekdayRows: GtfsRow[] = []
-  const replacementRows: GtfsRow[] = []
-  for (const row of tripRows) {
-    const id = trimmed(row.trip_id)
-    if (!tripById.has(id)) tripById.set(id, row)
-    const sid = trimmed(row.service_id)
-    if (sid === wk) weekdayRows.push(row)
-    else if (sid === rp) replacementRows.push(row)
-  }
-  const keptRows = weekdayRows.filter((r) => excluded.has(trimmed(r.route_id)))
-  const sources = replacementRows.filter((r) => !excluded.has(trimmed(r.route_id)))
-
-  // 写す便の署名 → 同じ署名の写す元の便のうち、基準の trips の並びで最初のもの
-  const derivedSignatures = new Map<string, string>()
-  for (const row of sources) {
-    const s = signatureOf(row)
-    if (!derivedSignatures.has(s)) derivedSignatures.set(s, trimmed(row.trip_id))
-  }
-
-  // ---- §5.3 足し戻しの分類(前から順に、最初に当てはまったもの) ----
-  const addBack: Form2Report['addBack'] = {
-    requested: plan.addBackTripIds.length,
-    accepted: [],
-    ignoredExcludedRoute: [],
-    ignoredAlreadyPresent: [],
-    notWeekday: [],
-    notFound: [],
-    duplicate: [],
-  }
-  const seen = new Set<string>()
-  const acceptedSignatures = new Map<string, string>()
-  const acceptedIds: string[] = []
-  for (const raw of plan.addBackTripIds) {
-    const id = raw.trim()
-    if (seen.has(id)) {
-      addBack.duplicate.push(id)
-      continue
-    }
-    seen.add(id)
-    const row = tripById.get(id)
-    if (!row) {
-      addBack.notFound.push(id)
-      continue
-    }
-    if (trimmed(row.service_id) !== wk) {
-      addBack.notWeekday.push(id)
-      continue
-    }
-    if (excluded.has(trimmed(row.route_id))) {
-      addBack.ignoredExcludedRoute.push(id)
-      continue
-    }
-    const sig = signatureOf(row)
-    const sameAs = derivedSignatures.get(sig) ?? acceptedSignatures.get(sig)
-    if (sameAs !== undefined) {
-      addBack.ignoredAlreadyPresent.push({ tripId: id, sameAs })
-      continue
-    }
-    acceptedSignatures.set(sig, id)
-    acceptedIds.push(id)
-  }
-  addBack.accepted = sortedIds(acceptedIds)
-  addBack.ignoredExcludedRoute.sort(compareStrings)
-  addBack.ignoredAlreadyPresent.sort((a, b) => compareStrings(a.tripId, b.tripId))
-  addBack.notWeekday.sort(compareStrings)
-  addBack.notFound.sort(compareStrings)
-  addBack.duplicate.sort(compareStrings)
-
-  const keptIds = keptRows.map((r) => trimmed(r.trip_id))
-  const keepIds = new Set([...keptIds, ...acceptedIds])
-  const removedIds = weekdayRows.map((r) => trimmed(r.trip_id)).filter((id) => !keepIds.has(id))
-
-  // ---- §5.4 写した便の trip_id ----
-  const servicePartIndex = findServicePart([...weekdayRows, ...replacementRows])
-  const reserved = new Set<string>()
-  for (const row of tripRows) if (trimmed(row.service_id) !== wk) reserved.add(trimmed(row.trip_id))
-  for (const id of keepIds) reserved.add(id)
-  const assigned = new Set<string>()
-  const derived: { from: string; to: string }[] = []
-  const collisions: Form2Report['tripIds']['collisions'] = []
-  const derivedRows: GtfsRow[] = []
-  const sourceOf = new Map<GtfsRow, GtfsRow>()
-  const orderedSources = sources
-    .map((row) => ({ row, from: trimmed(row.trip_id) }))
-    .sort((a, b) => compareStrings(a.from, b.from))
-  for (const { row: src, from } of orderedSources) {
-    const candidate = candidateTripId(from, servicePartIndex, rp, wk)
-    let to = candidate
-    for (let n = 2; reserved.has(to) || assigned.has(to); n++) to = `${candidate}_${n}`
-    if (to !== candidate) {
-      const other = tripById.get(candidate)
-      collisions.push({ from, candidate, assigned: to, collidedWithService: other ? trimmed(other.service_id) : null })
-    }
-    assigned.add(to)
-    derived.push({ from, to })
-    const row: GtfsRow = { ...src, trip_id: to, service_id: wk }
-    derivedRows.push(row)
-    sourceOf.set(row, src)
-  }
-
   // ---- §5.6 有効期間、calendar、calendar_dates ----
+  // 加わる便を作る前に、走らなくなる service(組ごと除く平日の service)を決める。ここより前と §5.2〜§5.4 は警告を出さないので、
+  // 警告の並びは変わらない
   if (plan.period.start < inputValidity.start) {
     warn(
       'periodStartClamped',
@@ -334,11 +330,205 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
 
   const calendars = clampCalendars(base, validity, warn)
   const { droppedServiceIds } = calendars
+  /** 平日の service が新しい有効期間に走らないため、組ごと除く(主の組は checkPolicy が weekdayNotActive で止める) */
+  const droppedPair = (weekday: string) => droppedServiceIds.has(weekday)
+
+  const stopTimesTable = base.tables.get('stop_times')
+  const stopTimeRows = stopTimesTable?.rows ?? []
+  const groups = stopTimesByTrip(stopTimeRows)
+  const signatures = new Map<GtfsRow, string>()
+  const signatureOf = (row: GtfsRow): string => {
+    let s = signatures.get(row)
+    if (s === undefined) {
+      s = tripSignature(trimmed(row.route_id), groups.get(trimmed(row.trip_id)) ?? [])
+      signatures.set(row, s)
+    }
+    return s
+  }
+
+  // ---- §5.2 便の分け方 ----
+  const tripRows = tripsTable.rows
+  const tripById = new Map<string, GtfsRow>()
+  const weekdayRows: GtfsRow[] = []
+  const rowsByService = new Map<string, GtfsRow[]>()
+  /** 加わる便の元(除外した系統を除く)。減便前の trips の並び */
+  const sources: GtfsRow[] = []
+  for (const row of tripRows) {
+    const id = trimmed(row.trip_id)
+    if (!tripById.has(id)) tripById.set(id, row)
+    const sid = trimmed(row.service_id)
+    const into = intoOf.get(sid)
+    if (!weekdaySet.has(sid) && into === undefined) continue
+    let list = rowsByService.get(sid)
+    if (!list) rowsByService.set(sid, (list = []))
+    list.push(row)
+    if (weekdaySet.has(sid)) weekdayRows.push(row)
+    else if (into !== undefined && !droppedPair(into) && !excluded.has(trimmed(row.route_id))) sources.push(row)
+  }
+  // 組ごと除く平日の service の便は、除外した系統でも出力に入らないので「残した便」に数えない
+  const keptRows = weekdayRows.filter((r) => excluded.has(trimmed(r.route_id)) && !droppedPair(trimmed(r.service_id)))
+
+  // ---- §5.3 平日に戻す便の分類(前から順に、最初に当てはまったもの) ----
+  // 走る日の包含(S2):加わる便(または先に受け付けた便)の service が、戻そうとする便の service の走る日(新しい有効期間の中)を
+  // すべて含むときだけ「すでにある」。同じ service なら常に含む(1組の処理は今と同じ)
+  let dayIndex: Map<string, ServiceDays> | null = null
+  const daysCache = new Map<string, string[]>()
+  const daysOf = (sid: string): string[] => {
+    let days = daysCache.get(sid)
+    if (!days) {
+      dayIndex ??= indexFeedServiceDays(base)
+      const sd = dayIndex.get(sid)
+      const list: string[] = []
+      forEachDay(validity.start, validity.end, (d, w) => {
+        if (runsOn(sd, d, w)) list.push(d)
+      })
+      days = list
+      daysCache.set(sid, days)
+    }
+    return days
+  }
+  const covers = (outer: string, inner: string): boolean => {
+    if (outer === inner) return true
+    const o = new Set(daysOf(outer))
+    return daysOf(inner).every((d) => o.has(d))
+  }
+  /** 署名 → 同じ署名の加わる便(元の trip_id と、加わる先の平日の service)。減便前の trips の並び */
+  const derivedSignatures = new Map<string, { tripId: string; service: string }[]>()
+  for (const row of sources) {
+    const s = signatureOf(row)
+    const entry = { tripId: trimmed(row.trip_id), service: intoOf.get(trimmed(row.service_id)) as string }
+    const list = derivedSignatures.get(s)
+    if (list) list.push(entry)
+    else derivedSignatures.set(s, [entry])
+  }
+  const addBack: Form2Report['addBack'] = {
+    requested: plan.addBackTripIds.length,
+    accepted: [],
+    ignoredExcludedRoute: [],
+    ignoredAlreadyPresent: [],
+    notWeekday: [],
+    notFound: [],
+    duplicate: [],
+  }
+  const alreadyKept: string[] = []
+  const notActive: string[] = []
+  const seen = new Set<string>()
+  const acceptedSignatures = new Map<string, { tripId: string; service: string }[]>()
+  const acceptedIds: string[] = []
+  for (const raw of plan.addBackTripIds) {
+    const id = raw.trim()
+    if (seen.has(id)) {
+      addBack.duplicate.push(id)
+      continue
+    }
+    seen.add(id)
+    const row = tripById.get(id)
+    if (!row) {
+      addBack.notFound.push(id)
+      continue
+    }
+    const sid = trimmed(row.service_id)
+    if (multi && keptServices.has(sid)) {
+      alreadyKept.push(id)
+      continue
+    }
+    if (!weekdaySet.has(sid)) {
+      addBack.notWeekday.push(id)
+      continue
+    }
+    // 組ごと除く平日の service の便は出力に入らない(受け付けると、GTFS に無い便を「平日に戻した」と報告する)。
+    // keepIds・reserved にも入れない。pairs が無いときは平日の service が除かれると checkPolicy が止めるので起きない
+    if (multi && droppedPair(sid)) {
+      notActive.push(id)
+      continue
+    }
+    if (excluded.has(trimmed(row.route_id))) {
+      addBack.ignoredExcludedRoute.push(id)
+      continue
+    }
+    const sig = signatureOf(row)
+    const same =
+      derivedSignatures.get(sig)?.find((e) => covers(e.service, sid)) ?? acceptedSignatures.get(sig)?.find((e) => covers(e.service, sid))
+    if (same !== undefined) {
+      addBack.ignoredAlreadyPresent.push({ tripId: id, sameAs: same.tripId })
+      continue
+    }
+    const list = acceptedSignatures.get(sig)
+    if (list) list.push({ tripId: id, service: sid })
+    else acceptedSignatures.set(sig, [{ tripId: id, service: sid }])
+    acceptedIds.push(id)
+  }
+  addBack.accepted = sortedIds(acceptedIds)
+  addBack.ignoredExcludedRoute.sort(compareStrings)
+  addBack.ignoredAlreadyPresent.sort((a, b) => compareStrings(a.tripId, b.tripId))
+  addBack.notWeekday.sort(compareStrings)
+  addBack.notFound.sort(compareStrings)
+  addBack.duplicate.sort(compareStrings)
+  if (multi) {
+    addBack.alreadyKept = sortedIds(alreadyKept)
+    addBack.notActive = sortedIds(notActive)
+  }
+
+  const keptIds = keptRows.map((r) => trimmed(r.trip_id))
+  const keepIds = new Set([...keptIds, ...acceptedIds])
+  // 組ごと除く平日の service の便は、なくなる便に数えない(走らなくなった service として servicesDropped に出る)
+  const removedRows = weekdayRows.filter((r) => !keepIds.has(trimmed(r.trip_id)) && !droppedPair(trimmed(r.service_id)))
+  const removedIds = removedRows.map((r) => trimmed(r.trip_id))
+
+  // ---- §5.4 加わる便の trip_id ----
+  // 平日の service に無い service のすべての便、残す便、平日に戻す便の trip_id を押さえる。割り当て済みの trip_id は全部の組で1つの集合。
+  // 割り当ての順:組の順、組の中は replacements の順、その中は元の trip_id の昇順
+  const reserved = new Set<string>()
+  for (const row of tripRows) if (!weekdaySet.has(trimmed(row.service_id))) reserved.add(trimmed(row.trip_id))
+  for (const id of keepIds) reserved.add(id)
+  const assigned = new Set<string>()
+  const derived: { from: string; to: string }[] = []
+  const collisions: Form2Report['tripIds']['collisions'] = []
+  const derivedRows: GtfsRow[] = []
+  const sourceOf = new Map<GtfsRow, GtfsRow>()
+  const pairReports: Form2PairReport[] = []
+  let mainRule: { rule: TripIdRule; index: number | null } = { rule: 'append-service', index: null }
+  pairs.forEach((pair, pairIndex) => {
+    const dropped = droppedPair(pair.weekday)
+    const weekdayOfPair = rowsByService.get(pair.weekday) ?? []
+    const replacements: Form2PairReport['replacements'] = []
+    for (const rp of pair.replacements) {
+      const rule = tripIdRuleFor([...weekdayOfPair, ...(rowsByService.get(rp) ?? [])], pair.weekday, rp)
+      if (pairIndex === 0 && replacements.length === 0) mainRule = rule
+      let added = 0
+      if (!dropped) {
+        const ordered = (rowsByService.get(rp) ?? [])
+          .filter((row) => !excluded.has(trimmed(row.route_id)))
+          .map((row) => ({ row, from: trimmed(row.trip_id) }))
+          .sort((a, b) => compareStrings(a.from, b.from))
+        for (const { row: src, from } of ordered) {
+          const candidate = candidateTripId(from, rule, rp, pair.weekday)
+          let to = candidate
+          for (let n = 2; reserved.has(to) || assigned.has(to); n++) to = `${candidate}_${n}`
+          if (to !== candidate) {
+            const other = tripById.get(candidate)
+            collisions.push({ from, candidate, assigned: to, collidedWithService: other ? trimmed(other.service_id) : null })
+          }
+          assigned.add(to)
+          derived.push({ from, to })
+          const row: GtfsRow = { ...src, trip_id: to, service_id: pair.weekday }
+          derivedRows.push(row)
+          sourceOf.set(row, src)
+          added++
+        }
+      }
+      replacements.push({ serviceId: rp, rule: rule.rule, servicePartIndex: rule.index, added })
+    }
+    const removed = removedRows.filter((r) => trimmed(r.service_id) === pair.weekday).length
+    pairReports.push({ weekday: pair.weekday, dropped, removed, replacements })
+  })
+  derived.sort((a, b) => compareStrings(a.from, b.from))
 
   // ---- trips ----
+  const removedSet = new Set(removedIds)
   const keptBase: GtfsRow[] = []
   for (const row of tripRows) {
-    if (trimmed(row.service_id) === wk && !keepIds.has(trimmed(row.trip_id))) continue
+    if (weekdaySet.has(trimmed(row.service_id)) && removedSet.has(trimmed(row.trip_id)) && !keepIds.has(trimmed(row.trip_id))) continue
     keptBase.push(row)
   }
   const droppedTripCounts = new Map<string, number>()
@@ -366,8 +556,8 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   }
 
   // ---- §5.5 stop_times ----
-  // 孤立した行(基準の trips に無い trip_id の行)は、どちらの並びでも出力から除く。残すと、その trip_id が
-  // 写した便の新しい trip_id と同じとき、写した便の停車に混ざる。孤立した行があると並びは 'input' になる
+  // 孤立した行(減便前の trips に無い trip_id の行)は、どちらの並びでも出力から除く。残すと、その trip_id が
+  // 加わる便の新しい trip_id と同じとき、加わる便の停車に混ざる。孤立した行があると並びは 'input' になる
   // ('trips' の並びは trips の便の行だけを出すので、もともと孤立した行を出さない)
   const orphanIds = new Set<string>()
   let orphanRows = 0
@@ -402,7 +592,9 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
     const gone = new Set([...removedIds, ...orphanIds])
     for (const row of keptBase) if (droppedServiceIds.has(trimmed(row.service_id))) gone.add(trimmed(row.trip_id))
     for (const r of stopTimeRows) if (!gone.has(trimmed(r.trip_id))) outStopTimes.push(r)
-    if (!droppedServiceIds.has(wk)) for (const row of derivedRows) copyRows(row, sourceOf.get(row) as GtfsRow, outStopTimes)
+    for (const row of derivedRows) {
+      if (!droppedServiceIds.has(trimmed(row.service_id))) copyRows(row, sourceOf.get(row) as GtfsRow, outStopTimes)
+    }
   }
 
   // ---- §5.7 feed_info ----
@@ -414,16 +606,23 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   if (unknownRoutes.length > 0) {
     warn('unknownExcludedRoute', `除外する系統のうち、routes.txt にない route_id があります(${unknownRoutes.join('、')})。`)
   }
-  // 便があり、新しい有効期間に走るものだけ(期間に走らない夏の平日などは入れ替えなくても差し支えない)
+  // 便があり、新しい有効期間に走るものだけ(期間に走らない夏の平日などは入れ替えなくても差し支えない)。残すと決めた service は除く
   const otherWeekdays = describeServices(base, null).filter(
-    (s) => s.role === 'weekday' && s.serviceId !== wk && s.tripCount > 0 && !droppedServiceIds.has(s.serviceId),
+    (s) =>
+      s.role === 'weekday' &&
+      !weekdaySet.has(s.serviceId) &&
+      !keptServices.has(s.serviceId) &&
+      s.tripCount > 0 &&
+      !droppedServiceIds.has(s.serviceId),
   )
   if (otherWeekdays.length > 0) {
+    const chosen = weekdaySet.size === 1 ? wk : pairs.map((p) => p.weekday).join('・')
     warn(
       'otherWeekdayServices',
-      `平日(月〜金)のダイヤの service がほかにもあります(${otherWeekdays.map((s) => s.serviceId).join('、')})。選んだ ${wk} 以外は入れ替えていません。`,
+      `平日(月〜金)のダイヤの service がほかにもあります(${otherWeekdays.map((s) => s.serviceId).join('、')})。選んだ ${chosen} 以外は入れ替えていません。`,
     )
   }
+  if (multi) multiPairWarnings(pairs, pairReports, keptServices, rowsByService, base, droppedServiceIds, daysOf, warn)
   const withBlock = derivedRows.filter((r) => trimmed(r.block_id) !== '').length
   if (withBlock > 0) {
     warn(
@@ -432,7 +631,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
     )
   }
 
-  // ---- 編集後のフィード(変えない表は同じ参照) ----
+  // ---- 減便後のフィード(変えない表は同じ参照) ----
   const tables = new Map(base.tables)
   tables.set('trips', { ...tripsTable, rows: outTrips })
   if (stopTimesTable) tables.set('stop_times', { ...stopTimesTable, rows: outStopTimes })
@@ -443,8 +642,8 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
     inputValidity: { start: inputValidity.start, end: inputValidity.end },
     validity: { start: validity.start, end: validity.end, days: validity.days },
     tripIds: {
-      rule: servicePartIndex === null ? 'append-service' : 'replace-service-part',
-      servicePartIndex,
+      rule: mainRule.rule,
+      servicePartIndex: mainRule.index,
       derived,
       kept: sortedIds(keptIds),
       addedBack: sortedIds(acceptedIds),
@@ -457,8 +656,64 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
     rowOrder: { trips: tripOrder, stop_times: stopTimesOrder },
     feedVersion: feedInfo.version,
     warnings,
+    ...(multi ? { pairs: pairReports } : {}),
   }
   return { ok: true, result: { feed: { tables, warnings: [] }, plan, report } }
+}
+
+/**
+ * pairs があるときだけの警告(docs/design-service-groups.md §4.3)。
+ * - weekdayServicesKept:残す平日の service のうち、便があり期間に走るもの(走る日の数。10 日以下なら日付)
+ * - weekdayServicesErased:入れ替えに使う service の無い組(なくす service)と、なくなる便の数
+ * - replacementRunsWithWeekday:入れ替えに使う service と、その組の平日の service が、新しい有効期間の同じ日に走る日(5 つまで)
+ */
+function multiPairWarnings(
+  pairs: readonly ServicePair[],
+  pairReports: readonly Form2PairReport[],
+  keptServices: ReadonlySet<string>,
+  rowsByService: ReadonlyMap<string, GtfsRow[]>,
+  base: GtfsFeed,
+  droppedServiceIds: ReadonlySet<string>,
+  daysOf: (sid: string) => string[],
+  warn: (code: string, message: string) => void,
+): void {
+  const tripCounts = new Map<string, number>()
+  for (const t of base.tables.get('trips')?.rows ?? []) {
+    const sid = trimmed(t.service_id)
+    if (keptServices.has(sid)) tripCounts.set(sid, (tripCounts.get(sid) ?? 0) + 1)
+  }
+  const kept = sortedIds(keptServices)
+    .filter((sid) => (tripCounts.get(sid) ?? 0) > 0 && !droppedServiceIds.has(sid))
+    .map((sid) => {
+      const days = daysOf(sid)
+      return `${sid}:${tripCounts.get(sid)} 便、${days.length <= 10 ? shortDates(days, 10) : `${days.length} 日`}`
+    })
+  if (kept.length > 0) {
+    warn(
+      'weekdayServicesKept',
+      `平日のまま残す service は、期間の中も平日のダイヤのまま全便走ります(${kept.join('。')})。`,
+    )
+  }
+  const erased = pairReports.filter((p) => !p.dropped && p.replacements.length === 0).map((p) => `${p.weekday} ${p.removed} 便`)
+  if (erased.length > 0) {
+    warn('weekdayServicesErased', `入れ替えに使うダイヤがないため、期間の間なくす service があります(${erased.join('、')})。`)
+  }
+  const overlaps: string[] = []
+  pairs.forEach((pair, i) => {
+    if (pairReports[i].dropped) return
+    const weekdayDays = new Set(daysOf(pair.weekday))
+    for (const rp of pair.replacements) {
+      if ((rowsByService.get(rp) ?? []).length === 0) continue
+      const both = daysOf(rp).filter((d) => weekdayDays.has(d))
+      if (both.length > 0) overlaps.push(`${rp} と ${pair.weekday}:${shortDates(both)}`)
+    }
+  })
+  if (overlaps.length > 0) {
+    warn(
+      'replacementRunsWithWeekday',
+      `入れ替えに使う service と、便を加える平日の service が同じ日に走ります(${overlaps.join('、')})。その日は、加わる便と入れ替えに使う service の便が同じ時刻に2回走ります。`,
+    )
+  }
 }
 
 // ---- 減便をやめる版(docs/tasks-1103.md T23、取り決め 1104 §12.1-3 の (a)) ----
@@ -468,9 +723,10 @@ export interface RevertOptions extends Form2Options {
   restoreFrom: string
   /**
    * 検証(validateEdit)が「平日ダイヤ」として見る service(祝日・年末年始の確かめに使う)。
-   * 承認した方針があればその service、無ければ推定した平日の service、それも無ければ省く。便の中身には使わない
+   * 承認した方針があればその service、無ければ推定した平日の service、それも無ければ省く。便の中身には使わない。
+   * pairs を渡すと、祝日の確かめをすべての組の平日の service で行う(docs/design-service-groups.md §4.3)
    */
-  services?: Pick<PolicySettings, 'kind' | 'weekdayService' | 'replacementService'>
+  services?: Pick<PolicySettings, 'kind' | 'weekdayService' | 'replacementService'> & Partial<Pick<PolicySettings, 'pairs'>>
 }
 
 /**
@@ -557,6 +813,7 @@ export function applyRevert(base: GtfsFeed, opts: RevertOptions): Form2Outcome {
     replacementService: opts.services?.replacementService.trim() ?? '',
     period: { start: restoreFrom, end: null },
     excludedRoutes: [],
+    ...(opts.services?.pairs !== undefined ? { pairs: pairsOf({ ...opts.services, pairs: opts.services.pairs }) } : {}),
     addBackTripIds: [],
   }
   const report: Form2Report = {

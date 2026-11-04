@@ -1,6 +1,6 @@
 import { activeServiceIds, addDays, isValidGtfsDate, weekdayIndex } from '../calendar'
 import type { Form2Result } from '../edit/form2'
-import { formatDate } from '../edit/ops'
+import { formatDate, pairsOf } from '../edit/ops'
 import { dayNumber, forEachDay, indexFeedServiceDays, runsOn } from '../edit/services'
 import { compareStrings, stopTimesByTrip, tripSignature } from '../edit/signature'
 import type { HolidayList } from '../holidays'
@@ -321,7 +321,14 @@ function calendarIssues(base: GtfsFeed, result: Form2Result, holidays: HolidayLi
   const issues: ValidationIssue[] = []
   const wk = result.plan.weekdayService.trim()
   const { validity, inputValidity } = result.report
-  const sd = indexFeedServiceDays(result.feed).get(wk)
+  const index = indexFeedServiceDays(result.feed)
+  // 平日ダイヤが走る日・weekdayNotRunning・yearEnd は主の組で見る(一部の日だけ走る service で警告があふれないため)。
+  // 祝日の確かめは、すべての組の平日の service で見る(docs/design-service-groups.md §4.6)
+  const sd = index.get(wk)
+  // 組が複数のときは、減便後に便が残る平日の service だけを見る(なくした service の calendar の行は残るが、便は走らない)
+  const allWeekdays = pairsOf(result.plan).map((p) => p.weekday)
+  const withTrips = new Set(rowsOf(result.feed, 'trips').map((t) => trimmed(t.service_id)))
+  const weekdays = allWeekdays.length === 1 ? allWeekdays : allWeekdays.filter((s) => withTrips.has(s))
 
   if (holidays === null) {
     issues.push({ severity: 'info', code: 'holidayListMissing', file: '', message: '祝日一覧を読めないため、祝日の確認をしていません。', count: 0, examples: [] })
@@ -338,9 +345,15 @@ function calendarIssues(base: GtfsFeed, result: Form2Result, holidays: HolidayLi
     }
     // 平日の祝日に、減便後の平日ダイヤが走る日
     const flagged: string[] = []
+    const flaggedServices = new Set<string>()
     forEachDay(validity.start, validity.end, (d, w) => {
-      if (w < 5 && holidays.names.has(d) && runsOn(sd, d, w)) flagged.push(d)
+      if (w >= 5 || !holidays.names.has(d)) return
+      const running = weekdays.filter((s) => runsOn(index.get(s), d, w))
+      if (running.length === 0) return
+      flagged.push(d)
+      for (const s of running) flaggedServices.add(s)
     })
+    const serviceLabel = allWeekdays.length === 1 ? wk : weekdays.filter((s) => flaggedServices.has(s)).join('・')
     if (flagged.length > 0) {
       const flaggedSet = new Set(flagged)
       const others: string[] = []
@@ -354,7 +367,7 @@ function calendarIssues(base: GtfsFeed, result: Form2Result, holidays: HolidayLi
           severity: 'warning',
           code: 'holidayWithoutException',
           file: 'calendar_dates.txt',
-          message: `平日の祝日(${names})に、減便後の平日ダイヤ(${wk})が走ります。入力のほかの祝日には calendar_dates の例外があります(${pattern})。同じ型で例外を足すかを確かめてください。`,
+          message: `平日の祝日(${names})に、減便後の平日ダイヤ(${serviceLabel})が走ります。入力のほかの祝日には calendar_dates の例外があります(${pattern})。同じ型で例外を足すかを確かめてください。`,
           count: flagged.length,
           examples: flagged.slice(0, MAX_EXAMPLES),
         })
@@ -363,7 +376,7 @@ function calendarIssues(base: GtfsFeed, result: Form2Result, holidays: HolidayLi
           severity: 'info',
           code: 'holidayWithoutException',
           file: 'calendar_dates.txt',
-          message: `この GTFS は祝日も平日のダイヤで走る作りです(入力の祝日に calendar_dates の例外がありません)。平日の祝日(${names})も、減便後の平日ダイヤ(${wk})で走ります。`,
+          message: `この GTFS は祝日も平日のダイヤで走る作りです(入力の祝日に calendar_dates の例外がありません)。平日の祝日(${names})も、減便後の平日ダイヤ(${serviceLabel})で走ります。`,
           count: flagged.length,
           examples: flagged.slice(0, MAX_EXAMPLES),
         })

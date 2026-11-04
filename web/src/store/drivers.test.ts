@@ -5,7 +5,8 @@ import { DUTY_DEFAULTS, BOUND_LIMIT_MIN } from '@/gtfs/edit/duties'
 import { feedOf, basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
 import { applyForm2, activeWeekdayServicesOf, type Form2Result } from '@/gtfs/edit/form2'
 import { loadGtfsZip, type GtfsFeed } from '@/gtfs/load'
-import { compareDrivers, useDriversStore, weekdayServicesOfEdit, type DriverInput } from './drivers'
+import { MAX_PLACES } from '@/lib/placesFile'
+import { compareDrivers, defaultPlaceName, dutyKindOf, useDriversStore, weekdayServicesOfEdit, type DriverInput } from './drivers'
 import { useGtfsStore } from './gtfs'
 
 const OPTS = { generatedAt: '202611051200' }
@@ -32,7 +33,7 @@ function inputOf(base: GtfsFeed, result: Form2Result | null, date: string, extra
 }
 
 afterEach(() => {
-  useDriversStore.setState({ shortage: null, params: { ...DUTY_DEFAULTS }, places: [] })
+  useDriversStore.setState({ shortage: null, params: { ...DUTY_DEFAULTS }, places: [], placing: null })
   useGtfsStore.getState().clear()
 })
 
@@ -62,12 +63,62 @@ describe('useDriversStore(欠員・仮定・施設)', () => {
     useGtfsStore.getState().setLoaded({ label: 'a.zip', feed: smallFeed() })
     const s = useDriversStore.getState()
     s.setShortage(20)
-    s.setPlaces([{ kind: 'depot', name: '車庫', lat: 43.76, lon: 142.36 }])
+    s.addPlace({ type: 'garage', name: '車庫', lat: 43.76, lon: 142.36 })
+    s.startPlacing('rest')
     s.setParams({ maxBoundMin: BOUND_LIMIT_MIN.extended })
     useGtfsStore.getState().setLoaded({ label: 'b.zip', feed: smallFeed() })
     expect(useDriversStore.getState().shortage).toBeNull()
     expect(useDriversStore.getState().places).toEqual([])
+    expect(useDriversStore.getState().placing).toBeNull()
     expect(useDriversStore.getState().params.maxBoundMin).toBe(BOUND_LIMIT_MIN.extended)
+  })
+
+  it('場所を足す・名前を変える・消す。種類は推定の種類(営業所・車庫は depot、休憩施設は rest)に対応させる', () => {
+    const s = useDriversStore.getState()
+    s.startPlacing('office')
+    expect(useDriversStore.getState().placing).toBe('office')
+    const office = s.addPlace({ type: 'office', name: ' 営業所 1 ', lat: 43.7712345678, lon: 142.36 })
+    const garage = s.addPlace({ type: 'garage', name: '車庫', lat: 43.8, lon: 142.4 })
+    const rest = s.addPlace({ type: 'rest', name: '休憩所', lat: 43.75, lon: 142.3 })
+    // 置き終えたら、地図で置くのをやめる
+    expect(useDriversStore.getState().placing).toBeNull()
+    expect(useDriversStore.getState().places).toEqual([
+      { id: office, type: 'office', kind: 'depot', name: '営業所 1', lat: 43.771235, lon: 142.36 },
+      { id: garage, type: 'garage', kind: 'depot', name: '車庫', lat: 43.8, lon: 142.4 },
+      { id: rest, type: 'rest', kind: 'rest', name: '休憩所', lat: 43.75, lon: 142.3 },
+    ])
+    expect(dutyKindOf('office')).toBe('depot')
+    // 読めない名前・緯度経度は足さない
+    expect(s.addPlace({ type: 'rest', name: '  ', lat: 43, lon: 142 })).toBeNull()
+    expect(s.addPlace({ type: 'rest', name: 'x', lat: Number.NaN, lon: 142 })).toBeNull()
+    expect(useDriversStore.getState().places).toHaveLength(3)
+    s.renamePlace(garage!, '  旭川車庫 ')
+    s.renamePlace(rest!, '')
+    expect(useDriversStore.getState().places.map((p) => p.name)).toEqual(['営業所 1', '旭川車庫', '休憩所'])
+    s.removePlace(office!)
+    expect(useDriversStore.getState().places.map((p) => p.id)).toEqual([garage, rest])
+    s.startPlacing('rest')
+    s.cancelPlacing()
+    expect(useDriversStore.getState().placing).toBeNull()
+  })
+
+  it('読み込みで一覧を置き換える。上限を超える分は入れない', () => {
+    const s = useDriversStore.getState()
+    s.addPlace({ type: 'office', name: '前の営業所', lat: 43, lon: 142 })
+    s.replacePlaces(Array.from({ length: MAX_PLACES + 2 }, (_, i) => ({ type: 'rest' as const, name: `休憩${i}`, lat: 43, lon: 142 })))
+    const places = useDriversStore.getState().places
+    expect(places).toHaveLength(MAX_PLACES)
+    expect(places[0].name).toBe('休憩0')
+    expect(new Set(places.map((p) => p.id)).size).toBe(MAX_PLACES)
+    // 上限に達したら、地図で置き始めず、足しもしない
+    s.startPlacing('office')
+    expect(useDriversStore.getState().placing).toBeNull()
+    expect(s.addPlace({ type: 'office', name: '営業所', lat: 43, lon: 142 })).toBeNull()
+  })
+
+  it('地図で置いた場所の名前は、使っていない一番小さい番号にする', () => {
+    expect(defaultPlaceName('営業所', [])).toBe('営業所 1')
+    expect(defaultPlaceName('営業所', [{ name: '営業所 1' }, { name: '営業所 3' }])).toBe('営業所 2')
   })
 
   it('GTFS を削除しても(clear)欠員は消える', () => {
@@ -157,6 +208,22 @@ describe('compareDrivers(減便の前後と欠員の比較)', () => {
     const extended = compareDrivers({ ...input(1), params: { ...DUTY_DEFAULTS, maxBoundMin: BOUND_LIMIT_MIN.extended } })
     expect(extended.before.duties.dutyCount).toBe(1)
     expect(extended.verdict).toEqual({ kind: 'short', reduced: 0, shortage: 1, missing: 1 })
+    // 場所を置かなければ、置く前と後の比較は出さない
+    expect(c1.placesEffect).toBeNull()
+    // 停留所から約 50km 離れた車庫を置くと、出庫・入庫の回送(片道 3 時間 15 分)が拘束と運転に加わり、勤務が分かれる
+    const far = [{ id: 'p1', type: 'garage' as const, kind: 'depot' as const, name: '車庫', lat: 44.21, lon: 142.36 }]
+    const placed = compareDrivers({ ...input(1), places: far })
+    expect(placed.placesEffect).toEqual({
+      count: 1,
+      before: { without: 2, with: placed.before.duties.dutyCount },
+      after: { without: 1, with: placed.after!.duties.dutyCount },
+    })
+    expect(placed.before.duties.dutyCount).toBeGreaterThan(2)
+    expect(placed.after!.duties.dutyCount).toBeGreaterThan(1)
+    expect(placed.assumptions.some((line) => line.includes('営業所・車庫(1 か所)'))).toBe(true)
+    // 名前を変えても、推定は計算し直さない(同じ結果を使う)
+    const renamed = compareDrivers({ ...input(1), places: [{ ...far[0], name: '別の名前' }] })
+    expect(renamed.before).toBe(placed.before)
   })
 
   it('比較する日付に平日ダイヤが走らないときは notWeekday で、前後の差は無い', () => {
@@ -229,5 +296,16 @@ describe.skipIf(!existsSync(BEFORE_ZIP) || !existsSync(AFTER_ZIP))('compareDrive
     expect(c.before.duties.dutyCount).toBe(82)
     expect(c.after!.duties.dutyCount).toBe(68)
     expect(c.verdict).toEqual({ kind: 'short', reduced: 14, shortage: 20, missing: 6 })
+  })
+
+  it('営業所を置くと出庫・入庫の回送が加わり、置く前と後の勤務の数を出す', () => {
+    const result = applied(base, basePlan({ weekdayService: '01', replacementService: '03', period: { start: '20261101', end: null } }))
+    // 旭川駅の近く(確かめた営業所の位置ではない。テストのための点)
+    const office = { id: 'p1', type: 'office' as const, kind: 'depot' as const, name: '営業所', lat: 43.763, lon: 142.358 }
+    const c = compareDrivers(inputOf(base, result, WEDNESDAY, { shortage: 20, places: [office] }))
+    expect(c.placesEffect).toMatchObject({ count: 1, before: { without: 82 }, after: { without: 57 } })
+    expect(c.placesEffect!.before.with).toBe(c.before.duties.dutyCount)
+    expect(c.placesEffect!.before.with).toBeGreaterThanOrEqual(82)
+    expect(c.dutyDiff).toBe(c.placesEffect!.before.with - c.placesEffect!.after!.with)
   })
 })

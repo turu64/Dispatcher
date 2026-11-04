@@ -25,6 +25,7 @@ import {
   facilitySymbolParts,
   type FacilitySymbolKind,
 } from './facilitySymbols'
+import PlacesLayer from './PlacesLayer'
 import ReachLayers from './ReachLayers'
 
 /**
@@ -234,6 +235,7 @@ export default function MapOverlays() {
     <>
       <ReachLayers />
       <FacilityLayer visible={current === 'research'} />
+      <PlacesLayer visible={current === 'reach' || current === 'restore'} />
     </>
   )
 }

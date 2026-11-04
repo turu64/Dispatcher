@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import NumberField from '@/components/NumberField'
 import { SELECTED_TOGGLE_CLASS } from '@/components/selectedToggle'
 import { Badge } from '@/components/ui/badge'
@@ -28,11 +28,14 @@ import {
   SHORTAGE_LABEL,
   verdictText,
 } from './driverText'
+import { placesEffectText } from './places'
+import PlacesEditor from './PlacesEditor'
 
 /**
  * 影響(到達圏)の手順の「要る運転士の数(目安)」の欄(指摘 24・18.1、docs/tasks-1105.md の D03)。
  * 比較する日付の、減便前・減便後の便の数・営業運行時間・勤務の数の目安と、入力の運用番号の数(参考)を表で出し、
  * 欠員を入れると、減便で減る勤務の数と比べた目安を出す。仮定は「仮定を変える」の開閉の中で変えられる。
+ * 営業所・車庫・休憩施設は「営業所・車庫・休憩施設を置く」の開閉(PlacesEditor。D05)で置き、置く前と後の勤務の数を表の下に出す。
  * 計算は store/drivers.ts(compareDrivers)
  */
 export default function DriverPanel() {
@@ -49,6 +52,7 @@ export default function DriverPanel() {
       onShortage={(v) => store().setShortage(v)}
       onParams={(patch) => store().setParams(patch)}
       onResetParams={() => store().resetParams()}
+      placesEditor={<PlacesEditor />}
     />
   )
 }
@@ -61,6 +65,7 @@ export function DriverView({
   onShortage,
   onParams,
   onResetParams,
+  placesEditor,
 }: {
   comparison: DriverComparison
   params: DutyParams
@@ -68,6 +73,8 @@ export function DriverView({
   onShortage: (value: number | null) => void
   onParams: (patch: Partial<DutyParams>) => void
   onResetParams: () => void
+  /** 営業所・車庫・休憩施設を置く欄(store を使うので外から渡す) */
+  placesEditor?: ReactNode
 }) {
   const { verdict } = comparison
   const tone =
@@ -85,6 +92,11 @@ export function DriverView({
       <p className="text-xs text-muted-foreground">{DRIVER_PANEL_LEAD}</p>
       <p className="text-xs">比較する日付:{formatDateJa(comparison.date)}</p>
       <DriverTable comparison={comparison} />
+      {comparison.placesEffect && (
+        <p className="text-xs" data-testid="places-effect">
+          {placesEffectText(comparison.placesEffect)}
+        </p>
+      )}
       <ShortageField value={comparison.shortage} onCommit={onShortage} />
       <p className={tone} role="status" data-testid="driver-verdict">
         {verdict.kind === 'short' && <span aria-hidden="true">⚠ </span>}
@@ -96,6 +108,7 @@ export function DriverView({
         ))}
       </ul>
       <AssumptionFields comparison={comparison} params={params} onParams={onParams} onReset={onResetParams} />
+      {placesEditor}
     </section>
   )
 }

@@ -27,6 +27,7 @@ import { useResearchStore, type FacilityState } from '@/store/research'
 import { buildRestoreHintContext } from '@/store/restoreHintContext'
 import { draftActor, proposeAndCommit, replaceClaudeDraftMessage } from './editActions'
 import { AskRestoreButton } from '@/components/chat/AskRestoreButton'
+import { DriverLine } from '@/components/output/DriverSummary'
 import { InlineConfirm, NoteList } from './editParts'
 import {
   ACTOR_LABELS,
@@ -683,6 +684,7 @@ function AddedBackList({
       <h3 className="text-sm font-medium">平日に戻した便({report.accepted.length} 便)</h3>
       {confirm}
       <p className="text-xs">{restoreTotalsText(totals)}</p>
+      <DriverLine />
       <ul className="flex flex-col divide-y rounded-md border text-xs">
         {report.accepted.map((id) => {
           const trip = briefs.get(id)

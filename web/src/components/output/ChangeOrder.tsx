@@ -12,6 +12,7 @@ import { diffOf, draftName, lastVersion, useEditStore, type BaseGtfs } from '@/s
 import { useResearchStore } from '@/store/research'
 import { checkedAtText } from '@/claude/research'
 import { PairList } from '@/components/steps/policy/PairList'
+import DriverSummary from './DriverSummary'
 import MovementQuoteView from './MovementQuote'
 import { PRINT_COLS, splitParts } from './printColumns'
 import {
@@ -434,19 +435,22 @@ function Sheet({
             <p className="text-muted-foreground print:text-black">
               (学)は学校の休業日に運休する便の記号です。<span className="print-hide">{SCHOOL_HOLIDAY_NOTE}</span>
             </p>
-            <div>
-              <p className="font-medium">勤務の確認(運行管理者が乗務割で確かめた項目に印を付ける)</p>
-              <ul className="grid grid-cols-2 gap-x-3">
-                {DUTY_CHECKS.map((c) => (
-                  <CheckItem key={c}>{c}</CheckItem>
-                ))}
-              </ul>
-              <p className="print-hide text-muted-foreground">{RESTORE_DUTY_NOTE}</p>
-              <p>
-                確認者:<Blank width="w-32" /> 確認日:<Blank width="w-24" />
-              </p>
-            </div>
           </>
+        )}
+        <DriverSummary base={base.feed} version={version} date={compareDate} />
+        {trips.length > 0 && (
+          <div>
+            <p className="font-medium">勤務の確認(運行管理者が乗務割で確かめた項目に印を付ける)</p>
+            <ul className="grid grid-cols-2 gap-x-3">
+              {DUTY_CHECKS.map((c) => (
+                <CheckItem key={c}>{c}</CheckItem>
+              ))}
+            </ul>
+            <p className="print-hide text-muted-foreground">{RESTORE_DUTY_NOTE}</p>
+            <p>
+              確認者:<Blank width="w-32" /> 確認日:<Blank width="w-24" />
+            </p>
+          </div>
         )}
       </Section>
 

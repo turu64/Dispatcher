@@ -9,7 +9,10 @@ import type { GtfsFeed } from '@/gtfs/load'
 import type { EditOp } from '@/gtfs/edit/ops'
 import { buildRestoreHintContext } from '@/store/restoreHintContext'
 import { useChatStore } from '@/store/chat'
-import { useEditStore } from '@/store/edit'
+import { lastVersion, useEditStore } from '@/store/edit'
+import { DUTY_DEFAULTS } from '@/gtfs/edit/duties'
+import { activeWeekdayServicesOf } from '@/gtfs/edit/form2'
+import { compareDrivers, useDriversStore } from '@/store/drivers'
 import { useReachStore } from '@/store/reach'
 import RestoreStep from './RestoreStep'
 
@@ -306,6 +309,56 @@ describe('RestoreStep', () => {
     expect(line('R3_0730_WK')).toMatch(/理由:通学\(利用者、[^)]*\)・休校日運休\(学\)/)
     expect(line('R2_0900_WK')).not.toContain('休校日運休')
     expect(screen.queryByRole('region', { name: '選んだ便' })).toBeNull()
+  })
+
+  it('平日に戻した便の合計の文の下に、勤務の数の目安の今の値と欠員との比較を1行出し、便を戻すたびに書き直す(D04)', () => {
+    const base = useEditStore.getState().base!.feed
+    const period = { start: '20261001', end: '20261130' }
+    const expected = () => {
+      const version = lastVersion(useEditStore.getState())!
+      const c = compareDrivers({
+        base,
+        edited: { feed: version.feed, draft: false },
+        date: '20261104',
+        weekdayServices: activeWeekdayServicesOf(version),
+        params: { ...DUTY_DEFAULTS },
+        places: [],
+        shortage: 20,
+      })
+      return `勤務の数(目安):減便前 ${c.before.duties.dutyCount} → 減便後 ${c.after!.duties.dutyCount}`
+    }
+    // 到達圏の store に減便前・承認済みの減便後・比較する日付(平日)を入れる。便を戻すと store/edit が setEdited で減便後を差し替える
+    act(() => {
+      useReachStore.setState({
+        source: { feed: base, stops: [], period },
+        edited: { feed: lastVersion(useEditStore.getState())!.feed, period, draft: false },
+        date: '20261104',
+      })
+      useDriversStore.getState().setShortage(20)
+    })
+    try {
+      render(<RestoreStep />)
+      // まだ便を戻していなければ、合計の文と同じく出さない
+      expect(screen.queryByTestId('driver-line')).toBeNull()
+
+      fireEvent.click(candidateBoxes().find((b) => idOf(b) === 'R3_0730_WK')!)
+      fireEvent.click(screen.getByRole('button', { name: '選んだ 1 便を平日に戻す' }))
+      const added = () => within(screen.getByRole('region', { name: '平日に戻した便' }))
+      const line = () => added().getByTestId('driver-line').textContent ?? ''
+      expect(line()).toContain(expected())
+      expect(line()).toContain('2026年11月4日(水)')
+      expect(line()).toMatch(/欠員 20 → (足りる目安です|あと \d+ 足りない目安です)。$/)
+
+      fireEvent.click(candidateBoxes().find((b) => idOf(b) === 'R2_0900_WK')!)
+      fireEvent.click(screen.getByRole('button', { name: '選んだ 1 便を平日に戻す' }))
+      expect(useEditStore.getState().versions.length).toBeGreaterThan(2)
+      expect(line()).toContain(expected())
+    } finally {
+      act(() => {
+        useReachStore.setState({ source: null, edited: null })
+        useDriversStore.setState({ shortage: null })
+      })
+    }
   })
 
   it('選んだ便は「外す」で選ぶのをやめられ、(学)の印も消える', () => {

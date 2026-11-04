@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { applyForm2 } from '@/gtfs/edit/form2'
+import { activeWeekdayServicesOf, applyForm2 } from '@/gtfs/edit/form2'
 import { basePlan, smallFeed, withRows } from '@/gtfs/edit/form2.fixture'
 import type { GtfsFeed } from '@/gtfs/load'
 import type { EditOp } from '@/gtfs/edit/ops'
@@ -10,6 +10,10 @@ import { lastVersion, useEditStore } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { useReachStore } from '@/store/reach'
 import { useResearchStore } from '@/store/research'
+import { compareDrivers, useDriversStore } from '@/store/drivers'
+import { DUTY_DEFAULTS } from '@/gtfs/edit/duties'
+import { pickNoticeDate } from '@/gtfs/edit/notice'
+import { formatDateJa } from '@/lib/dates'
 import type { ResearchResult } from '@/claude/research'
 import ChangeOrder from './ChangeOrder'
 
@@ -44,6 +48,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   act(() => useResearchStore.getState().reset())
+  act(() => useDriversStore.setState({ shortage: null, params: { ...DUTY_DEFAULTS }, places: [] }))
   act(() => useEditStore.getState().setBase(null))
   act(() => useReachStore.setState({ date: null }))
   vi.useRealTimers()
@@ -152,6 +157,54 @@ describe('ChangeOrder', () => {
     expect(protectedSection.getByText('確認者:', { exact: false })).toBeTruthy()
     // 足し戻しの承認の回数
     expect(within(section('2. 減便の方針と承認')).getByText('便を平日に戻す承認:').nextElementSibling?.textContent).toContain('1 回')
+  })
+
+  it('4. の欄に、要る運転士の数(目安)を承認済みの最後の版と期間の中の平日で比べて出す。平日に戻した便が無くても出し、下書きは反映しない(D04)', () => {
+    commit(policy({ category: 'temporaryShortage', note: '' }))
+    act(() => useDriversStore.getState().setShortage(30))
+    const base = useEditStore.getState().base!
+    const expectedRow = () => {
+      const version = lastVersion(useEditStore.getState())!
+      const date = pickNoticeDate(base.feed, version)!
+      const c = compareDrivers({
+        base: base.feed,
+        edited: { feed: version.feed, draft: false },
+        date,
+        weekdayServices: activeWeekdayServicesOf(version),
+        params: { ...DUTY_DEFAULTS },
+        places: [],
+        shortage: 30,
+      })
+      return { date, c, row: `勤務の数(目安)${c.before.duties.dutyCount}${c.after!.duties.dutyCount}` }
+    }
+    const summaryRow = () =>
+      within(within(section('4. 平日に戻した便')).getByTestId('driver-summary'))
+        .getAllByRole('row')
+        .find((r) => r.textContent?.startsWith('勤務の数(目安)'))?.textContent ?? ''
+
+    const first = expectedRow()
+    expect(first.c.weekday).toBe(true)
+    render(<ChangeOrder />)
+    const protectedSection = within(section('4. 平日に戻した便'))
+    expect(protectedSection.getByText('平日に戻した便はありません。')).toBeTruthy()
+    const summary = protectedSection.getByTestId('driver-summary')
+    expect(summary.className).toContain('break-inside-avoid')
+    expect(summary.textContent).toContain(`(${formatDateJa(first.date)}の便で比べた数)`)
+    expect(summaryRow().startsWith(first.row)).toBe(true)
+    expect(within(summary).getByTestId('driver-summary-verdict').textContent).toContain('欠員 30 人:')
+    expect(within(summary).getByRole('list', { name: '要る運転士の数の仮定' }).textContent).toContain('拘束時間は 13 時間以内')
+
+    // 承認待ちの下書きは数に入れない
+    act(() => {
+      useEditStore.getState().propose({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '', schoolDaysOnly: false }] }, 'claude')
+    })
+    expect(summaryRow().startsWith(first.row)).toBe(true)
+    act(() => useEditStore.getState().discard())
+
+    // 便を平日に戻して承認すると、戻した後の版で数え直す。今の「平日に戻した便の営業運行時間」の文は残す
+    commit({ type: 'addBack', items: [{ tripId: 'R3_0730_WK', reason: '通学', schoolDaysOnly: false }] })
+    expect(within(section('4. 平日に戻した便')).getByText(/平日に戻した便 1 便、営業運行時間の合計 0時間20分/)).toBeTruthy()
+    expect(summaryRow().startsWith(expectedRow().row)).toBe(true)
   })
 
   it('系統 × 公示第47号の時間帯の前後の回数を、変わった系統だけ出す。届出の区分は運輸支局に確認する', () => {

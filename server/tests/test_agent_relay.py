@@ -475,6 +475,7 @@ def test_every_session_endpoint_needs_the_token(monkeypatch: pytest.MonkeyPatch,
         assert client.post("/api/claude/session", json={}, headers=bad).status_code == 401
         assert client.get("/api/claude/session/stream", headers=h).status_code == 401
         assert client.post("/api/claude/session/events", json=message(), headers=h).status_code == 401
+        assert client.post("/api/claude/session/research/known", json={"target_ids": ["P29:1"]}, headers=h).status_code == 401
         assert client.delete("/api/claude/session", headers=h).status_code == 401
     assert len(fake.calls_named("sessions.create")) == 1
     assert fake.calls_named("events.send") == []
@@ -1052,7 +1053,7 @@ def test_thirteenth_browser_call_is_refused_with_an_interrupt(monkeypatch: pytes
     assert [event["type"] for event in events] == ["user.custom_tool_result", "user.interrupt"]
     assert events[0]["custom_tool_use_id"] == "sevt_call_13" and events[0]["is_error"] is True
     assert tool_text(events[0])["message"] == "ツールの呼び出しが多すぎるので止めます"
-    assert ("error", {"message": "AI の作業が長くなったので止めました。続けるときは、もう一度送ってください", "code": "too_many_tool_calls"}, None) in frames
+    assert ("error", {"message": "AI がこの相談でツールを 12 回使ったので、ここで止めました。続けるときは「続きを頼む」を押してください", "code": "too_many_tool_calls", "limit": 12}, None) in frames
     assert ("status", {"state": "idle", "reason": "interrupted"}, "sevt_after") in frames
 
 
@@ -1303,10 +1304,11 @@ def test_logs_never_contain_messages_tool_io_handles_session_ids_ips_or_keys(mon
     post_events(client, handle, {"kind": "tool_results", "results": [result("sevt_log", "ツールの結果の秘密")]}, **ip)
     post_events(client, handle, message("発言の秘密", screen="[画面の状態] 画面の秘密"), **ip)
     post_events(client, "v1.bad.handle", message(), **ip)
+    client.post("/api/claude/session/research/known", json={"target_ids": ["P29:対象の秘密"]}, headers=headers(handle, **ip))
     client.delete("/api/claude/session", headers=headers(handle, **ip))
     text = caplog.text
     assert "agent " in text  # ログ自体は出ている
-    for secret in ("ツールの入力の秘密", "返事の秘密", "ツールの結果の秘密", "発言の秘密", "画面の秘密", handle, handle.split(".")[2], SESSION_ID, "203.0.113.77", API_KEY, TOKEN, SECRET):
+    for secret in ("P29:対象の秘密", "ツールの入力の秘密", "返事の秘密", "ツールの結果の秘密", "発言の秘密", "画面の秘密", handle, handle.split(".")[2], SESSION_ID, "203.0.113.77", API_KEY, TOKEN, SECRET):
         assert secret not in text, secret
 
 

@@ -2,7 +2,7 @@
 
 - セッションの状態(答えていないツールの呼び出し・許可の確認・開いている workflow run・最後の idle)は、
   いつでも events.list の履歴から作り直せる(rebuild)。メモリの状態は、その写しと、
-  サーバーが user.interrupt を送ったこと・1回の発言のツールの呼び出しの数だけ
+  サーバーが user.interrupt を送ったこと・1回の発言のツールの呼び出しの数・この発言で止めたかの印だけ
 - ブラウザのストリーム1本につき、Anthropic のストリームを1本開く(open_stream)。つなぐたびに履歴と重ね、
   イベントの id で重なりを除く
 - サーバーが実行するツール(SERVER_TOOLS)と許可の確認(ask)には、イベントが届いた時点で答える(settle)
@@ -69,7 +69,10 @@ MSG_RELOADED = "GTFS が読み込み直されたので止めました"
 DENY_MESSAGE = "確認できる人がいないので、この呼び出しは止めました。ほかの方法で調べてください"
 STOP_RUNS_MESSAGE = "調査の run をすべて止めてください。新しい run は始めないでください。"
 
-ERR_STOPPED_LONG = "AI の作業が長くなったので止めました。続けるときは、もう一度送ってください"
+ERR_STOPPED_LONG = (
+    f"AI がこの相談でツールを {MAX_BROWSER_CALLS_PER_MESSAGE} 回使ったので、ここで止めました。"
+    "続けるときは「続きを頼む」を押してください"
+)
 ERR_RETRIES = "AI の処理が続けられなくなりました。もう一度送ってください"
 ERR_SESSION = "AI の処理でエラーが起きました"
 ERR_UPSTREAM = "AI との接続が切れました。つなぎ直します"
@@ -243,6 +246,9 @@ class SessionState:
     interrupted: bool = False  # サーバーが user.interrupt を送った(次の end_turn の idle を interrupted と知らせる)
     browser_calls: int = 0  # 最後の user.message からの、主のスレッドのブラウザのツールの呼び出しの数
     over_limit: set[str] = field(default_factory=set)  # 13 回目以降(サーバーが is_error で答える)
+    # この発言で止めた(too_many_tool_calls の知らせと user.interrupt を送った)。user.message で戻す。
+    # 13 回目以降の呼び出しが並行で何件届いても、知らせと interrupt は1回の発言につき1回だけ
+    stopped_long: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     conn: Connection | None = None
     last_retrieve: float = 0.0
@@ -294,6 +300,7 @@ class SessionState:
         self.last_stop_reason = None
         self.terminated = False
         self.browser_calls = 0
+        self.stopped_long = False
 
     def observe(self, event: dict[str, Any]) -> None:
         """1つのイベントで状態を進める(履歴とストリームで共通。答えることはしない)。"""
@@ -321,6 +328,7 @@ class SessionState:
         elif kind == "user.message":
             self.browser_calls = 0
             self.over_limit.difference_update(self.answered)
+            self.stopped_long = False
         elif kind == "workflow_run.created":
             run_id = event.get("workflow_run_id")
             if run_id:
@@ -343,14 +351,19 @@ class SessionState:
         self.reset()
         last_interrupt = -1
         last_idle = -1
+        last_message = -1
         for index, event in enumerate(history):
             self.observe(event)
             if event.get("type") == "user.interrupt":
                 last_interrupt = index
             elif event.get("type") == "session.status_idle":
                 last_idle = index
+            elif event.get("type") == "user.message":
+                last_message = index
         # 送った interrupt の後の idle がまだ来ていなければ、その idle を interrupted と知らせる
         self.interrupted = last_interrupt > last_idle
+        # 最後の発言の後に interrupt を送っていれば、この発言ではもう止めている(知らせを出し直さない)
+        self.stopped_long = last_interrupt > last_message
 
 
 _states: dict[str, SessionState] = {}
@@ -428,7 +441,8 @@ async def settle(
     """答えていないサーバー側の呼び出しに答え、答えていない許可の確認に deny を返す(1回の events.send)。
 
     stop_reason_text を渡すと(終えるとき)、ブラウザのツールも含めたすべての呼び出しを、その文の is_error で閉じる。
-    13 回目以降の呼び出しがあれば、結果の後ろに user.interrupt を付ける。interrupt=True でも付ける。
+    13 回目以降の呼び出しには is_error で答え続け、この発言でまだ止めていなければ(stopped_long が立っていなければ)、
+    結果の後ろに user.interrupt を付け、ブラウザに too_many_tool_calls の知らせを1回だけ出す。interrupt=True でも付ける。
     呼ぶ側が state.lock を持っていること。ブラウザに流す SSE の行を返す。
     """
     events: list[dict[str, Any]] = []
@@ -471,11 +485,20 @@ async def settle(
         state.resolved_asks.add(ask["id"])
     if asks:
         logger.info("agent 許可の確認を断りました count=%d row=%s", len(asks), state.row_id)
-    if stop_long or interrupt:
+    # 止めた知らせと interrupt は、この発言で最初の1回だけ(並行の呼び出しが何件届いても1回)
+    notify_long = stop_long and not state.stopped_long
+    was_interrupted = state.interrupted
+    long_frame: str | None = None
+    if notify_long or interrupt:
         events.append(dict(INTERRUPT))
         state.interrupted = True
-    if stop_long:
-        frames.append(sse("error", {"message": ERR_STOPPED_LONG, "code": "too_many_tool_calls"}))
+    if notify_long:
+        state.stopped_long = True
+        long_frame = sse(
+            "error",
+            {"message": ERR_STOPPED_LONG, "code": "too_many_tool_calls", "limit": MAX_BROWSER_CALLS_PER_MESSAGE},
+        )
+        frames.append(long_frame)
         logger.info("agent ツールの呼び出しが多すぎるので止めました row=%s", state.row_id)
     if not events:
         return frames
@@ -489,6 +512,12 @@ async def settle(
         log_upstream_error("events.send(settle)", exc)
         state.answered.difference_update(marked)
         state.resolved_asks.difference_update(ask["id"] for ask in asks)
+        if long_frame is not None:
+            # 止められていないので、印を戻し、知らせも出さない(答え直すときに1回出す)
+            state.stopped_long = False
+            if not interrupt:
+                state.interrupted = was_interrupted
+            frames.remove(long_frame)
     return frames
 
 
@@ -911,6 +940,7 @@ async def send_message(state: SessionState, client: Any, content: list[dict[str,
         state.browser_calls = 0
         state.over_limit.difference_update(state.answered)
         state.interrupted = False
+        state.stopped_long = False
     state.emit(await record_usage(state, client))
 
 

@@ -165,8 +165,8 @@ describe('PolicyStep', () => {
       '変更後のダイヤ',
     ])
     expect(focusables.every((el) => !el.hasAttribute('tabindex') || el.getAttribute('tabindex') === '0')).toBe(true)
-    // 補足の欄は、区分を選ぶまで出さない
-    expect(screen.queryByLabelText('補足')).toBeNull()
+    // 理由の補足(括弧)は、区分を選ぶまで出さない
+    expect(screen.queryByRole('textbox', { name: '減便の理由の補足' })).toBeNull()
   })
 
   it('終了日のセレクトで「終了日」を選ぶと日付の穴が出て、日を選ぶと「までの間」を出す。当面の間に戻すと消す', () => {
@@ -199,28 +199,36 @@ describe('PolicyStep', () => {
     // 入力欄は理由の穴のすぐ後ろ(「のため、」の前)
     expect(other.nextElementSibling?.textContent).toBe('のため、')
     fireEvent.change(other, { target: { value: ' 道路工事による迂回 ' } })
-    // 「その他」では補足の欄を出さない(書いた文がそのまま理由)
-    expect(screen.queryByLabelText('補足')).toBeNull()
+    // 「その他」では括弧の補足を出さない(書いた文がそのまま理由)
+    expect(screen.queryByRole('textbox', { name: '減便の理由の補足' })).toBeNull()
+    expect(sentenceText()).toContain('その他のため、')
     fireEvent.click(screen.getByRole('checkbox', { name: '3(R3)を入れ替えから外す' }))
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
     const op = useEditStore.getState().draft?.kind === 'op' ? useEditStore.getState().draft : null
     expect(op?.kind === 'op' && op.record.op.type === 'applyPolicy' && op.record.op.reason).toEqual({ category: null, note: '道路工事による迂回' })
   })
 
-  it('区分を選ぶと文の下に補足の欄が出て、区分と補足が理由になる。「選ばない」に戻すと理由は空になる', () => {
+  it('区分を選ぶと理由の直後に括弧の補足の欄が出て、区分と補足が理由になる。「選ばない」に戻すと理由は空になる', () => {
     render(<PolicyStep />)
     chooseOption('減便の理由', '運転士の一時的な欠員')
     expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('運転士の一時的な欠員')
-    expect(sentenceText()).toContain('運転士の一時的な欠員のため、')
-    const note = screen.getByLabelText('補足')
-    // 補足は文の外(文の下)
-    expect(sentence().contains(note)).toBe(false)
-    fireEvent.change(note, { target: { value: '欠員 2 名' } })
+    // 「[運転士の一時的な欠員](補足)のため、」。補足の欄は文の中で、理由の穴の直後
+    const note = within(sentence()).getByRole('textbox', { name: '減便の理由の補足' })
+    expect(note.getAttribute('placeholder')).toBe('補足(任意)例:インフルエンザ 20 人')
+    expect(note.className).toContain('field-sizing-content')
+    expect(sentenceText()).toContain('運転士の一時的な欠員()のため、')
+    const focusables = [...sentence().querySelectorAll<HTMLElement>('button, input, [role="combobox"]')].filter(
+      (el) => el.closest('[aria-hidden="true"]') === null,
+    )
+    expect(focusables.slice(0, 2).map((el) => el.getAttribute('aria-label'))).toEqual(['減便の理由', '減便の理由の補足'])
+    // 文の下に別の補足の欄は出さない
+    expect(screen.getAllByRole('textbox', { name: /補足/ })).toEqual([note])
+    fireEvent.change(note, { target: { value: ' インフルエンザ 20 人 ' } })
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
     let draft = useEditStore.getState().draft
     expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({
       category: 'temporaryShortage',
-      note: '欠員 2 名',
+      note: 'インフルエンザ 20 人',
     })
     act(() => useEditStore.getState().discard())
     // 「選ばない」に戻すと、書いた補足が残っていても理由は空(区分もメモも無い)
@@ -403,21 +411,42 @@ describe('PolicyStep', () => {
     expect(screen.getByRole('checkbox', { name: '3(R3)を入れ替えから外す' })).toHaveProperty('checked', true)
   })
 
+  it('AI の方針の下書きの区分と補足は、理由の穴と括弧の中に入って開く', () => {
+    act(() => {
+      const { addBackTripIds: _a, ...settings } = basePlan()
+      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: 'temporaryShortage', note: 'インフルエンザ 20 人' } }, 'claude')
+    })
+    render(<PolicyStep />)
+    fireEvent.click(within(screen.getByRole('region', { name: '対象便の確認' })).getByRole('button', { name: 'やめる' }))
+    expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('運転士の一時的な欠員')
+    expect(within(sentence()).getByRole('textbox', { name: '減便の理由の補足' })).toHaveProperty('value', 'インフルエンザ 20 人')
+    expect(within(sentence()).queryByRole('textbox', { name: '減便の理由(その他)' })).toBeNull()
+    // そのまま確かめると、同じ区分と補足が理由になる
+    fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
+    const draft = useEditStore.getState().draft
+    expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({
+      category: 'temporaryShortage',
+      note: 'インフルエンザ 20 人',
+    })
+  })
+
   it('「その他」の文と区分の補足は別に持ち、理由を切り替えても片方の文をもう片方に持ち越さない', () => {
     render(<PolicyStep />)
     chooseOption('減便の理由', 'その他')
     fireEvent.change(within(sentence()).getByRole('textbox', { name: '減便の理由(その他)' }), { target: { value: '道路工事による迂回' } })
     // その他 → 区分:補足の欄は空
     chooseOption('減便の理由', '需要の減少')
-    expect(screen.getByLabelText('補足')).toHaveProperty('value', '')
+    expect(within(sentence()).getByRole('textbox', { name: '減便の理由の補足' })).toHaveProperty('value', '')
+    expect(within(sentence()).queryByRole('textbox', { name: '減便の理由(その他)' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
     let draft = useEditStore.getState().draft
     expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({ category: 'demandDecline', note: '' })
     act(() => useEditStore.getState().discard())
     // 区分の補足 → その他:その他の欄に補足の文を入れない(前に書いたその他の文に戻る)
-    fireEvent.change(screen.getByLabelText('補足'), { target: { value: '利用者 3 割減' } })
+    fireEvent.change(within(sentence()).getByRole('textbox', { name: '減便の理由の補足' }), { target: { value: '利用者 3 割減' } })
     chooseOption('減便の理由', 'その他')
     expect(within(sentence()).getByRole('textbox', { name: '減便の理由(その他)' })).toHaveProperty('value', '道路工事による迂回')
+    expect(within(sentence()).queryByRole('textbox', { name: '減便の理由の補足' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
     draft = useEditStore.getState().draft
     expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({ category: null, note: '道路工事による迂回' })
@@ -522,10 +551,10 @@ describe('PolicyStep', () => {
       useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: 'chronicShortage', note: '退職 2 名' } }, 'claude')
     })
     fireEvent.click(within(screen.getByRole('region', { name: '対象便の確認' })).getByRole('button', { name: 'やめる' }))
-    // 区分と補足の両方を持つ理由は、区分が穴に、補足が文の下の欄に入る
+    // 区分と補足の両方を持つ理由は、区分が穴に、補足が理由の直後の括弧の欄に入る(文の文字に入力欄の値は含まない)
     expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('運転士の慢性的な不足')
-    expect(screen.getByLabelText('補足')).toHaveProperty('value', '退職 2 名')
-    expect(sentenceText()).toBe('運転士の慢性的な不足のため、11月9日(月)から終了日11月27日(金)までの間、平日を土曜ダイヤに変更する。')
+    expect(within(sentence()).getByRole('textbox', { name: '減便の理由の補足' })).toHaveProperty('value', '退職 2 名')
+    expect(sentenceText()).toBe('運転士の慢性的な不足()のため、11月9日(月)から終了日11月27日(金)までの間、平日を土曜ダイヤに変更する。')
     expect(screen.getByRole('button', { name: '変えずに戻る' })).toBeTruthy()
   })
 
@@ -676,7 +705,7 @@ describe('PolicyStep', () => {
     expect(hole('開始日').getAttribute('aria-label')).toBe('開始日:11月1日(日)')
     expect(endSelect().textContent).toBe('当面の間')
     expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('運転士の一時的な欠員')
-    expect(screen.getByLabelText('補足')).toHaveProperty('value', '欠員 2 名')
+    expect(within(sentence()).getByRole('textbox', { name: '減便の理由の補足' })).toHaveProperty('value', '欠員 2 名')
     fireEvent.click(screen.getByRole('button', { name: '変えずに戻る' }))
     expect(screen.getByRole('region', { name: '承認した減便の方針' })).toBeTruthy()
   })

@@ -97,7 +97,9 @@ describe('ChangeOrder', () => {
     const sheet = within(screen.getByTestId('change-order'))
     const reason = within(section('1. 減便の理由'))
     expect(reason.getByText('運転士の一時的な欠員')).toBeTruthy()
-    expect(reason.getByText('運転士 3 人が病欠')).toBeTruthy()
+    // 減便の文で理由の直後の括弧に書いた補足は、欄の名前「補足」で出す
+    expect(reason.getByText('補足:').nextElementSibling?.textContent).toBe('運転士 3 人が病欠')
+    expect(reason.queryByText('メモ:')).toBeNull()
 
     const policySection = within(section('2. 減便の方針と承認'))
     expect(policySection.getByText('平日を土曜ダイヤに')).toBeTruthy()

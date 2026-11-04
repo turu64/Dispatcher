@@ -250,7 +250,7 @@ function Sheet({
       <Section title="1. 減便の理由">
         <dl className="flex flex-wrap gap-x-4 gap-y-0.5">
           <Field label="区分">{reasonCategoryLabel(reason) ?? '未選択'}</Field>
-          <Field label="メモ">{reason?.note.trim() ? reason.note : '(なし)'}</Field>
+          <Field label="補足">{reason?.note.trim() ? reason.note : '(なし)'}</Field>
         </dl>
         <p className="print-hide text-muted-foreground">
           区分は利用者が選んだ値をそのまま写しています。補助の扱いや届出の要否には、区分によって違いが出ることがあります。

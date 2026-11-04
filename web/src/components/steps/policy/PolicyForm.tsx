@@ -1,9 +1,8 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   checkPolicy,
@@ -105,7 +104,6 @@ export function PolicyForm({
   // 「その他」の文と、区分を選んだときの補足は、意味が違うので別に持つ(区分を切り替えても、片方の文をもう片方に持ち越さない)
   const [otherText, setOtherText] = useState(() => (reasonChoiceOf(initialReason) === 'other' ? (initialReason?.note ?? '') : ''))
   const [note, setNote] = useState(() => (reasonChoiceOf(initialReason) === 'other' ? '' : (initialReason?.note ?? '')))
-  const noteId = useId()
   const [message, setMessage] = useState<string | null>(null)
   // Claude の下書きを捨ててよいかを確かめている間の、その下書きの番号
   const [confirmDraftId, setConfirmDraftId] = useState<string | null>(null)
@@ -287,7 +285,14 @@ export function PolicyForm({
         <legend className="sr-only">減便の内容</legend>
         <p className="text-xs text-muted-foreground">文の枠を押して選びます。減便の理由は任意です。</p>
         <div data-testid="policy-sentence" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-2 text-sm">
-          <ReasonHole choice={reasonChoice} onChoiceChange={setReasonChoice} otherText={otherText} onOtherTextChange={setOtherText} />
+          <ReasonHole
+            choice={reasonChoice}
+            onChoiceChange={setReasonChoice}
+            otherText={otherText}
+            onOtherTextChange={setOtherText}
+            note={note}
+            onNoteChange={setNote}
+          />
           <span>のため、</span>
           <PeriodHoles
             input={input}
@@ -301,26 +306,6 @@ export function PolicyForm({
           />
           <PolicyKindField kind={kind} onChange={setKind} labels={grouped?.status === 'confirmed' ? groupLabels(grouped.byKind, kind, droppedByKind, skippedByKind) : undefined} />
         </div>
-        {reasonChoice !== null && reasonChoice !== 'other' && (
-          <div className="flex flex-col gap-1">
-            <div className="flex flex-wrap items-baseline gap-x-2">
-              <Label htmlFor={noteId} className="text-xs">
-                補足
-              </Label>
-              <span id={`${noteId}-hint`} className="text-xs text-muted-foreground">
-                任意。変更指示書に載せます。
-              </span>
-            </div>
-            <Input
-              id={noteId}
-              aria-describedby={`${noteId}-hint`}
-              className="h-7 max-w-md text-xs md:text-xs"
-              placeholder="例:運転士 2 名の欠員"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </div>
-        )}
       </fieldset>
 
       <section aria-label="確認の結果" className="flex flex-col gap-1.5 rounded-md bg-muted/50 px-2.5 py-2">
@@ -574,7 +559,8 @@ function serviceSummary(hasPeriod: boolean, weekday: string | null, replacement:
 }
 
 /**
- * 減便の文の「[減便の理由] のため、」の穴。選択肢は区分3つと「その他」。「その他」を選ぶと、その場に文字の入力欄が出る。
+ * 減便の文の「[減便の理由] のため、」の穴。選択肢は区分3つと「その他」。「その他」を選ぶと、その場に文字の入力欄が出る
+ * (書いた文が理由そのもので、括弧は出さない)。区分を選ぶと、理由の直後に「(補足)」の入力欄が出る(任意。変更指示書に載せる)。
  * 選んでいない間は、破線の枠に薄く「理由」と出す
  */
 function ReasonHole({
@@ -582,11 +568,15 @@ function ReasonHole({
   onChoiceChange,
   otherText,
   onOtherTextChange,
+  note,
+  onNoteChange,
 }: {
   choice: ReasonChoice | null
   onChoiceChange: (c: ReasonChoice | null) => void
   otherText: string
   onOtherTextChange: (v: string) => void
+  note: string
+  onNoteChange: (v: string) => void
 }) {
   const otherRef = useRef<HTMLInputElement>(null)
   // 「その他」を選んだら、閉じたときに焦点をセレクトに戻さず、文の中に出た入力欄に移す
@@ -630,6 +620,21 @@ function ReasonHole({
           value={otherText}
           onChange={(e) => onOtherTextChange(e.target.value)}
         />
+      )}
+      {choice !== null && choice !== 'other' && (
+        // 括弧と入力欄は折り返しで離さない。括弧は見た目だけ(読み上げは入力欄の名前で足りる)
+        <span className="inline-flex max-w-full min-w-0 items-center gap-0.5">
+          <span aria-hidden="true">(</span>
+          <Input
+            aria-label="減便の理由の補足"
+            // 「その他」の欄と同じく、書いた文の長さに合わせて広げる
+            className="h-7 w-auto min-w-32 max-w-full text-sm field-sizing-content md:text-sm"
+            placeholder="補足(任意)例:インフルエンザ 20 人"
+            value={note}
+            onChange={(e) => onNoteChange(e.target.value)}
+          />
+          <span aria-hidden="true">)</span>
+        </span>
       )}
     </>
   )

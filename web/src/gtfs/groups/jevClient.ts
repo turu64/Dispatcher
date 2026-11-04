@@ -77,8 +77,24 @@ const MESSAGES: Record<JevErrorKind, string> = {
   unavailable: 'この環境では Jev を使えないため、規則だけで分けました。',
 }
 
-function failure(error: JevErrorKind): JevOutcome {
-  return { ok: false, error, message: MESSAGES[error] }
+/** サーバーが入口で断った(上流の Jev には何も送っていない)ときに足す文 */
+export const NOT_SENT_TEXT = 'Jev には送っていません。'
+
+function failure(error: JevErrorKind, notSent = false): JevOutcome {
+  return { ok: false, error, message: notSent ? `${MESSAGES[error]}${NOT_SENT_TEXT}` : MESSAGES[error] }
+}
+
+/** 断った理由のサーバーの文(FastAPI の detail)。日本語の短い文だけを使う */
+async function detailOf(res: { json(): Promise<unknown> }): Promise<string | null> {
+  try {
+    const json = await res.json()
+    if (!isRecord(json) || typeof json.detail !== 'string') return null
+    const text = json.detail.trim()
+    if (text === '' || text.length > 200) return null
+    return text.endsWith('。') ? text : `${text}。`
+  } catch {
+    return null
+  }
 }
 
 const ROLES = new Set<JevRole>(['weekday', 'saturday', 'sundayHoliday'])
@@ -173,11 +189,16 @@ export async function judgeServices(request: JevJudgeRequest, signal?: AbortSign
     return failure(isAbort(e) || signal?.aborted ? 'aborted' : 'network')
   }
   if (!res.ok) {
-    if (res.status === 404) return failure('unavailable')
-    if (res.status === 413) return failure('tooLarge')
-    if (res.status === 422 || res.status === 400) return failure('invalid')
-    if (res.status === 429) return failure('rateLimited')
-    if (res.status === 503) return failure('noKey')
+    // 404・413・422・400・429・503 は、サーバーが入口で断ったもの(上流の Jev には送っていない)
+    if (res.status === 404) return failure('unavailable', true)
+    if (res.status === 413) return failure('tooLarge', true)
+    if (res.status === 422 || res.status === 400) return failure('invalid', true)
+    if (res.status === 429 || res.status === 503) {
+      // 回数・1日の上限・キーが無いは、サーバーの文に「いつ使えるようになるか」があるので、そのまま出す
+      const error: JevErrorKind = res.status === 429 ? 'rateLimited' : 'noKey'
+      const detail = await detailOf(res)
+      return detail === null ? failure(error, true) : { ok: false, error, message: `${detail}${NOT_SENT_TEXT}` }
+    }
     return failure('upstream')
   }
   let json: unknown

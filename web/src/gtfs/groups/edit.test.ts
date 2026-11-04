@@ -124,6 +124,18 @@ describe('食い違いを受け入れる・案に戻す・確定', () => {
     const e = editGroups(merged, { kind: SAT, serviceId: '03001_C', acceptConflict: true })
     expect(row(e, SAT, '03001_C')).toMatchObject({ into: '01001_C', intoMark: 'edited' })
     expect(row(mergeJevAnswers(e, JEV), SAT, '03001_C').intoMark).toBe('edited')
+    // 判断材料には、規則の値のまま進めたこと・規則の理由・Jev の答えを残す
+    const reasons = row(e, SAT, '03001_C').reasons.join('\n')
+    expect(reasons).toContain('利用者が、規則の値(01001_C)のまま進めることにしました。')
+    expect(reasons).toContain('接尾辞が同じ 01001_C に便を入れます。')
+    expect(reasons).toMatch(/Jev は .+ を選びました/)
+  })
+
+  it('別の値に直した行は、規則の理由を出さず、直した値を書く', () => {
+    const e = editGroups(merged, { kind: SAT, serviceId: '03001_C', into: null })
+    const reasons = row(e, SAT, '03001_C').reasons.join('\n')
+    expect(reasons).toContain('利用者が「使わない」にしました。')
+    expect(reasons).not.toContain('接尾辞が同じ')
   })
 
   it('resetToProposal で直しを捨て、規則と Jev の案に戻す(すべての方針の種類で)', () => {

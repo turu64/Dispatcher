@@ -90,6 +90,21 @@ describe('judgeServices', () => {
     if (!out.ok) expect(out.message).not.toBe('')
   })
 
+  it('429・503 はサーバーの文(いつ使えるようになるか)を出し、Jev には送っていないと書く', async () => {
+    const detail = 'Jev に問う回数の上限に達しました(1 時間あたり)。規則だけで分けます。しばらくしてから使えます'
+    const out = await judgeServices(REQUEST, undefined, () => reply(429, { detail }))
+    expect(out).toEqual({ ok: false, error: 'rateLimited', message: `${detail}。Jev には送っていません。` })
+    // 文が無ければ決まった文に、送っていないことを足す
+    const plain = await judgeServices(REQUEST, undefined, () => reply(429, {}))
+    expect(plain).toMatchObject({ ok: false, error: 'rateLimited' })
+    if (!plain.ok) expect(plain.message).toBe('Jev への問い合わせの回数の上限に達したため、規則だけで分けました。Jev には送っていません。')
+    const noKey = await judgeServices(REQUEST, undefined, () => reply(503, { detail: 'サーバーに Jev のキーが設定されていません。' }))
+    if (!noKey.ok) expect(noKey.message).toBe('サーバーに Jev のキーが設定されていません。Jev には送っていません。')
+    // 上流の誤り(送ったかもしれない)には足さない
+    const up = await judgeServices(REQUEST, undefined, () => reply(502, { detail: 'x' }))
+    if (!up.ok) expect(up.message).not.toContain('送っていません')
+  })
+
   it('接続できなければ network', async () => {
     const out = await judgeServices(REQUEST, undefined, () => Promise.reject(new TypeError('Failed to fetch')))
     expect(out).toMatchObject({ ok: false, error: 'network' })

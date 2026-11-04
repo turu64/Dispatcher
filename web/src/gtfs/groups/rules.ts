@@ -158,6 +158,24 @@ function findResult(jev: readonly JevTargetResult[] | null, serviceId: string, r
   return jev?.find((r) => r.serviceId === serviceId && r.role === role) ?? null
 }
 
+/**
+ * Jev が選んだ値(画面の食い違いの行で「Jev:…」と出し、「Jev の値を使う」に使う)。
+ * into:入れ替えに使う service の割り当て(null は「使わない」)。basis:平日だけの service の区分。答えが無い・使えない値なら入れない
+ */
+export function jevChoiceOf(groups: ServiceGroups, kind: PolicyKind, serviceId: string): { into?: string | null; basis?: Basis } {
+  const out: { into?: string | null; basis?: Basis } = {}
+  const rows = groups.byKind[kind].rows
+  const counterpart = findResult(groups.jev, serviceId, replacementRole(kind))?.weekdayCounterpart
+  if (counterpart !== undefined) {
+    if (counterpart.choice === 'none') out.into = null
+    else if (rows.some((r) => r.serviceId === counterpart.choice && r.side === 'weekdayOnly')) out.into = counterpart.choice
+  }
+  const kindAnswer = findResult(groups.jev, serviceId, 'weekday')?.serviceKind
+  const basis = kindAnswer === undefined ? undefined : KIND_TO_BASIS[kindAnswer.choice]
+  if (basis !== undefined) out.basis = basis
+  return out
+}
+
 function fmt(n: number): string {
   return n.toFixed(2)
 }
@@ -216,13 +234,19 @@ function buildKind(features: FeedFeatures, kind: PolicyKind, jev: readonly JevTa
   for (const id of ids) {
     if (ctx.sides.get(id) !== 'replacement') continue
     const rule = ctx.assignments.get(id)!
-    if (edits.into.has(id)) {
-      intoOf.set(id, { into: edits.into.get(id)!, mark: 'edited', jevText: null })
-      continue
-    }
     const answer = findResult(jev, id, role)?.weekdayCounterpart
     const jevValue =
       answer === undefined ? undefined : answer.choice === 'none' ? null : weekdayOnlyIds.has(answer.choice) ? answer.choice : undefined
+    if (edits.into.has(id)) {
+      // 直した行でも、Jev の確信の高い答えは判断材料に残す(食い違いを規則の値のまま受け入れたときに、Jev の答えが消えないように)
+      const value = edits.into.get(id)!
+      const jevText =
+        answer !== undefined && jevValue !== undefined && isConfident(answer)
+          ? `Jev は ${jevValue === null ? '「使わない」' : jevValue} を選びました${choiceText(answer)}。`
+          : null
+      intoOf.set(id, { into: value, mark: 'edited', jevText })
+      continue
+    }
     if (answer === undefined || jevValue === undefined) {
       intoOf.set(id, { into: rule.into, mark: rule.how === 'ambiguous' ? 'undecided' : 'rule', jevText: null })
       continue
@@ -308,7 +332,7 @@ function buildKind(features: FeedFeatures, kind: PolicyKind, jev: readonly JevTa
       } else {
         reasons.push('平日のダイヤのまま残します。')
       }
-      if (basisMark === 'edited') reasons.push('利用者が扱いを直しました。')
+      if (basisMark === 'edited') reasons.push(treatment === defaultTreatment ? '利用者が、規則の扱いのまま進めることにしました。' : '利用者が扱いを直しました。')
       if (jevBasisText !== null) reasons.push(jevBasisText)
       const school = answer?.schoolService?.probability
       if (side === 'weekdayOnly' && school !== undefined && school >= JEV_CONFIDENCE.school) {
@@ -319,8 +343,14 @@ function buildKind(features: FeedFeatures, kind: PolicyKind, jev: readonly JevTa
       const v = intoOf.get(id)!
       into = v.into
       intoMark = v.mark
+      // 規則の値のまま直した行(食い違いを受け入れた)は、規則の理由も残す
+      const sameAsRule = v.mark === 'edited' && rule.how !== 'ambiguous' && into === rule.into
       if (v.mark === 'edited') {
-        reasons.push(into === null ? '利用者が「使わない」にしました。' : `利用者が ${into} に便を入れるようにしました。`)
+        if (sameAsRule) reasons.push(`利用者が、規則の値(${into === null ? '「使わない」' : into})のまま進めることにしました。`)
+        else reasons.push(into === null ? '利用者が「使わない」にしました。' : `利用者が ${into} に便を入れるようにしました。`)
+      }
+      if (v.mark === 'edited' && !sameAsRule) {
+        // 規則の理由は今の値と合わないので出さない
       } else if (v.mark === 'jev') {
         // 文は jevText
       } else if (rule.how === 'suffix') {

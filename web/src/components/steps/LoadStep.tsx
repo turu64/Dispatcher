@@ -2,6 +2,8 @@ import { FileArchiveIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import StepSection from '@/components/StepSection'
 import { InlineConfirm } from '@/components/steps/editParts'
+import JevSwitch from '@/components/steps/load/JevSwitch'
+import ServiceGroupsCard from '@/components/steps/load/ServiceGroupsCard'
 import { deleteConfirmMessage } from '@/components/steps/loadText'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -18,7 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { describeServices, feedValidity, type ServiceRole } from '@/gtfs/edit/services'
+import { feedValidity } from '@/gtfs/edit/services'
 import type { GtfsFeed } from '@/gtfs/load'
 import { formatDateJa } from '@/lib/dates'
 import { fetchSampleGtfs, fetchSampleGtfsInfo, type SampleGtfsInfo } from '@/gtfs/sample'
@@ -31,18 +33,9 @@ import { resetAll } from '@/store/reset'
 type SampleState = { status: 'checking' } | { status: 'ready'; info: SampleGtfsInfo } | { status: 'unreachable' }
 
 const MAX_WARNINGS_SHOWN = 10
-const MAX_SERVICES_SHOWN = 12
-
-const ROLE_LABELS: Record<ServiceRole, string> = {
-  weekday: '平日',
-  saturday: '土曜',
-  sunday: '日曜',
-  saturdaySunday: '土日',
-  other: 'その他',
-}
 
 /**
- * 読み込んだ GTFS の版と期間:feed_version、有効期間、service_id ごとの便数。
+ * 読み込んだ GTFS の版と期間:feed_version、有効期間(service_id ごとの便数は、下の「ダイヤのグループ分け」に出す)。
  * 出力の feed_version と有効期間を決める材料なので、読み込んだ直後に見せる。
  * 有効期間は feed_info の値で、無ければ calendar・calendar_dates の端から求める
  */
@@ -51,8 +44,6 @@ function FeedSummary({ feed }: { feed: GtfsFeed }) {
   const version = (info?.feed_version ?? '').trim()
   const validity = feedValidity(feed)
   const fromInfo = (info?.feed_start_date ?? '').trim() !== '' && (info?.feed_end_date ?? '').trim() !== ''
-  const services = describeServices(feed, null)
-  const shown = services.slice(0, MAX_SERVICES_SHOWN)
   return (
     <dl className="flex flex-col gap-0.5 text-sm" aria-label="読み込んだ GTFS の版と期間">
       <div>
@@ -64,24 +55,6 @@ function FeedSummary({ feed }: { feed: GtfsFeed }) {
         <dd className="inline">
           {validity ? `${formatDateJa(validity.start)}〜${formatDateJa(validity.end)}` : '(求められません)'}
           {validity && !fromInfo && '(feed_info にないため、calendar・calendar_dates から求めました)'}
-        </dd>
-      </div>
-      <div>
-        <dt>service_id ごとの便数:</dt>
-        <dd>
-          {services.length === 0 ? (
-            '(service_id がありません)'
-          ) : (
-            <ul className="list-disc pl-5">
-              {shown.map((sv) => (
-                <li key={sv.serviceId}>
-                  <span className="font-mono break-all">{sv.serviceId}</span>({ROLE_LABELS[sv.role]}):
-                  <span className="tabular-nums">{sv.tripCount.toLocaleString('ja-JP')}</span> 便
-                </li>
-              ))}
-              {services.length > shown.length && <li>ほか {services.length - shown.length} 件</li>}
-            </ul>
-          )}
         </dd>
       </div>
     </dl>
@@ -201,6 +174,7 @@ export default function LoadStep() {
   return (
     <>
       <StepSection title="1. GTFS を読み込む">
+        <JevSwitch />
         <input
           ref={fileInput}
           type="file"
@@ -323,6 +297,7 @@ export default function LoadStep() {
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <FeedSummary feed={feed} />
+            <ServiceGroupsCard />
             <Table>
               <TableHeader>
                 <TableRow>

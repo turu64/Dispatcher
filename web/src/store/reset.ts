@@ -5,6 +5,7 @@ import { useMapStore } from './map'
 import { usePriorityStore } from './priority'
 import { REACH_VIEW_DEFAULTS, reachSettingDefaults, useReachStore } from './reach'
 import { useResearchStore } from './research'
+import { useServiceGroupsStore } from './serviceGroups'
 import { useSidePanelStore } from './sidePanel'
 import { useStepStore } from './steps'
 
@@ -29,12 +30,14 @@ export type ResetReason = 'reload' | 'delete'
  *    削除では、下書きの番号も 1 からに戻す(会話の発言も消えるので、前の「下書き #N」と重ならない)
  * 4. store/map:地図の施設の強調
  * 5. store/research:前提情報の手順の施設・事業者・選択・調査の結果・デモの調査結果(reset)
- * 6. store/chat:AI との会話。セッションを終え(DELETE /api/claude/session を keepalive で送る)、発言の一覧を消す(reset)
- * 7. store/steps:開いている手順を先頭(読み込み)に。store/sidePanel:左の欄のタブを「編集」に
- * 8. store/priority:重要拠点の優先順位(削除だけ)
+ * 6. store/serviceGroups:ダイヤのグループ分け(判断材料・案・利用者の直し・確定・Jev の答え)。Jev に送っている問い合わせは中断し、
+ *    届いた答えを捨てる。Jev に送るかのスイッチは、読み込み直しでも削除でも残す(送るのを止めた選択を黙って戻さないため)
+ * 7. store/chat:AI との会話。セッションを終え(DELETE /api/claude/session を keepalive で送る)、発言の一覧を消す(reset)
+ * 8. store/steps:開いている手順を先頭(読み込み)に。store/sidePanel:左の欄のタブを「編集」に
+ * 9. store/priority:重要拠点の優先順位(削除だけ)
  *
  * 見張り:3 の setBase(null) で、store/chat(watchBase。会話を終え、会話があれば RELOAD_NOTICE を出す)・store/steps・
- * store/sidePanel が、1 の clear で store/research が、自分で戻る。ここでも呼ぶのは、戻すものを1か所で読めるようにするため
+ * store/sidePanel が、1 の clear で store/research・store/serviceGroups が、自分で戻る。ここでも呼ぶのは、戻すものを1か所で読めるようにするため
  * (2回呼んでも同じ結果になる。セッションの取っ手は1回目で捨てるので、DELETE は1回だけ)。
  *
  * 読み込み直しでは、利用者の設定(到達圏の条件・重要拠点の優先順位)と下書きの番号は残す(別の GTFS でも同じ条件で比べられるように。
@@ -59,6 +62,8 @@ export function resetAll(reason: ResetReason): void {
   useMapStore.getState().setHighlighted(null)
 
   useResearchStore.getState().reset()
+
+  useServiceGroupsStore.getState().reset()
 
   // 読み込み直しでは、見張り(watchBase)が会話を終えて「読み込み直したため…」の知らせを出している。
   // 削除では知らせも残さず、発言の一覧を空にする(「AI に相談」は読み込む前の案内に戻る)

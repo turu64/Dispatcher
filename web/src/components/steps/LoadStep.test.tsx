@@ -6,6 +6,7 @@ import type { GtfsFeed } from '@/gtfs/load'
 import { useChatStore } from '@/store/chat'
 import { useEditStore } from '@/store/edit'
 import { useGtfsStore } from '@/store/gtfs'
+import { useHolidayStore } from '@/store/holidays'
 import { useReachStore } from '@/store/reach'
 import { useResearchStore } from '@/store/research'
 import { resetAll } from '@/store/reset'
@@ -13,6 +14,11 @@ import { useSidePanelStore } from '@/store/sidePanel'
 import { useStepStore } from '@/store/steps'
 import LoadStep from './LoadStep'
 import { deleteConfirmMessage } from './loadText'
+
+// Radix の Select は jsdom に無い scrollIntoView・ポインターの捕捉を使う
+Element.prototype.scrollIntoView ??= () => {}
+Element.prototype.hasPointerCapture ??= () => false
+Element.prototype.releasePointerCapture ??= () => {}
 
 // 読み込みの手順は、サンプルの有無をサーバーに聞く。既定ではサーバーに届かないものとし、読み込みの試験では mock を差し替える
 const mocks = vi.hoisted(() => ({
@@ -36,6 +42,8 @@ beforeEach(() => {
   mocks.fetchSampleGtfsInfo.mockReset().mockImplementation(() => new Promise(() => {}))
   mocks.fetchSampleGtfs.mockReset().mockImplementation(() => new Promise(() => {}))
   mocks.loadGtfsInWorker.mockReset().mockImplementation(() => new Promise(() => {}))
+  // ダイヤのグループ分けは祝日一覧の状態が決まってから計算する。祝日の無い一覧を読めたことにする
+  useHolidayStore.setState({ holidays: { status: 'ready', list: { names: new Map(), first: '20200101', coveredUntil: '20291231', source: '' } } })
 })
 
 afterEach(() => {
@@ -49,17 +57,28 @@ function show(feed: GtfsFeed) {
 }
 
 describe('LoadStep の版と期間', () => {
-  it('feed_version・有効期間・service_id ごとの便数を出す', () => {
+  it('feed_version・有効期間と、ダイヤのグループ分けの要約を出す。service_id ごとの便数は「表を開く」で出す', () => {
     show(smallFeed())
     const text = screen.getByLabelText('読み込んだ GTFS の版と期間').textContent ?? ''
     expect(text).toContain('feed_version:202609171038')
     expect(text).toContain('有効期間:2026年10月1日(木)〜2026年11月30日(月)')
     expect(text).not.toContain('求めました')
-    expect(text).toContain('WK(平日):')
-    expect(text).toContain('SA(土曜):')
-    expect(text).toContain('SU(日曜):')
+    // 単純な GTFS は1行の要約
+    expect(screen.getByTestId('service-groups-summary').textContent).toBe('平日 WK・土曜 SA・日祝 SU に分かれています(走る日から判定しました)。')
+    expect(screen.queryByRole('table', { name: /ダイヤのグループ分け/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '表を開く' }))
+    const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
     // 平日の便は R1 が 2 便、R2 と R3 が 1 便ずつ
-    expect(text).toContain('WK(平日):4 便')
+    const wk = table.querySelector('[data-service="WK"]')!
+    expect(wk.textContent).toContain('4 便・3 系統')
+    expect(table.querySelector('[data-service="SA"]')!.textContent).toContain('入れ替えに使う')
+
+    // 表で直したら、要約は「走る日から判定しました」と言わず、直した分け方と書く
+    fireEvent.keyDown(within(table).getByRole('combobox', { name: 'SA の便を入れる平日の service' }), { key: 'Enter' })
+    fireEvent.click(screen.getByRole('option', { name: '使わない' }))
+    expect(screen.getByTestId('service-groups-summary').textContent).toBe(
+      '直した分け方:平日 WK・日祝 SU。土曜ダイヤに変えるときは、入れ替えに使う service がないため、WK の便を期間の間なくします。',
+    )
   })
 
   it('feed_info が無ければ calendar から求めたと添え、feed_version は (空)', () => {

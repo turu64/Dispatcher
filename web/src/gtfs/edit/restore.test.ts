@@ -6,7 +6,7 @@ import { servicesFor } from '../calendar'
 import { departureCountsByBand, makeBands } from '../departures'
 import type { GtfsFeed } from '../load'
 import { toStops } from '../parse'
-import { diffWeekdayTrips } from './diff'
+import { diffWeekdayTrips, START_BAND_LABELS, startBandOf } from './diff'
 import { defaultFacilityWindows, facilityWindows } from './facilityHours'
 import { applyForm2 } from './form2'
 import { basePlan, shiftTrip, smallFeed, withRows } from './form2.fixture'
@@ -24,8 +24,8 @@ import {
 import { cellAt, centerAt, DATE, REACH_PARAMS, reachBaseFeed, reachPlan, reachRef, reachSetup, STATION_CELL, STOP_CELLS } from './restore.fixture'
 
 // 小さなフィード(form2.fixture.ts)を「平日を土曜ダイヤに」した版で、消える平日便は R1_0800_WK・R2_0900_WK・R3_0730_WK
-function setup() {
-  const base = smallFeed()
+function setup(feed: GtfsFeed = smallFeed()) {
+  const base = feed
   const plan = basePlan()
   const outcome = applyForm2(base, plan, { generatedAt: '202611041200' })
   if (!outcome.ok) throw new Error(outcome.message)
@@ -39,10 +39,12 @@ function setup() {
 describe('足し戻しの手がかり(restoreHints)', () => {
   it('系統の終発の便と、足し戻さないと帯の便が 0 になる便に印を付ける', () => {
     const { hinter, byId } = setup()
-    // R1 の平日は 07:00 と 08:00。08:00 は終発で、朝(6〜9時)。6〜9時台には写した土曜便が残るので、帯の便は 0 にならない
+    // R1 の平日は 07:00 と 08:00。08:00 は終発で、朝(6〜9時)。6〜9時には写した土曜便が残るので、帯の便は 0 にならない
     expect(hinter(byId.get('R1_0800_WK')!).hints).toEqual(['lastTripOfRoute', 'morning'])
-    // R2 の平日は 09:00 の1本だけ(始発かつ終発)。土曜便は 10:00 なので、6〜9時台(公示第47号)の便が 0 になる。9:00 は朝に入らない
-    expect(hinter(byId.get('R2_0900_WK')!).hints).toEqual(['firstTripOfRoute', 'lastTripOfRoute', 'onlyTripInBand'])
+    // R2 の平日は 09:00 の1本だけ(始発かつ終発)。土曜便は 10:00 で、どちらも 9〜12時(3時間ごと)なので帯の便は 0 にならない
+    // (U05 の前は公示第47号の区分で、09:00 は 6〜9時台、10:00 は 10〜14時台に分かれて onlyTripInBand が付いていた)。
+    // 9:00 は朝に入らない
+    expect(hinter(byId.get('R2_0900_WK')!).hints).toEqual(['firstTripOfRoute', 'lastTripOfRoute'])
     // R3 は平日だけの系統で、入れ替えると全曜日で便がなくなる
     expect(hinter(byId.get('R3_0730_WK')!)).toEqual({
       hints: ['weekdayOnlyRoute', 'routeWouldVanish', 'firstTripOfRoute', 'lastTripOfRoute', 'onlyTripInBand', 'morning'],
@@ -61,7 +63,44 @@ describe('足し戻しの手がかり(restoreHints)', () => {
       .map((trip) => ({ trip, detail: hinter(trip) }))
       .sort(compareByHints)
       .map((c) => c.trip.tripId)
-    expect(sorted).toEqual(['R3_0730_WK', 'R2_0900_WK', 'R1_0800_WK'])
+    // R1_0800_WK と R2_0900_WK は手がかりが2つずつで、始発の早い R1 が先
+    expect(sorted).toEqual(['R3_0730_WK', 'R1_0800_WK', 'R2_0900_WK'])
+  })
+
+  it('onlyTripInBand は始発の時間帯を到達圏と同じ3時間ごと(START_BANDS)で見る。公示第47号の区分では見ない(U05)', () => {
+    // 土曜の R2 を 10:00 → 12:00 にずらすと、平日の 09:00(9〜12時)の時間帯の便が 0 になる
+    const later = setup(shiftTrip(smallFeed(), 'R2_1000_SA', 2 * 3600))
+    expect(later.hinter(later.byId.get('R2_0900_WK')!).hints).toContain('onlyTripInBand')
+    // 11:59 なら同じ 9〜12時なので付かない(時間帯は開始を含み終わりを含まない)
+    const justBefore = setup(shiftTrip(smallFeed(), 'R2_1000_SA', 3600 + 59 * 60))
+    expect(justBefore.hinter(justBefore.byId.get('R2_0900_WK')!).hints).not.toContain('onlyTripInBand')
+    // 公示第47号なら同じ 6〜9時台の 09:40 と 08:50 も、3時間ごとでは 9〜12時と 6〜9時に分かれる
+    const split = setup(shiftTrip(shiftTrip(smallFeed(), 'R2_0900_WK', 40 * 60), 'R2_1000_SA', -70 * 60))
+    expect(split.hinter(split.byId.get('R2_0900_WK')!).hints).toContain('onlyTripInBand')
+  })
+
+  it('evening は始発が 15〜21時(3時間の帯2つ)。21:00 ちょうどは入らない(U05)', () => {
+    const at = (seconds: number) => {
+      // R3_0730_WK(07:30)の時刻をずらして、evening が付くかを見る
+      const { hinter, byId } = setup(shiftTrip(smallFeed(), 'R3_0730_WK', seconds - (7 * 3600 + 30 * 60)))
+      return hinter(byId.get('R3_0730_WK')!).hints.includes('evening')
+    }
+    expect(at(15 * 3600 - 60)).toBe(false)
+    expect(at(15 * 3600)).toBe(true)
+    // 19時台(U05 の前は 15〜19時で入らなかった)
+    expect(at(19 * 3600 + 30 * 60)).toBe(true)
+    expect(at(20 * 3600 + 59 * 60)).toBe(true)
+    expect(at(21 * 3600)).toBe(false)
+  })
+
+  it('始発の時間帯(startBandOf)は3時間ごとで、前後に「6時より前」「24時以降」、時刻が無ければ「時刻なし」', () => {
+    expect(START_BAND_LABELS).toEqual(['6時より前', '6〜9時', '9〜12時', '12〜15時', '15〜18時', '18〜21時', '21〜24時', '24時以降', '時刻なし'])
+    expect(startBandOf(null)).toBe('時刻なし')
+    expect(startBandOf(5 * 3600 + 59 * 60)).toBe('6時より前')
+    expect(startBandOf(6 * 3600)).toBe('6〜9時')
+    expect(startBandOf(9 * 3600 + 59 * 60)).toBe('9〜12時')
+    expect(startBandOf(20 * 3600 + 59 * 60)).toBe('18〜21時')
+    expect(startBandOf(24 * 3600)).toBe('24時以降')
   })
 
   it('手がかりの数が同じなら始発の時刻順にする', () => {

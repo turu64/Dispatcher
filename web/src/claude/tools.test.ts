@@ -451,7 +451,8 @@ describe('search_trips', () => {
     const body = parse(r.content)
     expect(body).toMatchObject({ status: 'ok', scope: 'removed', basis: '承認済みの編集', total: 3, returned: 2, omitted_over_limit: 1 })
     const trips = body.trips as Record<string, unknown>[]
-    expect(trips.map((t) => t.trip_id)).toEqual(['R3_0730_WK', 'R2_0900_WK'])
+    // R1_0800_WK と R2_0900_WK は手がかりが2つずつで、始発の早い R1 が先(U05 で時間帯を3時間ごとにし、R2 の onlyTripInBand が外れた)
+    expect(trips.map((t) => t.trip_id)).toEqual(['R3_0730_WK', 'R1_0800_WK'])
     expect(trips[0]).toEqual({
       feed: 'base',
       trip_id: 'R3_0730_WK',
@@ -887,7 +888,7 @@ describe('search_trips', () => {
     const ids = async (input: Record<string, unknown>) =>
       ((parse((await runTool('search_trips', { ...SEARCH, limit: 50, ...input }, deps)).content).trips as { trip_id: string }[]).map((t) => t.trip_id))
     expect(await ids({ stop_name: '学校' })).toEqual(['R3_0730_WK'])
-    expect(await ids({ route_ids: ['R1', 'R2'] })).toEqual(['R2_0900_WK', 'R1_0800_WK'])
+    expect(await ids({ route_ids: ['R1', 'R2'] })).toEqual(['R1_0800_WK', 'R2_0900_WK'])
     expect(await ids({ depart_from: '07:30', depart_to: '08:00' })).toEqual(['R3_0730_WK'])
     // 写して入る便は feed が edited
     const added = parse((await runTool('search_trips', { ...SEARCH, scope: 'added', limit: 50 }, deps)).content)

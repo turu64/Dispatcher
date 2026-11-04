@@ -174,6 +174,8 @@ describe('ChangeOrder', () => {
     expect(total).toContain('10〜14時台 0 → 1')
     // 届出の区分は判定しない
     expect(notice.getByText(/届出の区分は運輸支局に確認してください/)).toBeTruthy()
+    // この表だけが公示の区分で、ほかの表と地図は3時間ごと(U05)
+    expect(notice.getByText('この表だけは公示の区分(6〜9時台は 6:00〜9:59)で数えます。ほかの表と地図は3時間ごとです。')).toBeTruthy()
     const filing = within(section('5. 届出・公示(手書き)'))
     expect(filing.getByText(/運輸支局に確認し、結果を書いてください/)).toBeTruthy()
     for (const label of ['届出日:', '公示日:', '実施日:', '公示から実施まで 7 日を切るときの理由:']) {

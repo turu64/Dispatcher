@@ -46,7 +46,10 @@ export interface RouteDiff {
   vanishes: boolean
 }
 
-/** 公示第47号の時間帯(旭川など:6〜9時台、10〜14時台、15〜19時台、20時台〜翌5時台) */
+/**
+ * 公示第47号の時間帯(旭川など:6〜9時台、10〜14時台、15〜19時台、20時台〜翌5時台)。届出の目安の表だけが使う
+ * (ほかは3時間ごと。START_BANDS)
+ */
 export interface Notice47BandDiff {
   routeId: string
   routeName: string
@@ -63,8 +66,9 @@ export interface WeekdayDiff {
   /** 両方にある便(残る便。編集後の側) */
   same: TripBrief[]
   byRoute: RouteDiff[]
+  /** 始発の時間帯(3時間ごと。START_BANDS)ごとの前後の便数 */
   byStartBand: { label: string; before: number; after: number; removed: number; added: number }[]
-  /** 系統 × 公示第47号の時間帯の、前後の便数。始発停留所の出発時刻で数える */
+  /** 系統 × 公示第47号の時間帯の、前後の便数。始発停留所の出発時刻で数える。届出の目安の表だけが使う */
   byNotice47Band: Notice47BandDiff[]
   /** 全曜日で便がなくなる系統の数(byRoute の vanishes の数) */
   vanishingRoutes: number
@@ -143,7 +147,13 @@ function compareBriefs(a: TripBrief, b: TripBrief): number {
   return compareStrings(a.routeId, b.routeId) || compareStrings(a.tripId, b.tripId)
 }
 
-const START_BANDS: { label: string; from: number; to: number }[] = [
+/**
+ * 始発の時間帯(3時間ごと。到達圏の時間帯 6〜24時の3時間ごとと同じ区切りで、前後に「6時より前」「24時以降」を足す)。
+ * 時間帯の区切りは、画面と判断材料のすべてでこれにそろえる(docs/tasks-1105.md の U05、指摘17)。
+ * 例外は公示第47号の区分(NOTICE47_BANDS)で、届出の目安の表(減便の方針の表と変更指示書の 3.)だけが使う。
+ * 開始を含み終わりを含まない(時刻は始発停留所の出発)
+ */
+export const START_BANDS: readonly { readonly label: string; readonly from: number; readonly to: number }[] = [
   { label: '6時より前', from: -Infinity, to: 6 },
   { label: '6〜9時', from: 6, to: 9 },
   { label: '9〜12時', from: 9, to: 12 },
@@ -153,17 +163,31 @@ const START_BANDS: { label: string; from: number; to: number }[] = [
   { label: '21〜24時', from: 21, to: 24 },
   { label: '24時以降', from: 24, to: Infinity },
 ]
-const NO_TIME = '時刻なし'
+/** 始発の時刻が読めない便の時間帯の名前 */
+export const START_BAND_NO_TIME = '時刻なし'
+/** 始発の時間帯の名前の並び(START_BANDS の順、最後に「時刻なし」) */
+export const START_BAND_LABELS: readonly string[] = [...START_BANDS.map((b) => b.label), START_BAND_NO_TIME]
 
-function startBandOf(seconds: number | null): string {
-  if (seconds === null) return NO_TIME
+/** 始発の時刻(秒)が入る時間帯(START_BANDS)の名前。時刻が無ければ「時刻なし」 */
+export function startBandOf(seconds: number | null): string {
+  if (seconds === null) return START_BAND_NO_TIME
   const hours = seconds / 3600
-  return START_BANDS.find((b) => hours >= b.from && hours < b.to)?.label ?? NO_TIME
+  return START_BANDS.find((b) => hours >= b.from && hours < b.to)?.label ?? START_BAND_NO_TIME
 }
 
+/**
+ * 公示第47号の時間帯(旭川など)。届出の目安の表(減便の方針の表と変更指示書の 3.)だけが使う例外で、
+ * ほかの表・地図・判断材料は3時間ごと(START_BANDS)で数える(U05)
+ */
 export const NOTICE47_BANDS = ['6〜9時台', '10〜14時台', '15〜19時台', '20時台〜翌5時台'] as const
 
-/** 公示第47号の時間帯。始発停留所の出発時刻の「時」で分ける(24時以降は 20時台〜翌5時台) */
+/** 届出の目安の表(減便の方針の表と変更指示書の 3.)に添える、区切りが違うことの断り(U05) */
+export const NOTICE47_BAND_NOTE = 'この表だけは公示の区分(6〜9時台は 6:00〜9:59)で数えます。ほかの表と地図は3時間ごとです。'
+
+/**
+ * 公示第47号の時間帯。始発停留所の出発時刻の「時」で分ける(6〜9時台は 6:00〜9:59。24時以降は 20時台〜翌5時台)。
+ * 届出の目安の表(byNotice47Band)だけに使う
+ */
 export function notice47BandOf(seconds: number | null): (typeof NOTICE47_BANDS)[number] | null {
   if (seconds === null) return null
   const h = Math.floor(seconds / 3600)
@@ -258,7 +282,7 @@ export function diffWeekdayTrips(
   })
 
   // 始発の時間帯ごと
-  const labels = [...START_BANDS.map((b) => b.label), NO_TIME]
+  const labels = START_BAND_LABELS
   const tally = (list: readonly TripBrief[]) => {
     const counts = new Map<string, number>()
     for (const b of list) {

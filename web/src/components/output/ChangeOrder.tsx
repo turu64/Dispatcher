@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import StepSection from '@/components/StepSection'
 import { Button } from '@/components/ui/button'
-import { createTripBriefer, NOTICE47_BANDS, restoreTotals, type TripBrief } from '@/gtfs/edit/diff'
+import { createTripBriefer, NOTICE47_BAND_NOTE, NOTICE47_BANDS, restoreTotals, type TripBrief } from '@/gtfs/edit/diff'
 import { feedVersionProblem, type Form2Result } from '@/gtfs/edit/form2'
 import { addBackReasons, policyReasonOf, type EditRecord } from '@/gtfs/edit/ops'
 import { stopDiff, type StopDiffResult } from '@/gtfs/edit/stopDiff'
@@ -305,6 +305,7 @@ function Sheet({
       </Section>
 
       <Section title="3. 届出の目安:時間帯ごとの便数(北海道運輸局 公示第47号の区分)">
+        <p>{NOTICE47_BAND_NOTE}</p>
         {changedRoutes.length === 0 ? (
           <p>時間帯ごとの便数が変わる系統はありません。</p>
         ) : (

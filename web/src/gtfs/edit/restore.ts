@@ -5,7 +5,7 @@ import type { GtfsFeed, GtfsRow } from '../load'
 import { NON_NEGATIVE_INTEGER, toStops } from '../parse'
 import { distanceM, meshCenter, type LatLon } from '../../reach/mesh'
 import type { ReachParams, ReachResult } from '../../reach/reach'
-import { createTripBriefer, notice47BandOf, type TripBrief } from './diff'
+import { createTripBriefer, START_BAND_NO_TIME, startBandOf, type TripBrief } from './diff'
 import { formatMinutes, type FacilityHintKind, type FacilityTiming, type FacilityWindow, type FacilityWindows, type LongBreak } from './facilityHours'
 import { pairsOf, weekdayServicesOf, type Form2Plan } from './ops'
 import { compareStrings, sortByStopSequence, stopTimesByTrip } from './signature'
@@ -19,6 +19,9 @@ import { compareStrings, sortByStopSequence, stopTimesByTrip } from './signature
  * 学校・病院の手がかり nearFacility(docs/tasks-1103.md の T19)は、ctx に前提情報の施設(ctx.facilities)があるときだけ出す。
  * 時間帯の窓は施設ごと(HintFacility.windows。調べた受付時間・始業・終業から facilityHours.ts が決め、読めなければ既定。T27)。
  * 時間帯はすべて開始を含み終わりを含まない。
+ * 時間帯の区切りは到達圏の3時間ごとにそろえる(docs/tasks-1105.md の U05、指摘17)。onlyTripInBand は始発の時間帯
+ * (diff.ts の START_BANDS。3時間ごと)、evening は 15〜21時(3時間の帯2つ)、到達圏を使う2つは地図の時間帯の幅
+ * (ctx.bands。3時間ごとか1時間ごと)で数える。公示第47号の区分は使わない(届出の目安の表だけが使う)。
  */
 
 export type RestoreHint =
@@ -30,15 +33,18 @@ export type RestoreHint =
   | 'firstTripOfRoute'
   /** 基準の平日で、その系統の終発の便(足し戻さないと終発が早まる) */
   | 'lastTripOfRoute'
-  /** その系統のその公示第47号の時間帯で、この便を足し戻さないと編集後の便が 0 */
+  /**
+   * その系統のその始発の時間帯(3時間ごと。diff.ts の START_BANDS)で、この便を足し戻さないと編集後の平日の便が 0。
+   * 同じ時間帯のなくなる便が複数あれば、どれにも付く
+   */
   | 'onlyTripInBand'
-  /** 始発が [6:00, 9:00)(通勤・通学) */
+  /** 始発が [6:00, 9:00)(通勤・通学。3時間の帯1つ) */
   | 'morning'
-  /** 始発が [15:00, 19:00)(帰宅) */
+  /** 始発が [15:00, 21:00)(帰宅。3時間の帯2つ。U05 で 19時から 21時に広げた) */
   | 'evening'
-  /** その便の乗れる停留所のどれかで、比較の日付・その時間帯に、編集後の出発が 0 になる(11/5) */
+  /** その便の乗れる停留所のどれかで、比較の日付・その時間帯(地図の時間帯の幅)に、編集後の出発が 0 になる(11/5) */
   | 'onlyServiceAtStop'
-  /** その便の乗れる停留所が、その時間帯に「減便で外れた」セルを、区分のバス停の距離の中に含む(11/5) */
+  /** その便の乗れる停留所が、その時間帯(地図の時間帯の幅)に「減便で外れた」セルを、区分のバス停の距離の中に含む(11/5) */
   | 'restoresLostCells'
   /**
    * 便の停留所の徒歩圏に学校・病院があり、施設ごとの時間帯の窓(学校は始業前・下校、病院は通院の行き・帰り)に
@@ -180,7 +186,10 @@ export interface RestoreHintContext {
   before: DepartureCounts
   /** 編集後の時間帯ごとの出発の数 */
   after: DepartureCounts
-  /** 比較の時間帯(結果の reachable と同じ並び) */
+  /**
+   * 比較の時間帯(結果の reachable と同じ並び)。地図の時間帯の幅(3時間ごとか1時間ごと)に従い、到達圏を使う2つの
+   * 手がかりはこの区切りで数える(U05 の D6)
+   */
   bands: TimeBand[]
   /** 基準の到達圏。セル・区分・推計人口・coverable は、これを使う(編集後と等しい) */
   beforeResult: ReachResult
@@ -206,11 +215,15 @@ export const RESTORE_HINT_LABELS: Record<RestoreHint, string> = {
   lastTripOfRoute: '系統の終発',
   onlyTripInBand: '時間帯で唯一の便',
   morning: '朝(6〜9時)',
-  evening: '夕方(15〜19時)',
+  evening: '夕方・夜(15〜21時)',
   onlyServiceAtStop: '停留所で唯一の便',
   restoresLostCells: '到達圏が戻る',
   nearFacility: '学校・病院の近く',
 }
+
+/** morning・evening の始発の時刻の範囲(時。開始を含み終わりを含まない)。どちらも3時間ごとの時間帯の区切りに合わせる(U05) */
+export const MORNING = { from: 6, to: 9 } as const
+export const EVENING = { from: 15, to: 21 } as const
 
 const HINT_ORDER: RestoreHint[] = [
   'weekdayOnlyRoute',
@@ -475,7 +488,8 @@ function compareNear(a: NearFacility & { raw: number }, b: NearFacility & { raw:
  * ctx を渡すと、到達圏を使う2つ(onlyServiceAtStop・restoresLostCells)も判定する(docs/interfaces-1105.md §7)。
  * - 対象は、feed が base で、ctx.date に基準で走る平日(weekdayServicesOf(plan) のどれか)の便だけ。ほかの便には2つを出さない
  * - weekdayOnlyRoute は、すべての組の入れ替えに使う service の便の系統の和集合で見る
- * - 乗れる行(pickup_type が 1 でなく、最後の行でない)の出発の時刻が入る時間帯で数える(出発が空の行は数えない)。6〜24時の外は数えない
+ * - 乗れる行(pickup_type が 1 でなく、最後の行でない)の出発の時刻が入る時間帯(ctx.bands。地図の時間帯の幅の3時間ごとか
+ *   1時間ごと)で数える(出発が空の行は数えない)。6〜24時の外は数えない
  * - 停留所ごとのまわりの外れたセルは ctx ごとに1回だけ探して覚えておくので、候補の一覧をまとめて調べても速い
  * - ctx は、edited から作った到達圏の比較を渡す(別の版の比較を渡すと、出発の数が合わない)
  *
@@ -506,11 +520,11 @@ export function createRestoreHinter(
   for (const t of edited.tables.get('trips')?.rows ?? []) editedRoutes.add(trimmed(t.route_id))
 
   const baseTimes = firstSecondsByRoute(baseWeekday)
-  // 編集後の平日便の、系統 × 公示第47号の時間帯の便数
+  // 編集後の平日便の、系統 × 始発の時間帯(3時間ごと。START_BANDS)の便数
   const editedBands = new Map<string, number>()
   for (const t of editedWeekday) {
-    const band = notice47BandOf(t.firstSeconds)
-    if (band === null) continue
+    const band = startBandOf(t.firstSeconds)
+    if (band === START_BAND_NO_TIME) continue
     const key = `${t.routeId}\t${band}`
     editedBands.set(key, (editedBands.get(key) ?? 0) + 1)
   }
@@ -658,12 +672,12 @@ export function createRestoreHinter(
       if (trip.firstSeconds === Math.min(...times)) hints.add('firstTripOfRoute')
       if (trip.firstSeconds === Math.max(...times)) hints.add('lastTripOfRoute')
     }
-    const band = notice47BandOf(trip.firstSeconds)
-    if (band !== null && (editedBands.get(`${trip.routeId}\t${band}`) ?? 0) === 0) hints.add('onlyTripInBand')
+    const band = startBandOf(trip.firstSeconds)
+    if (band !== START_BAND_NO_TIME && (editedBands.get(`${trip.routeId}\t${band}`) ?? 0) === 0) hints.add('onlyTripInBand')
     if (trip.firstSeconds !== null) {
       const h = trip.firstSeconds / 3600
-      if (h >= 6 && h < 9) hints.add('morning')
-      if (h >= 15 && h < 19) hints.add('evening')
+      if (h >= MORNING.from && h < MORNING.to) hints.add('morning')
+      if (h >= EVENING.from && h < EVENING.to) hints.add('evening')
     }
     let lostCells: RestoreHintDetail['lostCells'] = null
     if (ctx) {

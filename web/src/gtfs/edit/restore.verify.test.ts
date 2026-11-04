@@ -15,7 +15,7 @@ import { buildRestoreHintContext } from '../../store/restoreHintContext'
 import { feedServicePeriod } from '../calendar'
 import { loadGtfsZip, type GtfsFeed } from '../load'
 import { toStops } from '../parse'
-import { diffWeekdayTrips, type TripBrief } from './diff'
+import { diffWeekdayTrips, notice47BandOf, type TripBrief } from './diff'
 import { applyForm2 } from './form2'
 import type { Form2Plan } from './ops'
 import { createRestoreHinter, type RestoreHintContext, type RestoreHintDetail } from './restore'
@@ -203,6 +203,49 @@ describe.skipIf(!ready)('足し戻しの手がかり(到達圏を使う2つ)を�
         `onlyServiceAtStop ${[...details.values()].filter((d) => d.hints.includes('onlyServiceAtStop')).length} 便`,
     )
   }, 60_000)
+
+  /**
+   * 時刻で決まる判断材料を、到達圏と同じ3時間ごとの区切りにそろえた(U05、指摘17)ことで変わった数。
+   * - onlyTripInBand:21 → 25 便。公示第47号の区分(6〜9時台・10〜14時台・15〜19時台・20時台〜翌5時台)から3時間ごと
+   *   (START_BANDS)にしたため、帯の境目が変わった。
+   *   - 付くようになった 8 便:同じ系統の減便後の便が、公示の区分では同じ帯にあったが3時間ごとでは別の帯になる便
+   *     (例 0908 の 09:00 は、公示では 6〜9時台に減便後の便があったが、9〜12時には無い。0033 の 13:08・13:55 は
+   *     10〜14時台にあった便が 12〜15時には無い)
+   *   - 付かなくなった 4 便:公示の区分では帯に減便後の便が無かったが、3時間ごとの帯にはある便(例 0003 の 09:50 は
+   *     公示では 6〜9時台(9時台を含む)で 0 だったが、9〜12時には減便後の便がある。0006 の 20:19 は 20時台〜翌5時台で
+   *     0 だったが、18〜21時にはある)
+   * - evening:71 → 90 便。始発が 15〜19時から 15〜21時に広げたため、19:00〜20:59 に始発がある 19 便が加わった
+   * 出力 GTFS は変わらない(判断材料は候補の並びと絞り込みだけに使う。form2.verify.test.ts・write.verify.test.ts)
+   */
+  it.skipIf(!matches)('時刻で決まる判断材料(onlyTripInBand・evening)を3時間ごとで数える。U05 の前の区切りとの差(U05)', () => {
+    const ids = (hint: 'onlyTripInBand' | 'evening') => [...details].filter(([, d]) => d.hints.includes(hint)).map(([id]) => id).sort()
+    // U05 の前の定義:onlyTripInBand は公示第47号の区分、evening は始発が 15〜19時
+    const diff = diffWeekdayTrips(base, edited, plan.weekdayService, plan.excludedRoutes)
+    const editedBands = new Set([...diff.same, ...diff.added].map((t) => `${t.routeId}\t${notice47BandOf(t.firstSeconds)}`))
+    const oldOnly = removed
+      .filter((t) => t.firstSeconds !== null && !editedBands.has(`${t.routeId}\t${notice47BandOf(t.firstSeconds)}`))
+      .map((t) => t.tripId)
+      .sort()
+    const startsIn = (t: TripBrief, from: number, to: number) => t.firstSeconds !== null && t.firstSeconds >= from * 3600 && t.firstSeconds < to * 3600
+    const oldEvening = removed.filter((t) => startsIn(t, 15, 19)).length
+
+    const only = ids('onlyTripInBand')
+    expect([oldOnly.length, only.length]).toEqual([21, 25])
+    expect(only.filter((id) => !oldOnly.includes(id))).toEqual([
+      '0013_02_01_01_0840',
+      '0024_03_01_01_1050',
+      '0028_01_01_01_0740',
+      '0033_02_01_01_1308',
+      '0033_03_01_01_1355',
+      '0041_04_01_01_1840',
+      '0908_02_01_01_0900',
+      '0909_03_01_01_1000',
+    ])
+    expect(oldOnly.filter((id) => !only.includes(id))).toEqual(['0003_01_01_01_0950', '0003_02_01_01_1140', '0006_06_01_01_2019', '0910_02_01_01_0925'])
+
+    expect([oldEvening, ids('evening').length]).toEqual([71, 90])
+    expect(removed.filter((t) => startsIn(t, 19, 21))).toHaveLength(19)
+  })
 
   it('到達圏の比較ができていて、ctx がある', () => {
     expect(ctx).not.toBeNull()

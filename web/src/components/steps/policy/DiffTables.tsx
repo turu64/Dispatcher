@@ -1,6 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { NOTICE47_BANDS, type RouteDiff, type TripBrief, type WeekdayDiff } from '@/gtfs/edit/diff'
+import { NOTICE47_BAND_NOTE, NOTICE47_BANDS, type RouteDiff, type TripBrief, type WeekdayDiff } from '@/gtfs/edit/diff'
 import type { Form2Result } from '@/gtfs/edit/form2'
 import { FromTo } from '../editParts'
 import { addBackRejections } from '../editText'
@@ -364,6 +364,7 @@ export function Notice47Table({ diff }: { diff: WeekdayDiff }) {
           </span>
         )}
       </summary>
+      <p className="mt-1 text-muted-foreground">{NOTICE47_BAND_NOTE}</p>
       <p className="mt-1 text-muted-foreground">
         「▼」は、平日の回数が 11〜15 回の系統が 10 回以下になり、公示第46号の表の下限を下回ることを示す目安です。届出の区分は運輸支局に確認してください。
       </p>

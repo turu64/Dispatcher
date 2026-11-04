@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeBands } from '@/gtfs/departures'
 import { basePlan, rowsOf, smallFeed } from '@/gtfs/edit/form2.fixture'
 import { facilityWindows, readLongBreaks } from '@/gtfs/edit/facilityHours'
 import type { HintFacility, NearFacility, RestoreHint, RestoreHintContext, RestoreHintDetail } from '@/gtfs/edit/restore'
@@ -18,7 +19,9 @@ vi.mock('@/reach/workerClient', () => ({ computeReachInWorker: async () => new P
 // 到達圏の前後の比較(ctx)は、この画面では作らない。ctx を渡したときだけ、FAKE_EXTRA の便(既定は R3_0730_WK)に
 // 到達圏を使う2つの手がかりを付ける(手がかりの計算そのものは gtfs/edit/restore.test.ts で確かめている)
 // 比較の日付 2026-11-04(水)は smallFeed の平日(WK)の運行日
-const FAKE_CTX = { fake: true, date: '20261104' } as unknown as RestoreHintContext
+// bands は地図の時間帯の幅(既定の3時間ごと)。FAKE_CTX_1H は1時間ごとに切り替えたとき(U05 の D6)
+const FAKE_CTX = { fake: true, date: '20261104', bands: makeBands(3) } as unknown as RestoreHintContext
+const FAKE_CTX_1H = { fake: true, date: '20261104', bands: makeBands(1) } as unknown as RestoreHintContext
 type FakeExtra = { hints: RestoreHint[]; lostCells: RestoreHintDetail['lostCells']; facilities?: NearFacility[] }
 const REACH_HINTS: RestoreHint[] = ['onlyServiceAtStop', 'restoresLostCells']
 const DEFAULT_EXTRA: Record<string, FakeExtra> = { R3_0730_WK: { hints: REACH_HINTS, lostCells: { cells: 1234, population: 5678.4 } } }
@@ -33,7 +36,7 @@ vi.mock('@/gtfs/edit/restore', async (importOriginal) => {
       return (trip: Parameters<typeof hinter>[0], ctx?: RestoreHintContext) => {
         const detail = hinter(trip)
         const extra = FAKE_EXTRA.current[trip.tripId]
-        if (ctx !== FAKE_CTX || !extra) return detail
+        if ((ctx !== FAKE_CTX && ctx !== FAKE_CTX_1H) || !extra) return detail
         return { hints: [...detail.hints, ...extra.hints], lostCells: extra.lostCells, ...(extra.facilities ? { facilities: extra.facilities } : {}) }
       }
     },
@@ -78,8 +81,10 @@ function routeOrder(): string[] {
 }
 
 /**
- * smallFeed に R1 の便を足したフィード。R1_1130_WK・R1_1200_WK は手がかりの無い消える便
- * (土曜の R1_1100_SA があるので、時間帯で唯一の便にもならない)。R1_1900_WK は系統の終発で、15〜19時台で唯一の便
+ * smallFeed に R1 の便を足したフィード。時間帯は到達圏と同じ3時間ごと(U05)。
+ * R1_1130_WK は手がかりの無い消える便(土曜の R1_1100_SA が同じ 9〜12時にあるので、時間帯の便は 0 にならない)。
+ * R1_1200_WK は 12〜15時の R1 の便が減便後に 0 になる(土曜の 11:00 は 9〜12時。公示第47号の 10〜14時台で数えていた
+ * ときは手がかりが無かった)。R1_1900_WK は系統の終発で、18〜21時の便が 0 になり、夕方・夜(15〜21時)にも入る
  */
 function feedWithMore(): GtfsFeed {
   const feed = smallFeed()
@@ -138,14 +143,16 @@ describe('RestoreStep', () => {
 
   it('候補は消える平日便で、手がかりの多い順に並べ、停留所名・手がかりで絞り込める', () => {
     render(<RestoreStep />)
-    expect(candidateIds()).toEqual(['R3_0730_WK', 'R2_0900_WK', 'R1_0800_WK'])
+    // R1_0800_WK(終発・朝)と R2_0900_WK(始発・終発)は手がかりが2つずつで、始発の早い R1 が先。
+    // R2 の 09:00 は土曜の 10:00 と同じ 9〜12時なので、時間帯の便は 0 にならない(U05。公示第47号では 6〜9時台と 10〜14時台に分かれていた)
+    expect(candidateIds()).toEqual(['R3_0730_WK', 'R1_0800_WK', 'R2_0900_WK'])
     fireEvent.change(screen.getByLabelText('停留所名(一部)'), { target: { value: '学校' } })
     expect(candidateIds()).toEqual(['R3_0730_WK'])
     fireEvent.change(screen.getByLabelText('停留所名(一部)'), { target: { value: '' } })
     fireEvent.change(screen.getByLabelText('判断材料'), { target: { value: 'lastTripOfRoute' } })
-    expect(candidateIds()).toEqual(['R3_0730_WK', 'R2_0900_WK', 'R1_0800_WK'])
+    expect(candidateIds()).toEqual(['R3_0730_WK', 'R1_0800_WK', 'R2_0900_WK'])
     fireEvent.change(screen.getByLabelText('判断材料'), { target: { value: 'onlyTripInBand' } })
-    expect(candidateIds()).toEqual(['R3_0730_WK', 'R2_0900_WK'])
+    expect(candidateIds()).toEqual(['R3_0730_WK'])
     fireEvent.change(screen.getByLabelText('系統'), { target: { value: 'R1' } })
     expect(candidateIds()).toEqual([])
     expect(screen.getByText('当てはまる便がありません。')).toBeTruthy()
@@ -155,8 +162,8 @@ describe('RestoreStep', () => {
     render(<RestoreStep />)
     // 最初は閉じている
     expect(candidateBoxes(false)).toEqual([])
-    // R3 は平日だけの系統で、全曜日で便がなくなる
-    expect(routeOrder()).toEqual(['系統 3', '系統 2', '系統 1'])
+    // R3 は平日だけの系統で、全曜日で便がなくなる。R1 と R2 は手がかりの数が同じで、始発の早い R1 が先
+    expect(routeOrder()).toEqual(['系統 3', '系統 1', '系統 2'])
     const region = (name: string) => within(candidates()).getByRole('region', { name })
     expect(region('系統 3').textContent).toContain('全曜日で便がなくなる')
     expect(region('系統 1').textContent).not.toContain('全曜日で便がなくなる')
@@ -184,21 +191,21 @@ describe('RestoreStep', () => {
     loadFeed(feedWithMore())
     render(<RestoreStep />)
     const r1 = () => within(candidates()).getByRole('region', { name: '系統 1' })
-    expect(r1().textContent).toContain('なくなる便 4 便(判断材料あり 2 便)')
+    expect(r1().textContent).toContain('なくなる便 4 便(判断材料あり 3 便)')
     fireEvent.click(within(r1()).getByRole('button', { expanded: false }))
-    expect(within(r1()).getAllByRole('checkbox').map(idOf)).toEqual(['R1_0800_WK', 'R1_1900_WK'])
-    fireEvent.click(within(r1()).getByRole('button', { name: 'ほかの便を見る(残り 2 便)' }))
+    expect(within(r1()).getAllByRole('checkbox').map(idOf)).toEqual(['R1_0800_WK', 'R1_1200_WK', 'R1_1900_WK'])
+    fireEvent.click(within(r1()).getByRole('button', { name: 'ほかの便を見る(残り 1 便)' }))
     expect(within(r1()).getAllByRole('checkbox').map(idOf)).toEqual(['R1_0800_WK', 'R1_1130_WK', 'R1_1200_WK', 'R1_1900_WK'])
     expect(within(r1()).queryByRole('button', { name: /ほかの便を見る/ })).toBeNull()
   })
 
   it('系統の並びは、手がかりの数、次に外れたセルの人口、次に始発の時刻', () => {
     vi.mocked(buildRestoreHintContext).mockReturnValue(FAKE_CTX)
-    // 到達圏を使う手がかりを足して、R1_0800_WK(元の手がかり2つ)と R2_0900_WK(元の手がかり3つ)をどちらも4つにする
+    // 到達圏を使う手がかりを足して、R1_0800_WK(元の手がかり2つ)と R2_0900_WK(元の手がかり2つ)をどちらも4つにする
     const order = (r1: number, r2: number) => {
       FAKE_EXTRA.current = {
         R1_0800_WK: { hints: REACH_HINTS, lostCells: { cells: 1, population: r1 } },
-        R2_0900_WK: { hints: ['restoresLostCells'], lostCells: { cells: 1, population: r2 } },
+        R2_0900_WK: { hints: REACH_HINTS, lostCells: { cells: 1, population: r2 } },
       }
       const { unmount } = render(<RestoreStep />)
       const routes = routeOrder()
@@ -213,7 +220,7 @@ describe('RestoreStep', () => {
     // 手がかりの数が多い系統は、人口が少なくても先(R2 に手がかりを1つ足して5つにする)
     FAKE_EXTRA.current = {
       R1_0800_WK: { hints: REACH_HINTS, lostCells: { cells: 1, population: 900 } },
-      R2_0900_WK: { hints: REACH_HINTS, lostCells: { cells: 1, population: 10 } },
+      R2_0900_WK: { hints: [...REACH_HINTS, 'nearFacility'], lostCells: { cells: 1, population: 10 } },
     }
     render(<RestoreStep />)
     expect(routeOrder()).toEqual(['系統 3', '系統 2', '系統 1'])
@@ -345,7 +352,8 @@ describe('RestoreStep', () => {
     fireEvent.click(within(screen.getByRole('group', { name: 'AI の下書きを破棄する確認' })).getByRole('button', { name: '破棄して続ける' }))
     expect(useEditStore.getState().draft).toBeNull()
     expect(useEditStore.getState().history).toHaveLength(2)
-    expect(useEditStore.getState().versions.at(-1)?.plan.addBackTripIds).toEqual(['R2_0900_WK'])
+    // 2番目の候補は R1_0800_WK(R3・R1・R2 の順)
+    expect(useEditStore.getState().versions.at(-1)?.plan.addBackTripIds).toEqual(['R1_0800_WK'])
     expect(useEditStore.getState().draftNotices).toEqual([expect.objectContaining({ draftId, result: 'replaced' })])
     expect(screen.getByRole('status').textContent).toContain('1 便を平日に戻しました')
     expect(boxes().every((b) => !b.checked)).toBe(true)
@@ -423,8 +431,27 @@ describe('RestoreStep', () => {
     expect(candidateIds()[0]).toBe('R3_0730_WK')
     fireEvent.change(screen.getByLabelText('判断材料'), { target: { value: 'restoresLostCells' } })
     expect(candidateIds()).toEqual(['R3_0730_WK'])
-    // 比較の日付を注記に出す
-    expect(screen.getByText(/2026年11月4日\(水\)の到達圏の前後の比較から出しています/)).toBeTruthy()
+    // 比較の日付と、数えた時間帯の幅(地図の時間帯の幅)を注記に出す(U05 の D6)
+    expect(screen.getByText(/2026年11月4日\(水\)の到達圏の前後の比較から、地図の時間帯\(今は3時間ごと\)で数えています/)).toBeTruthy()
+  })
+
+  it('地図の時間帯を1時間ごとにすると、到達圏を使う手がかりの注記も1時間ごとと出す(U05 の D6)', () => {
+    vi.mocked(buildRestoreHintContext).mockReturnValue(FAKE_CTX_1H)
+    render(<RestoreStep />)
+    expect(screen.getByText(/地図の時間帯\(今は1時間ごと\)で数えています/)).toBeTruthy()
+    expect(screen.queryByText(/今は3時間ごと/)).toBeNull()
+  })
+
+  it('時刻で決まる判断材料の時間帯は、到達圏と同じ3時間ごとであることを出す。公示第47号の区分は出さない(U05)', () => {
+    render(<RestoreStep />)
+    const note = screen.getByText(/始発の時間帯\(到達圏と同じ3時間ごと/)
+    expect(note.textContent).toContain('「夕方・夜(15〜21時)」')
+    expect(note.textContent).toContain('「朝(6〜9時)」')
+    // 始発の時間帯の絞り込みも3時間ごと(diff.ts の START_BANDS)
+    const bands = [...(screen.getByLabelText('始発の時間帯') as HTMLSelectElement).options].map((o) => o.value)
+    // 候補の始発は 07:30・08:00(6〜9時)と 09:00(9〜12時)
+    expect(bands).toEqual(['', '6〜9時', '9〜12時'])
+    expect(document.body.textContent).not.toContain('時台')
   })
 
   it('到達圏を使う手がかりで絞り込んだまま比較が無くなったら(計算中など)、絞り込みを「すべて」に戻し、出していない理由を出す', () => {

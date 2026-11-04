@@ -4,7 +4,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { createTripBriefer, restoreTotals, type TripBrief } from '@/gtfs/edit/diff'
+import { createTripBriefer, restoreTotals, START_BAND_LABELS, startBandOf, type TripBrief } from '@/gtfs/edit/diff'
 import type { Form2Result } from '@/gtfs/edit/form2'
 import { addBackReasons, planOf, type EditOp, type Form2Plan } from '@/gtfs/edit/ops'
 import {
@@ -41,19 +41,38 @@ import { compareByTime, compareCandidates, groupCandidates, tripEndpoints, type 
 import { AiPicks, FacilityEvidence, SelectedTrips } from './restore/PickLists'
 import { TripLine } from './restore/TripLine'
 
-/** 到達圏を使う2つの手がかりの説明(date は比較の日付 'YYYYMMDD') */
-function reachHintNote(date: string): string {
-  return `「停留所で唯一の便」と「到達圏が戻る」は、${formatDateJa(date)}の到達圏の前後の比較から出しています。「到達圏が戻る」の数は、この便だけを平日に戻したときの値です(ほかの便を平日に戻したときとの重なりは考えていません)。`
+/** 到達圏を使う2つの手がかりの名前(「停留所で唯一の便」と「到達圏が戻る」) */
+const REACH_PAIR = `「${RESTORE_HINT_LABELS.onlyServiceAtStop}」と「${RESTORE_HINT_LABELS.restoresLostCells}」`
+
+/** 到達圏の比較の時間帯の幅(時間)。地図の時間帯の幅(3時間ごとか1時間ごと)に従う */
+function bandWidthHours(ctx: RestoreHintContext): number | null {
+  const b = ctx.bands[0]
+  return b ? b.endHour - b.startHour : null
 }
+
+/**
+ * 到達圏を使う2つの手がかりの説明(D6。U05)。比較の日付と、数えた時間帯の幅(地図の時間帯の幅。今は3時間ごとか1時間ごと)を出す
+ */
+function reachHintNote(ctx: RestoreHintContext): string {
+  const width = bandWidthHours(ctx)
+  const bands = width === null ? '地図の時間帯' : `地図の時間帯(今は${width}時間ごと)`
+  return `${REACH_PAIR}は、${formatDateJa(ctx.date)}の到達圏の前後の比較から、${bands}で数えています。時間帯の幅は地図の下の操作盤で3時間ごと・1時間ごとに切り替えられ、切り替えるとこの2つも数え直します。「${RESTORE_HINT_LABELS.restoresLostCells}」の数は、この便だけを平日に戻したときの値です(ほかの便を平日に戻したときとの重なりは考えていません)。`
+}
+
+/**
+ * 時刻で決まる判断材料の時間帯の説明(U05)。始発の時間帯は到達圏と同じ3時間ごと(始発の時間帯の絞り込みと同じ区切り)で、
+ * 公示第47号の区分(6〜9時台、10〜14時台…)は使わない
+ */
+const BAND_HINT_NOTE = `「${RESTORE_HINT_LABELS.onlyTripInBand}」は、始発の時間帯(到達圏と同じ3時間ごと。6〜9時、9〜12時…。上の「始発の時間帯」の絞り込みと同じ区切り)で、その系統の減便後の平日の便が 0 になる便です。「${RESTORE_HINT_LABELS.morning}」と「${RESTORE_HINT_LABELS.evening}」も始発の時刻で見ます。`
 
 /** 到達圏を使う2つの手がかりを出していない理由 */
 const REACH_HINTS_ABSENT = {
-  error: '到達圏の計算に失敗したため、「停留所で唯一の便」と「到達圏が戻る」は出していません。',
-  draft: '承認待ちの下書きがある間は、「停留所で唯一の便」と「到達圏が戻る」を出しません。地図と到達圏が、下書きの結果になるためです。「承認する」か「やめる」を押すと出します。',
-  computing: '到達圏を計算しているため、「停留所で唯一の便」と「到達圏が戻る」は、計算が終わってから出します。',
-  none: '到達圏の前後の比較ができると、「停留所で唯一の便」と「到達圏が戻る」も出します。',
+  error: `到達圏の計算に失敗したため、${REACH_PAIR}は出していません。`,
+  draft: `承認待ちの下書きがある間は、${REACH_PAIR}を出しません。地図と到達圏が、下書きの結果になるためです。「承認する」か「やめる」を押すと出します。`,
+  computing: `到達圏を計算しているため、${REACH_PAIR}は、計算が終わってから出します。`,
+  none: `到達圏の前後の比較ができると、${REACH_PAIR}も出します。`,
   notRunning: (date: string) =>
-    `比較する日付(${formatDateJa(date)})は平日ダイヤの運行日ではないため、「停留所で唯一の便」と「到達圏が戻る」は出していません。比較する日付を、地図の下の操作盤で平日にすると出します。`,
+    `比較する日付(${formatDateJa(date)})は平日ダイヤの運行日ではないため、${REACH_PAIR}は出していません。比較する日付を、地図の下の操作盤で平日にすると出します。`,
 } as const
 
 /**
@@ -67,7 +86,7 @@ function reachHintStatus(o: {
   draft: boolean
   computing: boolean
 }): { kind: 'note' | 'absent'; text: string } {
-  if (o.ctx) return o.weekdayRuns ? { kind: 'note', text: reachHintNote(o.ctx.date) } : { kind: 'absent', text: REACH_HINTS_ABSENT.notRunning(o.ctx.date) }
+  if (o.ctx) return o.weekdayRuns ? { kind: 'note', text: reachHintNote(o.ctx) } : { kind: 'absent', text: REACH_HINTS_ABSENT.notRunning(o.ctx.date) }
   if (o.error !== null) return { kind: 'absent', text: REACH_HINTS_ABSENT.error }
   if (o.draft) return { kind: 'absent', text: REACH_HINTS_ABSENT.draft }
   if (o.computing) return { kind: 'absent', text: REACH_HINTS_ABSENT.computing }
@@ -142,18 +161,6 @@ export default function RestoreStep() {
   )
 }
 
-/** 始発の時間帯(diffWeekdayTrips の byStartBand と同じ区切り) */
-function startBandOf(seconds: number | null): string {
-  if (seconds === null) return '時刻なし'
-  const h = seconds / 3600
-  if (h < 6) return '6時より前'
-  if (h >= 24) return '24時以降'
-  const from = 6 + Math.floor((h - 6) / 3) * 3
-  return `${from}〜${from + 3}時`
-}
-
-const START_BAND_ORDER = ['6時より前', '6〜9時', '9〜12時', '12〜15時', '15〜18時', '18〜21時', '21〜24時', '24時以降', '時刻なし']
-
 function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Form2Plan; version: Form2Result; draft: Draft | null }) {
   const history = useEditStore((s) => s.history)
   const diff = useMemo(() => diffOf(base.feed, version), [base.feed, version])
@@ -219,7 +226,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   }, [candidates])
   const bands = useMemo(() => {
     const present = new Set(candidates.map((c) => startBandOf(c.trip.firstSeconds)))
-    return START_BAND_ORDER.filter((b) => present.has(b))
+    return START_BAND_LABELS.filter((b) => present.has(b))
   }, [candidates])
   const hintsPresent = useMemo(() => {
     const present = new Set(candidates.flatMap((c) => c.detail.hints))
@@ -411,6 +418,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         onSelect={select}
         aiIds={new Set(aiPicks.map((p) => p.candidate.trip.tripId))}
       />
+      {candidates.length > 0 && <p className="text-xs text-muted-foreground">{BAND_HINT_NOTE}</p>}
       {(reachStatus.kind === 'absent' || hintsPresent.includes('onlyServiceAtStop') || hintsPresent.includes('restoresLostCells')) &&
         candidates.length > 0 && <p className="text-xs text-muted-foreground">{reachStatus.text}</p>}
       {candidates.length > 0 && (

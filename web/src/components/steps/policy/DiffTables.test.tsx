@@ -174,11 +174,17 @@ describe('Notice47Table(届出の目安:時間帯ごとの便数)', () => {
 
   it('第46号の下限の印(▼)の意味と、運輸支局への確認を 1 つの短い文で説明する', () => {
     const { container } = render(<Notice47Table diff={diff} />)
-    const note = container.querySelector('details > p')!
+    const note = [...container.querySelectorAll('details > p')].find((p) => p.textContent?.startsWith('「▼」'))!
     expect(note.textContent).toContain('「▼」は、平日の回数が 11〜15 回の系統が 10 回以下になり、公示第46号の表の下限を下回ることを示す')
     expect(note.textContent).toContain('届出の区分は運輸支局に確認してください')
     // 長い説明にしない(1〜2 行)
     expect((note.textContent ?? '').length).toBeLessThan(120)
+  })
+
+  it('この表だけが公示第47号の区分で、ほかの表と地図は3時間ごとであることを1文で書く(U05)', () => {
+    const { container } = render(<Notice47Table diff={diff} />)
+    const notes = [...container.querySelectorAll('details > p')].map((p) => p.textContent)
+    expect(notes).toContain('この表だけは公示の区分(6〜9時台は 6:00〜9:59)で数えます。ほかの表と地図は3時間ごとです。')
   })
 
   it('既定で折りたたんでいる(開くと表が見える)', () => {

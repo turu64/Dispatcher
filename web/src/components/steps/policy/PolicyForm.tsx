@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -182,6 +183,7 @@ export function PolicyForm({
         return o !== undefined && g !== null && g !== o.guessAtPick && g !== o.value
       }))
   const [detailsOpen, setDetailsOpen] = useState(serviceProblem)
+  const detailsSummaryRef = useRef<HTMLElement>(null)
   const needsDetails = serviceProblem || vanishingRoutes > 0
   // 問題が出たときに一度だけ開く(利用者が閉じたら、問題が消えて出直すまで閉じたままにする)
   const [hadServiceProblem, setHadServiceProblem] = useState(serviceProblem)
@@ -300,8 +302,12 @@ export function PolicyForm({
                 variant="outline"
                 size="xs"
                 onClick={() => {
-                  setDetailsOpen(true)
-                  if (vanishingRoutes > 0) setRoutesOpen(true)
+                  // 押すとこのボタンは消えるので、開いた詳しい設定の見出しへ焦点を移す(焦点を body に落とさない)
+                  flushSync(() => {
+                    setDetailsOpen(true)
+                    if (vanishingRoutes > 0) setRoutesOpen(true)
+                  })
+                  detailsSummaryRef.current?.focus()
                 }}
               >
                 詳しい設定を開く
@@ -318,7 +324,7 @@ export function PolicyForm({
         onToggle={(e) => setDetailsOpen(e.currentTarget.open)}
         data-testid="policy-details"
       >
-        <summary className="cursor-pointer">
+        <summary ref={detailsSummaryRef} className="cursor-pointer">
           詳しい設定(service:{serviceSummary(validity !== null, weekday, replacement, REPLACEMENT_LABELS[kind])}、除外する系統:
           {excluded.length > 0 ? `${excluded.length} 系統` : 'なし'})
         </summary>

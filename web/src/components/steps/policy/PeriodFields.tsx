@@ -46,9 +46,12 @@ export function PolicyKindField({ kind, onChange }: { kind: PolicyKind; onChange
           ))}
         </SelectContent>
       </Select>
-      {/* 狭い欄で「ダイヤに変更する。」がまとめて次の行に送られて前の行の右が大きく空かないよう、折り返せる所で分ける */}
-      <span>ダイヤに</span>
-      <span>変更する。</span>
+      {/* 狭い欄で「ダイヤに変更する。」がまとめて次の行に送られて前の行の右が大きく空かないよう、<wbr> で折り返せる所を作る(1つの span にして、間に空きを出さない) */}
+      <span>
+        ダイヤに
+        <wbr />
+        変更する。
+      </span>
     </>
   )
 }
@@ -301,9 +304,14 @@ export function PeriodHoles(props: PeriodValue) {
           collisionPadding={8}
           // 2か月を並べられる幅にする(狭い画面では画面の幅に収める)。左の欄より広くてよい(地図の上に重なる)
           className="max-h-(--radix-popover-content-available-height) w-[min(36rem,calc(100vw-2rem))] max-w-(--radix-popover-content-available-width) overflow-y-auto"
+          aria-label={target === 'end' ? '減便の期間(終了日を選ぶ)' : '減便の期間(開始日を選ぶ)'}
           onOpenAutoFocus={(e) => {
-            // 最初の焦点は、当面の間のチェックではなく、カレンダーの Tab で入る日(選んでいる日など)に置く
-            const day = boxRef.current?.querySelector<HTMLButtonElement>('td[data-day] button[tabindex="0"]')
+            // 最初の焦点は、当面の間のチェックではなく、カレンダーの日に置く。
+            // 終了日の穴から開いたときは終了日の日(案内「終了日を押してください」と合わせる)、なければ Tab で入る日(選んでいる日など)
+            const box = boxRef.current
+            const day =
+              (target === 'end' ? box?.querySelector<HTMLButtonElement>('td[data-day] button[aria-label*="終了日"]') : null) ??
+              box?.querySelector<HTMLButtonElement>('td[data-day] button[tabindex="0"]')
             if (day) {
               e.preventDefault()
               day.focus()

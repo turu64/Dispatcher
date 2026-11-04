@@ -25,6 +25,7 @@ import { draftName, useEditStore } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { useServiceGroupsStore, type JevInfo } from '@/store/serviceGroups'
 import { SERVICE_GROUPS_ID } from '../stepIds'
+import JevConsentDialog from './JevConsentDialog'
 import {
   attentionCount,
   BASIS_LABELS,
@@ -56,8 +57,10 @@ function focusAfter(action: () => void, id: string) {
   document.getElementById(id)?.focus()
 }
 
-/** Jev の欄の知らせ(role="status")。中断・捨てたあとに焦点を移す先 */
+/** Jev の欄の知らせ(role="status")。中断・捨てたあと・送るかに答えたあとに焦点を移す先 */
 const JEV_STATUS_ID = 'jev-status'
+/** 「Jev に問い合わせる」の下の、送り先の1文 */
+const JEV_ASK_NOTE_ID = 'jev-ask-note'
 /** 確定したあとの「表を開く」 */
 const TABLE_TOGGLE_ID = 'service-groups-table-toggle'
 
@@ -455,19 +458,20 @@ function idsText(ids: readonly string[]): string {
 }
 
 /** Jev の欄(§3.6)。単純な GTFS では出さない */
-function JevPanel({ jev, jevEnabled }: { jev: JevInfo; jevEnabled: boolean }) {
+function JevPanel({ jev }: { jev: JevInfo }) {
   const stopJev = useServiceGroupsStore((s) => s.stopJev)
   const dropJev = useServiceGroupsStore((s) => s.dropJev)
   const askJev = useServiceGroupsStore((s) => s.askJev)
   const busy = jev.state === 'checking' || jev.state === 'sending'
   const answered = jev.state === 'done' || jev.state === 'partial'
-  // 中断した・送らない設定だった・失敗した(回数の上限など)あとは、もう一度頼める
-  const canAsk = (jev.state === 'off' || jev.state === 'stopped' || jev.state === 'failed') && jevEnabled
+  // 送らないと答えた・中断した・失敗した(回数の上限など)あとは、もう一度頼める
+  const canAsk = jev.state === 'off' || jev.state === 'stopped' || jev.state === 'failed'
   const providers = otherProviders(jev.response)
   return (
     <section aria-label="Jev による確かめ" className="flex flex-col gap-1.5 rounded-md border px-3 py-2 text-xs">
       {/* 自動で送ったこと・その結果を、読み上げでも知らせる */}
       <div id={JEV_STATUS_ID} role="status" tabIndex={-1} className="flex flex-col gap-1.5 outline-none">
+        {jev.state === 'awaitingConsent' && <p>Jev に送るかの答えを待っています。</p>}
         {busy && (
           <p className="flex flex-wrap items-center gap-2">
             <Spinner aria-hidden="true" role={undefined} aria-label={undefined} />
@@ -498,11 +502,16 @@ function JevPanel({ jev, jevEnabled }: { jev: JevInfo; jevEnabled: boolean }) {
             </Button>
           )}
           {canAsk && (
-            <Button type="button" size="xs" variant="outline" onClick={() => void askJev()}>
+            <Button type="button" size="xs" variant="outline" aria-describedby={JEV_ASK_NOTE_ID} onClick={() => void askJev()}>
               Jev に問い合わせる
             </Button>
           )}
         </div>
+      )}
+      {canAsk && (
+        <p id={JEV_ASK_NOTE_ID} className="text-muted-foreground">
+          押すと、service ごとの集計を {JEV_DESTINATION}に送ります。
+        </p>
       )}
       {jev.response && <SentInfo response={jev.response} />}
     </section>
@@ -532,7 +541,6 @@ export default function ServiceGroupsCard() {
   const groups = useServiceGroupsStore((s) => s.groups)
   const confirmed = useServiceGroupsStore((s) => s.confirmed)
   const jev = useServiceGroupsStore((s) => s.jev)
-  const jevEnabled = useServiceGroupsStore((s) => s.jevEnabled)
   const confirm = useServiceGroupsStore((s) => s.confirm)
   const approved = useEditStore((s) => s.history.some((r) => r.op.type === 'applyPolicy'))
   // 承認待ちの減便の方針の下書き。グループ分けを直しても、その下書きの組は変わらない
@@ -558,7 +566,7 @@ export default function ServiceGroupsCard() {
   }
 
   const tableOpen = open ?? (!groups.simple && !confirmed)
-  const busy = jev.state === 'checking' || jev.state === 'sending'
+  const busy = jev.state === 'awaitingConsent' || jev.state === 'checking' || jev.state === 'sending'
   const confirmable = canConfirm(groups)
   const staleNote = approved ? (
     <p className={`text-xs ${AMBER_TEXT}`}>グループ分けを直しても、減便の方針を承認し直すまで、出力には反映されません。</p>
@@ -609,8 +617,9 @@ export default function ServiceGroupsCard() {
         {complexSummary(groups, attention)}
       </p>
       <HolidayNote groups={groups} />
+      <JevConsentDialog focusId={JEV_STATUS_ID} />
       {jev.state !== 'idle' && jev.state !== 'notNeeded' ? (
-        <JevPanel jev={jev} jevEnabled={jevEnabled} />
+        <JevPanel jev={jev} />
       ) : (
         jev.message && <p className="text-xs text-muted-foreground">{jev.message}</p>
       )}
@@ -640,7 +649,9 @@ export default function ServiceGroupsCard() {
           >
             このグループ分けで進める
           </Button>
-          {busy ? (
+          {jev.state === 'awaitingConsent' ? (
+            <p className="text-xs text-muted-foreground">Jev に送るかを選んでください。</p>
+          ) : busy ? (
             <p className="text-xs text-muted-foreground">Jev の答えを待っています。</p>
           ) : !confirmable ? (
             <p className="text-xs text-destructive">「選んでください」の行が残っているため、まだ進められません。</p>

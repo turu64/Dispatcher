@@ -2,7 +2,6 @@ import { FileArchiveIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import StepSection from '@/components/StepSection'
 import { InlineConfirm } from '@/components/steps/editParts'
-import JevSwitch from '@/components/steps/load/JevSwitch'
 import ServiceGroupsCard from '@/components/steps/load/ServiceGroupsCard'
 import { deleteConfirmMessage } from '@/components/steps/loadText'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -174,7 +173,6 @@ export default function LoadStep() {
   return (
     <>
       <StepSection title="1. GTFS を読み込む">
-        <JevSwitch />
         <input
           ref={fileInput}
           type="file"

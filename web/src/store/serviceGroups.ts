@@ -24,7 +24,8 @@ import { useHolidayStore, type HolidayState } from './holidays'
  * Jev の問い合わせの状態(docs/design-service-groups.md §3.6・§5.5)。
  * - idle:GTFS を読み込んでいない、またはグループ分けをまだ計算していない
  * - notNeeded:単純な GTFS、または問う service が無い(呼ばない)
- * - off:スイッチが切れていたため送らなかった
+ * - awaitingConsent:規則で決まらない service がある。Jev に送るかを利用者に聞いている(JevConsentDialog。答えるまで送らない)
+ * - off:利用者が送らないと答えた(規則だけで分けた)
  * - checking:Jev を使えるかをサーバーに確かめている。sending:判断材料を送り、答えを待っている
  * - done:全部の答えを得た。partial:一部の答えだけを得た(残りは failures)
  * - unavailable:Jev を使えない(キーが無い・1日の上限・接続できない)。failed:送ったが答えを得られなかった
@@ -33,6 +34,7 @@ import { useHolidayStore, type HolidayState } from './holidays'
 export type JevState =
   | 'idle'
   | 'notNeeded'
+  | 'awaitingConsent'
   | 'off'
   | 'checking'
   | 'sending'
@@ -54,6 +56,8 @@ export interface JevInfo {
   response: JevJudgeResponse | null
   /** 上限のために問わなかった service_id(buildJevRequest の omitted) */
   omitted: string[]
+  /** 問い合わせる service の数(buildJevRequest の targets の service_id の数。同じ service をほかの役割でも問うときは1つに数える) */
+  asking: number
   /** 画面に出す1行の知らせ。無ければ null */
   message: string | null
   /**
@@ -72,20 +76,20 @@ export interface ServiceGroupsState {
   groups: ServiceGroups | null
   /** 「このグループ分けで進める」を押した(単純な GTFS は読み込んだ時点で確定) */
   confirmed: boolean
-  /**
-   * 「単純でない GTFS では、service ごとの集計を Jev に送る」のスイッチ(既定はオン)。
-   * ブラウザに保存しない。読み込み直し・削除でも戻さない(送るのを止めた利用者の選択を、黙って戻さないため)
-   */
-  jevEnabled: boolean
   jev: JevInfo
 
-  /** GTFS を読み込んだとき。祝日一覧の状態が決まってから1回だけ計算し、そのあとで Jev を呼ぶ */
+  /**
+   * GTFS を読み込んだとき。祝日一覧の状態が決まってから1回だけ計算する。
+   * 規則で決まらない service があれば、Jev に送るかを利用者に聞く(awaitingConsent。自動では送らない)
+   */
   start: (feed: GtfsFeed) => void
   /** 祝日一覧の状態が変わったとき。待っていれば計算する */
   holidaysChanged: () => void
-  /** スイッチ。送っている間に切ったら、問い合わせをやめる */
-  setJevEnabled: (on: boolean) => void
-  /** Jev に問い合わせる(スイッチを切っていた・中断した・失敗したあとに、利用者がボタンで頼んだとき) */
+  /** 聞いている(awaitingConsent)ときに「Jev に送る」と答えた。送る */
+  acceptJev: () => Promise<void>
+  /** 聞いている(awaitingConsent)ときに「送らずに規則だけで進める」と答えた。送らずに off にする */
+  declineJev: () => void
+  /** Jev に問い合わせる(送らないと答えた・中断した・失敗したあとに、利用者がボタンで頼んだとき。聞いている間も受け付ける) */
   askJev: () => Promise<void>
   /** 送っている間に中断する。届いた答えは捨て、規則の案のままにする */
   stopJev: () => void
@@ -97,7 +101,7 @@ export interface ServiceGroupsState {
   resetRow: (serviceId: string) => void
   /** 「このグループ分けで進める」。決まらない行が残っている間・Jev を待っている間はできない(false を返す) */
   confirm: () => boolean
-  /** GTFS を読み込み直したとき・削除したとき(store/reset.ts の resetAll)。送っている問い合わせも捨てる。スイッチは残す */
+  /** GTFS を読み込み直したとき・削除したとき(store/reset.ts の resetAll)。送っている問い合わせも、利用者の答えを待っている状態も捨てる */
   reset: () => void
   /**
    * 表を開く頼みの番号。減便の方針の手順の「読み込みの手順の表で直す」が進め、読み込みの手順の表(ServiceGroupsCard)が
@@ -117,7 +121,7 @@ export interface ServiceGroupsDeps {
   judge: (request: JevJudgeRequest, signal: AbortSignal) => Promise<JevOutcome>
 }
 
-const IDLE_JEV: JevInfo = { state: 'idle', status: null, response: null, omitted: [], message: null, sent: false }
+const IDLE_JEV: JevInfo = { state: 'idle', status: null, response: null, omitted: [], asking: 0, message: null, sent: false }
 
 function initial(): Pick<ServiceGroupsState, 'status' | 'groups' | 'confirmed' | 'jev'> {
   return { status: 'idle', groups: null, confirmed: false, jev: { ...IDLE_JEV, omitted: [] } }
@@ -194,27 +198,43 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
       set({ jev: { ...get().jev, ...patch } })
     }
 
-    async function runJev(): Promise<void> {
+    /**
+     * 送る判断材料を作る。単純な GTFS・問う service が無いときは notNeeded にして null を返す。
+     * 送るかを聞く前と、送る直前の両方で作る(送らないと答えたあとに表を直してから頼むこともあるため)
+     */
+    function buildRequest(): { request: JevJudgeRequest; omitted: string[] } | null {
       const groups = get().groups
-      if (!groups) return
+      if (!groups) return null
       if (groups.simple) {
         setJev({ state: 'notNeeded', message: null })
-        return
-      }
-      if (!get().jevEnabled) {
-        setJev({ state: 'off', message: 'Jev に送らない設定のため、規則だけで分けました。' })
-        return
+        return null
       }
       const built = buildJevRequest(groups.features, groups)
       if (built === null) {
         setJev({ state: 'notNeeded', message: '規則で決まらない service がないため、Jev には問い合わせていません。' })
-        return
+        return null
       }
+      return built
+    }
+
+    /** 計算した直後。問う service があれば、送らずに利用者の答えを待つ */
+    function requestConsent() {
+      const built = buildRequest()
+      if (!built) return
+      const asking = new Set(built.request.targets.map((t) => t.serviceId)).size
+      setJev({ state: 'awaitingConsent', status: null, response: null, omitted: built.omitted, asking, message: null, sent: false })
+    }
+
+    /** 送る(利用者が「Jev に送る」と答えた・ボタンで頼んだとき) */
+    async function runJev(): Promise<void> {
+      const built = buildRequest()
+      if (!built) return
+      const asking = new Set(built.request.targets.map((t) => t.serviceId)).size
       abort()
       const mine = seq
       const ctrl = new AbortController()
       controller = ctrl
-      setJev({ state: 'checking', status: null, response: null, omitted: built.omitted, message: null, sent: false })
+      setJev({ state: 'checking', status: null, response: null, omitted: built.omitted, asking, message: null, sent: false })
 
       let status: JevStatus
       try {
@@ -279,12 +299,11 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
       pending = null
       const groups = compute(feed, list)
       set({ status: 'ready', groups, confirmed: groups.simple, jev: { ...IDLE_JEV, omitted: [] } })
-      void runJev()
+      requestConsent()
     }
 
     return {
       ...initial(),
-      jevEnabled: true,
       tableRequest: 0,
       showTable: () => set({ tableRequest: get().tableRequest + 1 }),
 
@@ -305,18 +324,22 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
         if (settled) computeNow(pending, settled.list)
       },
 
-      setJevEnabled: (on) => {
-        set({ jevEnabled: on })
-        if (!on) {
-          const { state } = get().jev
-          if (state === 'checking' || state === 'sending') get().stopJev()
-        }
+      // 答えのボタンは、聞いている間だけ効く。AlertDialogAction は押すと閉じる(onOpenChange(false) → declineJev)ので、
+      // 「Jev に送る」で checking に進んだあとの declineJev は何もしない
+      acceptJev: async () => {
+        if (get().jev.state !== 'awaitingConsent') return
+        await runJev()
+      },
+
+      declineJev: () => {
+        if (get().jev.state !== 'awaitingConsent') return
+        setJev({ state: 'off', message: 'Jev に送らず、規則だけで分けました。' })
       },
 
       askJev: async () => {
-        const { groups, jev, jevEnabled } = get()
-        if (!groups || groups.simple || !jevEnabled) return
-        if (jev.state !== 'off' && jev.state !== 'stopped' && jev.state !== 'failed') return
+        const { groups, jev } = get()
+        if (!groups || groups.simple) return
+        if (jev.state !== 'awaitingConsent' && jev.state !== 'off' && jev.state !== 'stopped' && jev.state !== 'failed') return
         await runJev()
       },
 
@@ -355,7 +378,7 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
 
       confirm: () => {
         const { groups, jev } = get()
-        if (!groups || !canConfirm(groups) || jev.state === 'checking' || jev.state === 'sending') return false
+        if (!groups || !canConfirm(groups) || jev.state === 'awaitingConsent' || jev.state === 'checking' || jev.state === 'sending') return false
         set({ confirmed: true })
         return true
       },
@@ -370,8 +393,8 @@ export function createServiceGroupsStore(deps: ServiceGroupsDeps) {
 }
 
 /**
- * グループ分けを持つ。GTFS を読み込んだら(useGtfsStore の feed が変わったら)計算し、単純でない GTFS では Jev に問い合わせる。
- * 祝日一覧がまだなら、読み込み(または失敗)を待ってから1回だけ計算する(祝日一覧が後から届いて Jev に2回送るのを防ぐ)
+ * グループ分けを持つ。GTFS を読み込んだら(useGtfsStore の feed が変わったら)計算し、規則で決まらない service があれば
+ * Jev に送るかを利用者に聞く。祝日一覧がまだなら、読み込み(または失敗)を待ってから1回だけ計算する(祝日一覧が後から届いて2回聞くのを防ぐ)
  */
 export const useServiceGroupsStore = createServiceGroupsStore({
   holidays: () => useHolidayStore.getState().holidays,

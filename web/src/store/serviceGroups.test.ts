@@ -71,6 +71,14 @@ async function settle() {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
+/** 読み込んで、Jev に送るかを聞かれたら「Jev に送る」と答える */
+async function startAndAccept(t: ReturnType<typeof setup>) {
+  t.store.getState().start(FEED)
+  expect(t.store.getState().jev.state).toBe('awaitingConsent')
+  void t.store.getState().acceptJev()
+  await settle()
+}
+
 describe('計算の時機', () => {
   it('祝日一覧を待ってから1回だけ計算する', async () => {
     const t = setup({ holidays: { status: 'loading' } })
@@ -109,12 +117,104 @@ describe('単純な GTFS', () => {
   })
 })
 
-describe('Jev の自動の呼び出し', () => {
+describe('Jev に送るかを聞く', () => {
+  it('単純でない GTFS では、答えの前にサーバーに聞かず・送らない。問う service の数と、上限で問わない service を持つ', async () => {
+    const t = setup()
+    t.store.getState().start(FEED)
+    await settle()
+    const s = t.store.getState()
+    expect(s.jev.state).toBe('awaitingConsent')
+    expect(s.jev.sent).toBe(false)
+    expect(s.jev.asking).toBeGreaterThan(0)
+    expect(s.jev.message).toBeNull()
+    expect(t.fetchStatus).not.toHaveBeenCalled()
+    expect(t.judge).not.toHaveBeenCalled()
+    // 送った judge の targets の service の数と同じ
+    void t.store.getState().acceptJev()
+    await settle()
+    const sentIds = new Set(t.judge.mock.calls[0][0].targets.map((x) => x.serviceId))
+    expect(t.store.getState().jev.asking).toBe(sentIds.size)
+  })
+
+  it('「Jev に送る」と答えたら、使えるかを確かめてから送る(checking → sending)', async () => {
+    const d = deferred<JevOutcome>()
+    const t = setup({ judge: () => d.promise })
+    t.store.getState().start(FEED)
+    void t.store.getState().acceptJev()
+    // 答えたらすぐ checking にする(サーバーに聞く前)
+    expect(t.store.getState().jev.state).toBe('checking')
+    await settle()
+    expect(t.fetchStatus).toHaveBeenCalledTimes(1)
+    expect(t.judge).toHaveBeenCalledTimes(1)
+    expect(t.store.getState().jev.state).toBe('sending')
+    expect(t.store.getState().jev.sent).toBe(true)
+    // 送ったあとに「送らない」が来ても(AlertDialog が閉じたときの onOpenChange)、何もしない
+    t.store.getState().declineJev()
+    expect(t.store.getState().jev.state).toBe('sending')
+  })
+
+  it('「送らずに規則だけで進める」と答えたら、送らずに off にする。あとからボタンで頼めば送る', async () => {
+    const t = setup()
+    t.store.getState().start(FEED)
+    t.store.getState().declineJev()
+    await settle()
+    const s = t.store.getState()
+    expect(s.jev.state).toBe('off')
+    expect(s.jev.message).toBe('Jev に送らず、規則だけで分けました。')
+    expect(s.jev.sent).toBe(false)
+    expect(t.fetchStatus).not.toHaveBeenCalled()
+    expect(t.judge).not.toHaveBeenCalled()
+    // 断ったあとに acceptJev が来ても送らない(答えは1回だけ)
+    await t.store.getState().acceptJev()
+    expect(t.judge).not.toHaveBeenCalled()
+
+    await t.store.getState().askJev()
+    expect(t.fetchStatus).toHaveBeenCalledTimes(1)
+    expect(t.judge).toHaveBeenCalledTimes(1)
+  })
+
+  it('聞いている間も、ボタン(askJev)で頼めば送る', async () => {
+    const t = setup()
+    t.store.getState().start(FEED)
+    await t.store.getState().askJev()
+    expect(t.judge).toHaveBeenCalledTimes(1)
+  })
+
+  it('聞いている間に読み込み直し・削除(reset)したら、何も送らない', async () => {
+    const t = setup()
+    t.store.getState().start(FEED)
+    expect(t.store.getState().jev.state).toBe('awaitingConsent')
+    t.store.getState().reset()
+    expect(t.store.getState().jev.state).toBe('idle')
+    // 閉じたダイアログの答えが遅れて来ても送らない
+    await t.store.getState().acceptJev()
+    t.store.getState().declineJev()
+    await settle()
+    expect(t.fetchStatus).not.toHaveBeenCalled()
+    expect(t.judge).not.toHaveBeenCalled()
+    expect(t.store.getState().jev.state).toBe('idle')
+  })
+
+  it('聞いている間は確定できない', () => {
+    const t = setup()
+    t.store.getState().start(FEED)
+    expect(t.store.getState().confirm()).toBe(false)
+  })
+
+  it('規則で決まらない service が無ければ、聞かずに notNeeded', async () => {
+    const t = setup({ groups: () => proposeGroups(featuresOf([svc('01', { weekday: 98 }), svc('03', { saturday: 19 }), svc('06', { sundayHoliday: 25 })])) })
+    t.store.getState().start(FEED)
+    await t.store.getState().acceptJev()
+    expect(t.store.getState().jev.state).toBe('notNeeded')
+    expect(t.judge).not.toHaveBeenCalled()
+  })
+})
+
+describe('Jev の呼び出し(送ると答えたあと)', () => {
   it('単純でない GTFS では、使えるかを確かめてから送り、答えを合わせる', async () => {
     const res = response([result('03001_A', 'saturday', { weekdayCounterpart: { choice: '01001_A', probabilities: { '01001_A': 0.95 }, confidence: 0.95 } })])
     const t = setup({ judge: async () => ({ ok: true, response: res }) })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     expect(t.fetchStatus).toHaveBeenCalledTimes(1)
     expect(t.judge).toHaveBeenCalledTimes(1)
     const s = t.store.getState()
@@ -126,28 +226,9 @@ describe('Jev の自動の呼び出し', () => {
     expect(s.confirmed).toBe(false)
   })
 
-  it('スイッチが切れていれば送らない。入れてから頼めば送る', async () => {
-    const t = setup()
-    t.store.getState().setJevEnabled(false)
-    t.store.getState().start(FEED)
-    await settle()
-    expect(t.store.getState().jev.state).toBe('off')
-    expect(t.fetchStatus).not.toHaveBeenCalled()
-    expect(t.judge).not.toHaveBeenCalled()
-
-    // スイッチを切ったまま頼んでも送らない
-    await t.store.getState().askJev()
-    expect(t.judge).not.toHaveBeenCalled()
-
-    t.store.getState().setJevEnabled(true)
-    await t.store.getState().askJev()
-    expect(t.judge).toHaveBeenCalledTimes(1)
-  })
-
   it('Jev を使えない(キーが無い)ときは送らず、規則だけで続ける', async () => {
     const t = setup({ status: { available: false, provider: null, via: null, reason: 'noKey' } })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     const s = t.store.getState()
     expect(s.jev.state).toBe('unavailable')
     expect(s.jev.message).toContain('キーが設定されていない')
@@ -157,8 +238,7 @@ describe('Jev の自動の呼び出し', () => {
 
   it('送って失敗(回数の上限)したら、規則だけで続ける', async () => {
     const t = setup({ judge: async () => ({ ok: false, error: 'rateLimited', message: 'Jev への問い合わせの回数の上限に達したため、規則だけで分けました。' }) })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     const s = t.store.getState()
     expect(s.jev.state).toBe('failed')
     expect(s.jev.message).toContain('上限')
@@ -168,8 +248,7 @@ describe('Jev の自動の呼び出し', () => {
   it('一部だけ答えを得たら partial。答えを得られなかった数と理由を出す', async () => {
     const res = response([result('03001_A', 'saturday')], [{ serviceId: '01001', role: 'weekday', error: 'timeout', sent: { state: {}, questions: {} } }])
     const t = setup({ judge: async () => ({ ok: true, response: res }) })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     const s = t.store.getState()
     expect(s.jev.state).toBe('partial')
     expect(s.jev.message).toContain('1 件は答えを得られませんでした(時間切れ)')
@@ -178,8 +257,7 @@ describe('Jev の自動の呼び出し', () => {
   it('答えが1つも無ければ failed にし、上限(budget)と出す', async () => {
     const res = response([], [{ serviceId: '01001', role: 'weekday', error: 'budget' }])
     const t = setup({ judge: async () => ({ ok: true, response: res }) })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     const s = t.store.getState()
     expect(s.jev.state).toBe('failed')
     expect(s.jev.message).toContain('1日の上限')
@@ -191,8 +269,7 @@ describe('中断と捨てる', () => {
   it('送っている間に中断したら、あとから届いた答えを捨てる', async () => {
     const d = deferred<JevOutcome>()
     const t = setup({ judge: () => d.promise })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     expect(t.store.getState().jev.state).toBe('sending')
     // 送っている間は確定できない
     expect(t.store.getState().confirm()).toBe(false)
@@ -217,8 +294,7 @@ describe('中断と捨てる', () => {
     const status = deferred<JevStatus>()
     const t = setup()
     t.fetchStatus.mockImplementation(() => status.promise)
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     expect(t.store.getState().jev.state).toBe('checking')
     t.store.getState().stopJev()
     status.resolve(AVAILABLE)
@@ -228,21 +304,10 @@ describe('中断と捨てる', () => {
     expect(t.judge).not.toHaveBeenCalled()
   })
 
-  it('送っている間にスイッチを切ったら、問い合わせをやめる', async () => {
-    const d = deferred<JevOutcome>()
-    const t = setup({ judge: () => d.promise })
-    t.store.getState().start(FEED)
-    await settle()
-    t.store.getState().setJevEnabled(false)
-    expect(t.store.getState().jev.state).toBe('stopped')
-    expect(t.judge.mock.calls[0][1].aborted).toBe(true)
-  })
-
   it('答えを捨てると規則の案に戻り、利用者が直した行と、送った情報は残る', async () => {
     const res = response([result('03001_A', 'saturday', { weekdayCounterpart: { choice: '01001', probabilities: { '01001': 0.95 }, confidence: 0.95 } })])
     const t = setup({ judge: async () => ({ ok: true, response: res }) })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     expect(t.store.getState().groups!.byKind[SAT].rows.find((r) => r.serviceId === '03001_A')!.intoMark).toBe('conflict')
     t.store.getState().edit({ kind: SAT, serviceId: '03001', into: null })
 
@@ -256,30 +321,25 @@ describe('中断と捨てる', () => {
     expect(rows.find((r) => r.serviceId === '03001')!.intoMark).toBe('edited')
   })
 
-  it('読み込み直し(reset)のあとに届いた答えは捨て、スイッチは残す', async () => {
+  it('読み込み直し(reset)のあとに届いた答えは捨てる', async () => {
     const d = deferred<JevOutcome>()
     const t = setup({ judge: () => d.promise })
-    t.store.getState().setJevEnabled(false)
-    t.store.getState().setJevEnabled(true)
-    t.store.getState().start(FEED)
-    await settle()
-    t.store.getState().setJevEnabled(false)
+    await startAndAccept(t)
     t.store.getState().reset()
+    expect(t.judge.mock.calls[0][1].aborted).toBe(true)
     d.resolve({ ok: true, response: response([result('03001_A', 'saturday')]) })
     await settle()
     const s = t.store.getState()
     expect(s.status).toBe('idle')
     expect(s.groups).toBeNull()
     expect(s.jev.state).toBe('idle')
-    expect(s.jevEnabled).toBe(false)
   })
 })
 
 describe('直しと確定', () => {
   it('決まらない行が残っている間は確定できない。選べば確定できる', async () => {
     const t = setup({ groups: undecidedGroups, status: { available: false, provider: null, via: null, reason: 'noKey' } })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     const g = t.store.getState().groups!
     expect(g.simple).toBe(false)
     const row = g.byKind[SAT].rows.find((r) => r.serviceId === '03001_X')!
@@ -306,8 +366,7 @@ describe('直しと確定', () => {
 
   it('確定したあとに直して、決まらない行が残らなければ確定のまま', async () => {
     const t = setup({ status: { available: false, provider: null, via: null, reason: 'noKey' } })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     expect(t.store.getState().confirm()).toBe(true)
     t.store.getState().edit({ kind: SAT, serviceId: '01005_MSN', treatment: 'keep' })
     expect(t.store.getState().confirmed).toBe(true)
@@ -324,8 +383,7 @@ describe('直しと確定', () => {
         return call === 1 ? { ok: false, error: 'rateLimited', message: '上限です。Jev には送っていません。' } : { ok: true, response: conflict }
       },
     })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     expect(t.store.getState().jev.state).toBe('failed')
     expect(t.store.getState().confirm()).toBe(true)
     const request = t.store.getState().tableRequest
@@ -345,8 +403,7 @@ describe('直しと確定', () => {
       result('03001_A', 'saturday', { weekdayCounterpart: { choice: '01001_A', probabilities: { '01001_A': 0.95 }, confidence: 0.95 } }),
     ])
     const t = setup({ judge: async () => ({ ok: true, response: agreed }) })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     expect(t.store.getState().confirm()).toBe(true)
     t.store.getState().dropJev()
     expect(t.store.getState().jev.state).toBe('dropped')
@@ -358,8 +415,7 @@ describe('直しと確定', () => {
       result('03001_X', 'saturday', { weekdayCounterpart: { choice: '12001_X', probabilities: { '12001_X': 0.92 }, confidence: 0.93 } }),
     ])
     const t = setup({ groups: undecidedGroups, judge: async () => ({ ok: true, response: res }) })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     expect(t.store.getState().confirm()).toBe(true)
     t.store.getState().dropJev()
     expect(t.store.getState().confirmed).toBe(false)
@@ -370,8 +426,7 @@ describe('直しと確定', () => {
       result('03001_X', 'saturday', { weekdayCounterpart: { choice: '12001_X', probabilities: { '12001_X': 0.92 }, confidence: 0.93 } }),
     ])
     const t = setup({ groups: undecidedGroups, judge: async () => ({ ok: true, response: res }) })
-    t.store.getState().start(FEED)
-    await settle()
+    await startAndAccept(t)
     const row = t.store.getState().groups!.byKind[SAT].rows.find((r) => r.serviceId === '03001_X')!
     expect(row).toMatchObject({ into: '12001_X', intoMark: 'jev' })
   })
@@ -380,10 +435,9 @@ describe('直しと確定', () => {
 describe('読み込みと削除(本物の store)', () => {
   afterEach(() => resetAll('delete'))
 
-  it('GTFS を読み込むと計算し、削除で最初の状態に戻る。スイッチは残す', async () => {
+  it('GTFS を読み込むと計算し、削除で最初の状態に戻る', async () => {
     const { useHolidayStore } = await import('./holidays')
     useHolidayStore.setState({ holidays: { status: 'missing' } })
-    useServiceGroupsStore.getState().setJevEnabled(false)
     useGtfsStore.getState().setLoaded({ label: 'small.zip', feed: smallFeed() })
     const s = useServiceGroupsStore.getState()
     expect(s.status).toBe('ready')
@@ -395,11 +449,9 @@ describe('読み込みと削除(本物の store)', () => {
     expect(after.status).toBe('idle')
     expect(after.groups).toBeNull()
     expect(after.confirmed).toBe(false)
-    expect(after.jevEnabled).toBe(false)
-    useServiceGroupsStore.getState().setJevEnabled(true)
   })
 
-  it('単純でない GTFS でサーバーにつながらなければ、Jev を使えない扱いで規則だけで続ける', async () => {
+  it('単純でない GTFS では送るかを聞き、送ると答えてサーバーにつながらなければ、Jev を使えない扱いで規則だけで続ける', async () => {
     const { useHolidayStore } = await import('./holidays')
     useHolidayStore.setState({ holidays: { status: 'missing' } })
     // 平日だけの service が2つ(W1・W2)あるので単純でない
@@ -420,6 +472,8 @@ describe('読み込みと削除(本物の store)', () => {
     try {
       useGtfsStore.getState().setLoaded({ label: 'w2.zip', feed })
       expect(useServiceGroupsStore.getState().groups?.simple).toBe(false)
+      expect(useServiceGroupsStore.getState().jev.state).toBe('awaitingConsent')
+      void useServiceGroupsStore.getState().acceptJev()
       await vi.waitFor(() => expect(useServiceGroupsStore.getState().jev.state).toBe('unavailable'))
       expect(useServiceGroupsStore.getState().jev.message).toContain('規則だけで分けました')
       expect(useServiceGroupsStore.getState().confirmed).toBe(false)

@@ -65,6 +65,9 @@ describe('LoadStep の版と期間', () => {
     expect(text).not.toContain('求めました')
     // 単純な GTFS は1行の要約
     expect(screen.getByTestId('service-groups-summary').textContent).toBe('平日 WK・土曜 SA・日祝 SU に分かれています(走る日から判定しました)。')
+    // 単純な GTFS(道北バスなど)では、Jev に送るかを聞かない。Jev に送るかのスイッチも無い
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
     expect(screen.queryByRole('table', { name: /ダイヤのグループ分け/ })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '表を開く' }))
     const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })

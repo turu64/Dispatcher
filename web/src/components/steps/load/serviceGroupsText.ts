@@ -41,19 +41,34 @@ export const ROLE_LABELS: Record<JevRole, string> = {
   sundayHoliday: '日祝',
 }
 
-/** 送り先の名前(画面のスイッチ・送ったことの文で使う) */
+/** 送り先の名前(送るかを聞くダイアログ・送ったことの文で使う) */
 export const JEV_DESTINATION = 'TypeSafe AI Jev(Vercel AI Gateway 経由)'
 
 /** 送る中身(jevRequest.ts の toWire と feed の項目に合わせる。変えたら README・docs/deploy.md も直す) */
 export const JEV_SENT_ITEMS =
   'service_id・運行日の数と走る日の割合・便数・系統名と系統ごとの便数・行き先・始発と終着の時刻・運行日が 10 日以下の service の日付・事業者名・有効期間'
 
-/** 送る中身と、送らないもの。スイッチの下と、運営情報のページで使う */
+/** 送る中身と、送らないもの。送るかを聞くダイアログと、運営情報のページで使う */
 export const JEV_SENT_SCOPE = `service ごとの集計(${JEV_SENT_ITEMS})を送ります。GTFS のファイル・停留所の位置・時刻表そのものは送りません。`
 
 /** 転送先を TypeSafe AI に限っている点(サーバーが providerOptions.gateway.only を送る。2026-11-04 に確かめた。変わるなら直す) */
 export const JEV_ROUTING_NOTE =
   'TypeSafe AI に限って送ります(Vercel がほかの会社に回さないよう指定しています。TypeSafe AI が答えないときは、確かめを失敗として扱います)。'
+
+/** 送るかを聞くダイアログ(JevConsentDialog)の見出しとボタン */
+export const JEV_CONSENT_TITLE = 'ダイヤの分け方を Jev に問い合わせますか'
+export const JEV_CONSENT_ACCEPT = 'Jev に送る'
+export const JEV_CONSENT_DECLINE = '送らずに規則だけで進める'
+
+/** ダイアログの1文目:規則で決まらない service の数と送り先 */
+export function jevConsentLead(asking: number): string {
+  return `走る日の規則だけでは分け方を決めきれない service が ${asking} 個あります。その service ごとの集計を ${JEV_DESTINATION}に送って、分け方を確かめられます。`
+}
+
+/** 上限のために問い合わせない service の数の文(無ければ null) */
+export function jevOmittedText(omitted: number): string | null {
+  return omitted > 0 ? `上限のため、${omitted} 個の service は問い合わせません(規則で分けます)。` : null
+}
 
 /** 答えを得たあとに表の上に出す1行(§3.6) */
 export const JEV_SENT_TEXT = `service ごとの集計(${JEV_SENT_ITEMS})を、${JEV_DESTINATION}に送り、分け方を確かめました。GTFS のファイル・停留所の位置・時刻表そのものは送っていません。`

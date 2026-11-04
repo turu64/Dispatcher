@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { featuresOf, kyotoLike, svc } from '@/gtfs/groups/groups.fixture'
 import { proposeGroups } from '@/gtfs/groups/rules'
@@ -13,9 +13,11 @@ import { mergeJevAnswers } from '@/gtfs/groups/merge'
 import ServiceGroupsCard from './ServiceGroupsCard'
 import { attentionCount, orderRows, simpleSummary } from './serviceGroupsText'
 
-const mocks = vi.hoisted(() => ({ fetchSampleGtfsInfo: vi.fn() }))
+const mocks = vi.hoisted(() => ({ fetchSampleGtfsInfo: vi.fn(), fetchJevStatus: vi.fn(), judgeServices: vi.fn() }))
 vi.mock('@/gtfs/sample', () => ({ fetchSampleGtfsInfo: mocks.fetchSampleGtfsInfo, fetchSampleGtfs: vi.fn() }))
 vi.mock('@/gtfs/workerClient', () => ({ loadGtfsInWorker: vi.fn(() => new Promise(() => {})) }))
+// Jev に送るかのダイアログで「Jev に送る」を押したときの問い合わせ。答えを返さず、checking のまま止める
+vi.mock('@/gtfs/groups/jevClient', () => ({ fetchJevStatus: mocks.fetchJevStatus, judgeServices: mocks.judgeServices }))
 
 // Radix の Select は jsdom に無い scrollIntoView・ポインターの捕捉を使う
 Element.prototype.scrollIntoView ??= () => {}
@@ -24,13 +26,14 @@ Element.prototype.releasePointerCapture ??= () => {}
 
 beforeEach(() => {
   mocks.fetchSampleGtfsInfo.mockReset().mockImplementation(() => new Promise(() => {}))
+  mocks.fetchJevStatus.mockReset().mockImplementation(() => new Promise(() => {}))
+  mocks.judgeServices.mockReset().mockImplementation(() => new Promise(() => {}))
   useHolidayStore.setState({ holidays: { status: 'ready', list: { names: new Map(), first: '20200101', coveredUntil: '20291231', source: '' } } })
 })
 
 afterEach(() => {
   cleanup()
   act(() => resetAll('delete'))
-  useServiceGroupsStore.setState({ jevEnabled: true })
 })
 
 /** 割り当てが決まらない形:接尾辞 X の平日だけの service が2つあり、頭で絞れない */
@@ -53,7 +56,7 @@ function showGroups(groups: ServiceGroups, extra: Partial<ReturnType<typeof useS
       status: 'ready',
       groups,
       confirmed: groups.simple,
-      jev: { state: groups.simple ? 'notNeeded' : 'unavailable', status: null, response: null, omitted: [], message: groups.simple ? null : 'サーバーに Jev のキーが設定されていないため、規則だけで分けました。', sent: false },
+      jev: { state: groups.simple ? 'notNeeded' : 'unavailable', status: null, response: null, omitted: [], asking: 0, message: groups.simple ? null : 'サーバーに Jev のキーが設定されていないため、規則だけで分けました。', sent: false },
       ...extra,
     }),
   )
@@ -109,17 +112,77 @@ describe('文と並び', () => {
   })
 })
 
-describe('手順「読み込み」の Jev のスイッチ', () => {
-  it('ファイルを選ぶ欄の上に、送り先の名前つきで置く。切ると store に入る', () => {
+describe('Jev に送るかのダイアログ', () => {
+  const AWAITING = { state: 'awaitingConsent', status: null, response: null, omitted: ['SRV_8_10600_01_A'], asking: 7, message: null, sent: false } as const
+
+  it('手順「読み込み」に Jev のスイッチは無い', () => {
     render(<LoadStep />)
-    const sw = screen.getByRole('switch', { name: /TypeSafe AI Jev\(Vercel AI Gateway 経由\)/ })
-    expect(sw.getAttribute('aria-checked')).toBe('true')
-    const pick = screen.getByRole('button', { name: 'ファイルを選ぶ' })
-    expect(sw.compareDocumentPosition(pick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(document.getElementById('jev-switch-note')!.textContent).toContain('TypeSafe AI に限って送ります')
-    fireEvent.click(sw)
-    expect(useServiceGroupsStore.getState().jevEnabled).toBe(false)
-    expect(sw.getAttribute('aria-checked')).toBe('false')
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.queryByText(/Jev に送って、ダイヤの分け方を確かめる/)).toBeNull()
+  })
+
+  it('答えを待っている間に開き、数・送り先・送る情報・経路・上限で問わない数を書く。「今後は聞かない」は無い', () => {
+    showGroups(proposeGroups(kyotoLike()), { jev: { ...AWAITING, omitted: [...AWAITING.omitted] } })
+    const dialog = screen.getByRole('alertdialog', { name: 'ダイヤの分け方を Jev に問い合わせますか' })
+    const text = dialog.textContent ?? ''
+    expect(text).toContain('分け方を決めきれない service が 7 個あります')
+    expect(text).toContain('TypeSafe AI Jev(Vercel AI Gateway 経由)に送って')
+    expect(text).toContain('系統名と系統ごとの便数・行き先')
+    expect(text).toContain('TypeSafe AI に限って送ります')
+    expect(text).toContain('上限のため、1 個の service は問い合わせません')
+    expect(text).not.toContain('今後は聞かない')
+    expect(within(dialog).queryByRole('checkbox')).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Jev に送る' })).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: '送らずに規則だけで進める' })).toBeTruthy()
+    // 待っている間は確定できない
+    expect((screen.getByRole('button', { name: 'このグループ分けで進める', hidden: true }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('上限で問わない service が無ければ、その文を出さない', () => {
+    showGroups(proposeGroups(kyotoLike()), { jev: { ...AWAITING, omitted: [] } })
+    expect(screen.getByRole('alertdialog').textContent).not.toContain('上限のため')
+  })
+
+  it('「送らずに規則だけで進める」で閉じ、送らずに off。知らせと「Jev に問い合わせる」を出し、焦点を知らせに移す', async () => {
+    showGroups(proposeGroups(kyotoLike()), { jev: { ...AWAITING, omitted: [...AWAITING.omitted] } })
+    fireEvent.click(screen.getByRole('button', { name: '送らずに規則だけで進める' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(useServiceGroupsStore.getState().jev.state).toBe('off')
+    expect(mocks.fetchJevStatus).not.toHaveBeenCalled()
+    expect(mocks.judgeServices).not.toHaveBeenCalled()
+    const panel = screen.getByRole('region', { name: 'Jev による確かめ' })
+    const statusEl = within(panel).getByRole('status')
+    expect(statusEl.textContent).toContain('Jev に送らず、規則だけで分けました。')
+    await waitFor(() => expect(document.activeElement).toBe(statusEl))
+    // 断ったあとも、ボタンで送れる
+    const ask = within(panel).getByRole('button', { name: 'Jev に問い合わせる' })
+    expect(ask.getAttribute('aria-describedby')).toBe('jev-ask-note')
+    expect(document.getElementById('jev-ask-note')!.textContent).toContain('TypeSafe AI Jev(Vercel AI Gateway 経由)に送ります')
+    fireEvent.click(ask)
+    expect(useServiceGroupsStore.getState().jev.state).toBe('checking')
+    expect(mocks.fetchJevStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('Escape でも送らない側に倒す', () => {
+    showGroups(proposeGroups(kyotoLike()), { jev: { ...AWAITING, omitted: [] } })
+    fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(useServiceGroupsStore.getState().jev.state).toBe('off')
+    expect(mocks.fetchJevStatus).not.toHaveBeenCalled()
+  })
+
+  it('「Jev に送る」で閉じ、使えるかの確かめに進む(閉じても off にしない)', () => {
+    showGroups(proposeGroups(kyotoLike()), { jev: { ...AWAITING, omitted: [] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Jev に送る' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(useServiceGroupsStore.getState().jev.state).toBe('checking')
+    expect(mocks.fetchJevStatus).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Jev への問い合わせをやめる' })).toBeTruthy()
+  })
+
+  it('単純な GTFS(道北バスなど)では出さない', () => {
+    showGroups(proposeGroups(featuresOf([svc('01', { weekday: 98 }), svc('03', { saturday: 19 }), svc('06', { sundayHoliday: 25 })])))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
   })
 })
 
@@ -195,7 +258,7 @@ describe('単純でない GTFS の表', () => {
     const res = response()
     res.results[0].weekdayCounterpart = { choice: '01005_MSN', probabilities: { '01005_MSN': 0.95 }, confidence: 0.95 }
     showGroups(mergeJevAnswers(proposeGroups(kyotoLike()), res), {
-      jev: { state: 'done', status: null, response: res, omitted: [], message: null, sent: true },
+      jev: { state: 'done', status: null, response: res, omitted: [], asking: 0, message: null, sent: true },
     })
     expect(screen.getByText('規則と Jev が食い違っている 1 件は、規則の値で進めます。')).toBeTruthy()
     const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
@@ -212,7 +275,7 @@ describe('単純でない GTFS の表', () => {
     const res = response()
     res.results[0].weekdayCounterpart = { choice: '01005_MSN', probabilities: { '01005_MSN': 0.95 }, confidence: 0.95 }
     showGroups(mergeJevAnswers(proposeGroups(kyotoLike()), res), {
-      jev: { state: 'done', status: null, response: res, omitted: [], message: null, sent: true },
+      jev: { state: 'done', status: null, response: res, omitted: [], asking: 0, message: null, sent: true },
     })
     const table = screen.getByRole('table', { name: 'ダイヤのグループ分け(平日を土曜ダイヤに)' })
     fireEvent.click(within(table).getByRole('button', { name: '03001_A の判断材料' }))
@@ -246,7 +309,7 @@ describe('単純でない GTFS の表', () => {
 
 describe('Jev の欄', () => {
   it('送っている間は「やめる」を出し、確定できない。押すと中断する', () => {
-    showGroups(proposeGroups(kyotoLike()), { jev: { state: 'sending', status: null, response: null, omitted: [], message: null, sent: true } })
+    showGroups(proposeGroups(kyotoLike()), { jev: { state: 'sending', status: null, response: null, omitted: [], asking: 0, message: null, sent: true } })
     expect((screen.getByRole('button', { name: 'このグループ分けで進める' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByText('Jev の答えを待っています。')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Jev への問い合わせをやめる' }))
@@ -256,14 +319,14 @@ describe('Jev の欄', () => {
     const statusEl = within(screen.getByRole('region', { name: 'Jev による確かめ' })).getByRole('status')
     expect(statusEl.textContent).toContain('問い合わせをやめました')
     expect(document.activeElement).toBe(statusEl)
-    // スイッチが入っていれば、もう一度頼むボタンを出す
+    // 中断したあとは、もう一度頼むボタンを出す
     expect(screen.getByRole('button', { name: 'Jev に問い合わせる' })).toBeTruthy()
   })
 
   it('答えを得たら送ったことの文・捨てるボタン・送った情報(results と failures の sent)を出す', () => {
     const res = response()
     showGroups(proposeGroups(kyotoLike()), {
-      jev: { state: 'partial', status: null, response: res, omitted: ['SRV_8_10600_01_A'], message: '2 件は答えを得られませんでした(時間切れ・1日の上限)。その service は規則で分けています。', sent: true },
+      jev: { state: 'partial', status: null, response: res, omitted: ['SRV_8_10600_01_A'], asking: 0, message: '2 件は答えを得られませんでした(時間切れ・1日の上限)。その service は規則で分けています。', sent: true },
     })
     const panel = screen.getByRole('region', { name: 'Jev による確かめ' })
     expect(panel.textContent).toContain('TypeSafe AI Jev(Vercel AI Gateway 経由)に送り、分け方を確かめました')
@@ -291,7 +354,7 @@ describe('Jev の欄', () => {
   it('TypeSafe AI 以外が答えたら、その名前を出す', () => {
     const res = response()
     res.results[0].provider = 'digitalocean'
-    showGroups(proposeGroups(kyotoLike()), { jev: { state: 'done', status: null, response: res, omitted: [], message: null, sent: true } })
+    showGroups(proposeGroups(kyotoLike()), { jev: { state: 'done', status: null, response: res, omitted: [], asking: 0, message: null, sent: true } })
     expect(screen.getByRole('region', { name: 'Jev による確かめ' }).textContent).toContain('03001_A は、DigitalOcean が答えました(TypeSafe AI ではありません)。')
   })
 
@@ -302,6 +365,7 @@ describe('Jev の欄', () => {
         status: null,
         response: null,
         omitted: [],
+        asking: 0,
         message: 'Jev に問う回数の上限に達しました(1 時間あたり)。規則だけで分けます。しばらくしてから使えます。Jev には送っていません。',
         sent: true,
       },

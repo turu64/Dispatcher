@@ -1,10 +1,14 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { STEPS } from '@/components/steps/registry'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useEditStore } from '@/store/edit'
 import { canOpenStep, useStepStore } from '@/store/steps'
 
 const KEYS = STEPS.map((s) => s.key)
+
+/** GTFS を読み込む前に「次へ」を押せるようになる条件(ツールチップ) */
+const NEXT_BLOCKED_HINT = '手順「読み込み」で GTFS を読み込むと、次へ進めます'
 
 /**
  * 左の欄の下の「戻る」「次へ」。手順の一覧の並びの順に移る。GTFS を読み込むまでは次へ進めない。
@@ -27,11 +31,26 @@ export default function StepNav() {
         </Button>
       )}
       <span className="min-w-0 flex-1 text-center text-xs text-muted-foreground">{nextBlocked && 'GTFS を読み込むと先へ進めます'}</span>
-      {next && (
-        <Button type="button" size="sm" disabled={nextBlocked} onClick={() => useStepStore.getState().next()}>
+      {next && !nextBlocked && (
+        <Button type="button" size="sm" onClick={() => useStepStore.getState().next()}>
           次へ({next.title})
           <ChevronRight aria-hidden="true" />
         </Button>
+      )}
+      {next && nextBlocked && (
+        // 押せないボタンはポインターの出入りを受け取らないので、外側の span でツールチップを出す。
+        // キーボードでも条件を読めるよう、span に焦点を置けるようにする
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Button type="button" size="sm" disabled tabIndex={-1}>
+                次へ({next.title})
+                <ChevronRight aria-hidden="true" />
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{NEXT_BLOCKED_HINT}</TooltipContent>
+        </Tooltip>
       )}
     </nav>
   )

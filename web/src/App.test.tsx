@@ -114,6 +114,15 @@ describe('画面の骨組み', () => {
     const next = screen.getByRole('button', { name: /^次へ/ }) as HTMLButtonElement
     expect(next.disabled).toBe(true)
     expect(screen.getByText('GTFS を読み込むと先へ進めます')).toBeTruthy()
+    // 押せない「次へ」は、ホバーや焦点で押せるようになる条件をツールチップで示す
+    // Radix のツールチップは jsdom に無い ResizeObserver を使う
+    globalThis.ResizeObserver ??= class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+    act(() => (next.parentElement as HTMLElement).focus())
+    expect(screen.getByRole('tooltip').textContent).toBe('手順「読み込み」で GTFS を読み込むと、次へ進めます')
     // 地図の中央に読み込みの案内を出す
     expect(within(screen.getByRole('main', { name: '地図' })).getByText('左の欄から GTFS を読み込んでください')).toBeTruthy()
     // 最初の手順では「戻る」を出さない

@@ -11,7 +11,6 @@ import base64
 import functools
 import hashlib
 import hmac
-import ipaddress
 import json
 import logging
 import secrets
@@ -26,7 +25,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import agent_session, research, settings
 from .agent_session import RelayError
-from .ratelimit import RateLimiter, jst_day
+from .ratelimit import RateLimiter, client_address, jst_day
 from .store import get_store
 
 logger = logging.getLogger("dispatcher_server.agent")
@@ -188,29 +187,11 @@ def _session_row(request: Request) -> dict[str, Any]:
 
 
 def _client_address(request: Request) -> str:
-    """回数制限の単位にする接続元。
-
-    nginx が上書きする X-Real-IP を信じるのは DISPATCHER_TRUST_PROXY=1 のときだけ(無ければ 400)。
-    それ以外は接続元のアドレス。X-Forwarded-For は(利用者が自由に付けられるので)読まない。
-    """
-    if settings.trust_proxy():
-        raw = request.headers.get("x-real-ip", "").strip()
-        try:
-            address = ipaddress.ip_address(raw)
-        except ValueError:
-            _reject(400, MSG_NO_ADDRESS, "real_ip")
-    else:
-        host = request.client.host if request.client else "unknown"
-        try:
-            address = ipaddress.ip_address(host)
-        except ValueError:
-            return host
-    if isinstance(address, ipaddress.IPv6Address):
-        if address.ipv4_mapped is not None:
-            return str(address.ipv4_mapped)
-        # IPv6 の利用者は /64 の中のアドレスを自由に使えるので、/64 を1つの接続元として数える
-        return str(ipaddress.ip_network((address, 64), strict=False))
-    return str(address)
+    """回数制限の単位にする接続元(ratelimit.client_address)。X-Real-IP を信じる設定で読めなければ 400。"""
+    address = client_address(request)
+    if address is None:
+        _reject(400, MSG_NO_ADDRESS, "real_ip")
+    return address
 
 
 async def _read_json(request: Request, limit: int) -> Any:

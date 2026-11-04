@@ -4,7 +4,7 @@
 #          HTTPS は VPS の既存の nginx で終端してここに中継する
 #   server FastAPI(uvicorn。ワーカー1)。ポートは公開しない
 #
-# 秘密(ANTHROPIC_API_KEY・DISPATCHER_SESSION_SECRET など)はイメージに入れない。リポジトリ直下の .env(コミットしない)か、
+# 秘密(ANTHROPIC_API_KEY・TYPESAFE_AI_VERCEL_KEY・DISPATCHER_SESSION_SECRET など)はイメージに入れない。リポジトリ直下の .env(コミットしない)か、
 # 環境変数で渡す。.env.example に項目と意味がある。
 # 合言葉なしで公開するときは DISPATCHER_PUBLIC=1 を渡す(DISPATCHER_TOKEN も DISPATCHER_PUBLIC も無いと AI は使えない)。
 # 起動:docker compose up -d --build   (ローカルで確かめるときは DISPATCHER_PORT=8080 のように別のポートで)
@@ -36,6 +36,14 @@ services:
       DISPATCHER_DAILY_COST_CENTS: ${DISPATCHER_DAILY_COST_CENTS:-}
       DISPATCHER_RESEARCH_MAX_TARGETS: ${DISPATCHER_RESEARCH_MAX_TARGETS:-}
       DISPATCHER_RESEARCH_CACHE_DAYS: ${DISPATCHER_RESEARCH_CACHE_DAYS:-}
+      # TypeSafe AI Jev(Vercel AI Gateway 経由。service のグループ分けの確かめ)。キーが空なら規則だけで分ける
+      TYPESAFE_AI_VERCEL_KEY: ${TYPESAFE_AI_VERCEL_KEY:-}
+      DISPATCHER_JEV_URL: ${DISPATCHER_JEV_URL:-}
+      DISPATCHER_JEV_MODEL: ${DISPATCHER_JEV_MODEL:-}
+      DISPATCHER_JEV_PER_IP_HOUR: ${DISPATCHER_JEV_PER_IP_HOUR:-}
+      DISPATCHER_JEV_PER_IP_DAY: ${DISPATCHER_JEV_PER_IP_DAY:-}
+      DISPATCHER_JEV_TARGETS_PER_DAY: ${DISPATCHER_JEV_TARGETS_PER_DAY:-}
+      DISPATCHER_JEV_COST_CENTS_PER_DAY: ${DISPATCHER_JEV_COST_CENTS_PER_DAY:-}
       # ボリュームの中の場所(日本語のファイル名)
       DISPATCHER_SAMPLE_GTFS: /data/sample/dohoku_bus_減便前.zip
       DISPATCHER_REF_DIR: /data/ref

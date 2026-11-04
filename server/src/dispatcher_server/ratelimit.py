@@ -4,16 +4,22 @@ docs/interfaces-1105.md §4.11:
 - セッションの作成:1 時間(直近 3,600 秒の窓)と 1 日(日本時間の日付)ごとの回数
 - 発言(message):1 時間ごとの回数
 - サーバー全体のセッションの作成の数は、再起動で 0 に戻らないよう SQLite(agent_sessions)から数える(store.py)
+- Jev の中継(service_groups.py):1 時間と 1 日ごとの要求の回数。全体の1日の上限は SQLite(jev_usage)
 
 確かめる(check)と数える(record)を分ける。ほかの上限(全体の数・1日の利用額)で断った要求を数えないため。
 関数は await を挟まないので、イベントループの上では確かめと加算が切り離されない。
 """
 
+import ipaddress
 import time
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+
+from starlette.requests import Request
+
+from . import settings
 
 # 日本標準時は夏時間が無いので、固定の差で足りる(slim のイメージに tzdata が無くても動く)。
 JST = timezone(timedelta(hours=9))
@@ -21,13 +27,40 @@ JST = timezone(timedelta(hours=9))
 HOUR_SECONDS = 3600
 _PRUNE_EVERY = 256
 
-Kind = Literal["session", "message"]
+Kind = Literal["session", "message", "jev"]
 Limited = Literal["hour", "day"]
 
 
 def jst_day(timestamp: float) -> str:
     """日本時間の日付(YYYY-MM-DD)。"""
     return datetime.fromtimestamp(timestamp, JST).date().isoformat()
+
+
+def client_address(request: Request) -> str | None:
+    """回数制限の単位にする接続元。X-Real-IP を信じる設定で、その値が IP アドレスとして読めなければ None。
+
+    nginx が上書きする X-Real-IP を信じるのは DISPATCHER_TRUST_PROXY=1 のときだけ。
+    それ以外は接続元のアドレス。X-Forwarded-For は(利用者が自由に付けられるので)読まない。
+    IPv6 は /64 を1つの接続元として数える。Claude の中継(agent_relay.py)と Jev の中継(service_groups.py)が使う。
+    """
+    if settings.trust_proxy():
+        raw = request.headers.get("x-real-ip", "").strip()
+        try:
+            address = ipaddress.ip_address(raw)
+        except ValueError:
+            return None
+    else:
+        host = request.client.host if request.client else "unknown"
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            return host
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        # IPv6 の利用者は /64 の中のアドレスを自由に使えるので、/64 を1つの接続元として数える
+        return str(ipaddress.ip_network((address, 64), strict=False))
+    return str(address)
 
 
 class RateLimiter:

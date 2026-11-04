@@ -182,6 +182,8 @@ config: {type: cloud, networking: {type: unrestricted}}
 | `POST /api/claude/session/research` | 調査の対象を決める(11/6)。本文 `{ target_ids: [...] }`。返すのは正規化した対象の一覧 |
 | `GET /api/claude/session/research` | このセッションの対象と、保存済みの結果(11/6。画面の表示とつなぎ直し用) |
 | `DELETE /api/claude/session` | セッションを終える(§4.9)。すぐ 202 を返し、削除は裏で行う |
+| `GET /api/service-groups` | TypeSafe AI Jev を使えるか(§4.14。11/4 に足した。Claude の中継とは別) |
+| `POST /api/service-groups/judge` | service のグループ分けを Jev に確かめる(§4.14) |
 
 - ブラウザの `fetch` で読む(認証コードと取っ手のヘッダーが要るので `EventSource` は使わない)
 - 取っ手の無い要求・違う取っ手は 404(「AI との会話が見つかりません。新しく始めます」)。終えたセッションの取っ手は 410
@@ -326,7 +328,14 @@ CREATE TABLE research_results (                                                 
   facts_json TEXT, sources_json TEXT, note TEXT,
   checked_at TEXT NOT NULL, expires_at TEXT, origin TEXT NOT NULL  -- origin は web か demo
 );
+CREATE TABLE jev_usage (                                                                          -- 11/4。Jev の中継(§4.14)
+  day TEXT PRIMARY KEY,                       -- 日本時間の日付
+  targets INTEGER NOT NULL DEFAULT 0,         -- その日に Jev に問うた target の数(送る前に数える)
+  cost_microusd INTEGER NOT NULL DEFAULT 0    -- 応答の providerMetadata.gateway.cost の合計(マイクロドル。切り上げ)
+);
 ```
+
+- `jev_usage` は掃除で消さない(1日に1行。中身は数だけ)
 
 - **掃除**(サーバーの起動時と、15 分ごと):
   - `last_activity_at` から `DISPATCHER_SESSION_TTL_HOURS`(既定 24)時間たった行、または `delete_pending` の行を、§4.9 の「終える」と同じ手順で消す(アプリのコードが消してよいと利用者が決めた)
@@ -359,6 +368,8 @@ CREATE TABLE research_results (                                                 
 | 全体の1日の利用額 | 600 セント($6) | `DISPATCHER_DAILY_COST_CENTS` |
 | 1セッションの利用額 | 300 セント($3) | `DISPATCHER_SESSION_BUDGET_CENTS` |
 | 1回の調査の対象 | 30 件 | `DISPATCHER_RESEARCH_MAX_TARGETS` |
+| IP ごとの Jev の要求(§4.14) | 1 時間 6 回、1 日 20 回 | `DISPATCHER_JEV_PER_IP_HOUR`・`DISPATCHER_JEV_PER_IP_DAY` |
+| 全体の1日の Jev の target・額(§4.14) | 2,000 個、100 セント($1) | `DISPATCHER_JEV_TARGETS_PER_DAY`・`DISPATCHER_JEV_COST_CENTS_PER_DAY` |
 
 - 月の上限(Notion の決定、200 ドル)との関係:
   - セッションの数だけで抑えると、1日 20 回 × 3 ドル = 60 ドル/日、月 1,800 ドルまで行きうる。数では抑えきれない
@@ -376,6 +387,7 @@ CREATE TABLE research_results (                                                 
 - 残すもの:日時、回数(セッションの作成・削除、発言、ツールの呼び出しの数を名前ごと、調査の対象の数、保存した数)、エラーの種類(HTTP の状態、SDK の例外の型、`session.error` の `error.type`、`workflow_run` の `result.type` と `error.type`、回数制限の種類)、セッションを消したときの `cost_cents`・`usage.active_seconds`・`server_tool_use.web_search_requests`、行の ID
 - 残さないもの:発言、[画面の…] の行、ツールの入力と結果、調査の結果、システムプロンプト、API キー、認証コード、取っ手、IP アドレスの生の値、Anthropic のセッションの ID
 - ロガーは前の版(`dispatcher_server` のロガーに日時つきの出力)と同じ
+- Jev の中継(§4.14)は `dispatcher_server.jev` のロガーに、日時・target の数・答えの数・失敗の種類ごとの数・HTTP の状態ごとの数・例外の型の名前・転送先の名前・トークンと額の合計・かかった秒だけを残す。判断材料・State・質問・答え・service_id・事業者名・系統名・行き先・Jev のキー・IP アドレス・上流のエラーの本文は残さない。`httpx2`・`httpcore2`(と `httpx`・`httpcore`)のロガーは WARNING より上だけを出す
 
 ### 4.13 前の版から要らなくなるもの
 
@@ -384,6 +396,69 @@ CREATE TABLE research_results (                                                 
 - 考えの要約(`thinking` の SSE)。Managed Agents の `agent.thinking` は中身を持たない
 - 拒否のときの代わりのモデル(`fallbacks`)。Managed Agents での扱いは確かめていない(§12)
 - `server/src/dispatcher_server/claude_prompt.py`。システムプロンプトは `agents/coordinator.md` の本文に移した
+
+### 4.14 TypeSafe AI Jev の中継(11/4。service のグループ分け)
+
+設計は `docs/design-service-groups.md` §3(役割・送り先・State と質問・合わせ方)と §7.4・§7.5(取り決め)。ここにはサーバーの側で決めた細かい形を書く。コードは `server/src/dispatcher_server/service_groups.py`、テストは `server/tests/test_service_groups.py`、固定のデータは `server/tests/fixtures/jev_judge_request.json`・`jev_judge_response.json`。
+
+**エンドポイント**(認証コードは掛けない。11/3 の決定)
+
+| | 中身 |
+| --- | --- |
+| `GET /api/service-groups` | `{available, provider: "TypeSafe AI Jev", via: "Vercel AI Gateway", reason}`。`reason` は `null`・`"noKey"`(キーが無い)・`"badUrl"`(口が Vercel でない)・`"dailyLimit"`(全体の1日の target の数か額が上限に達した。0 に設定したときも) |
+| `POST /api/service-groups/judge` | 本文は `JevJudgeRequest`(設計 §7.5)。返すのは `JevJudgeResponse`。target の失敗は 200 の `failures` に入る |
+
+**断るとき**(`{"detail": "…"}`、日本語)
+
+| 状態 | とき | 文 |
+| --- | --- | --- |
+| 503 | キーが無い / 口が Vercel でない(上流に送らない) | 「Jev は使えません(キーが設定されていません)。規則だけで分けます」/「Jev は使えません(送り先の設定が正しくありません)。規則だけで分けます」 |
+| 413 | 本文が 256 KB を超える | 「判断材料が大きすぎます」 |
+| 422 | JSON でない・形が違う・つながりが違う | 「判断材料の形が正しくありません(場所:種類)」。場所は `services.3.routes` のような項目の道筋、種類は「ありません」「知らない項目です」「長すぎます」「多すぎます」「範囲の外です」「書き方が違います」「型が違います」など。送られた値と、知らない項目の名前は返さない(「(知らない項目)」と書く) |
+| 400 | `DISPATCHER_TRUST_PROXY=1` で X-Real-IP が読めない | 「接続元を確かめられません」 |
+| 429 | 全体の1日の上限 / IP ごとの1時間・1日 | 「Jev の1日の上限に達したため、規則だけで分けます。…」/「Jev に問う回数の上限に達しました(1 時間あたり)。…」/「(1 日あたり)。…」 |
+
+- 確かめの順:使えるか(503)→ 大きさ(413)→ 形(422)→ 接続元(400)→ 全体の1日(429)→ IP ごと(429)。形の誤りは IP ごとの回数に数えない。1要求(GTFS の読み込み1回)を1回と数える
+
+**入力の細かい形**(設計 §7.5 の型に足すこと。A の `buildJevRequest` はこれに合わせる)
+
+- 知らない項目は断る。項目は全部必須(`null` を取る項目も、項目そのものは省かない)。型は厳しく見る(数に真偽値や文字列を入れない。網羅率・重なりは 0 や 1 の整数でもよい)
+- `feed.period.start`・`end`、`runningDates` の要素は `YYYYMMDD`(数字8桁)。State では `YYYY-MM-DD` に直す
+- `firstDeparture`・`lastArrival` は `H:MM` か `HH:MM`(時は 24 を超えてよい。`25:10`)。秒は付けない
+- service_id は 1〜100 文字で、改行・タブなどの制御文字と書式の文字、対になっていないサロゲート(Unicode の Cc・Cf・Cs・Zl・Zp)を断る(質問の文と choice の名前に入るため。サロゲートは UTF-8 にできない)。A は、そういう service_id の service を target・候補に入れずに送る
+- 系統名・行き先(100 文字まで)と事業者名(200 文字まで)は長さと、対になっていないサロゲート(422)だけを見る(空や改行を含んでもよい。State の値にだけ入るので、GTFS の名前を理由に全体を断らない)
+- 数は 0 以上 1,000,000 以下の整数、網羅率・重なりは 0〜1
+- `services` の service_id は重ねない。target・候補の service_id は `services` にあること。同じ `(serviceId, role)` の target は1つ。role が `weekday` の target は候補を空に、`saturday`・`sundayHoliday` の target は候補を 1〜5 個(重ねない、target 自身を入れない)
+- **候補の service_id に `none` は使えない**(`weekday_counterpart` の「どれでもない」の名前と重なるため。422)。A は、`none` という service_id の候補を入れずに送る
+
+**State と質問**
+
+- target ごとに1つの要求。State は設計 §3.3 の形(数は文字列、網羅率・重なりは小数2桁の文字列)。値の無い項目(事業者名・始発・終着・運行日)は省く。同じ名前の系統が2つあれば便数を足して1つにする
+- `asked_as` は `weekday`・`saturday`・`sunday_or_holiday`。`candidates` は role が `weekday` のときは置かない
+- 質問は英語の固定の文。role が `weekday` なら `service_kind`(choice:`regular_weekday`・`limited_weekdays`・`specific_dates`)と `is_school_service`(boolean、criteria なし)。それ以外は `weekday_counterpart`(choice:候補の service_id を `candidates` の順に並べ、最後に `none`。説明は「The weekday service with service_id {id}.」)。文に入るブラウザの文字列は候補の service_id だけ
+
+**送り方**
+
+- 口・ヘッダーは設計 §3.2(`Authorization: Bearer <TYPESAFE_AI_VERCEL_KEY>`、`Content-Type: application/json`、`ai-gateway-protocol-version: 0.0.1`、`ai-evaluation-model-specification-version: 4`、`ai-model-id: <DISPATCHER_JEV_MODEL>`)。本文は `{state, questions}` だけ。リダイレクトはたどらない(301・302・307・308 は `upstream`)
+- `DISPATCHER_JEV_MODEL` は、英数字と `._/-` の 64 文字までで `typesafe-ai/` で始まるときだけ使う。ほかは既定の `typesafe-ai/jev`(同じキーで別のモデルを呼ばないため)
+- HTTP のクライアントは環境変数を読まない(`trust_env=False`。`HTTPS_PROXY`・`ALL_PROXY`・`SSL_CERT_FILE`・`.netrc` で、キーを付けた要求の通り道と信頼する証明書を変えさせない)
+- 判断材料は Vercel から TypeSafe AI に渡る。試しの応答の `fallbacksAvailable` に `digitalocean` があり、TypeSafe が答えないとき Vercel が DigitalOcean に回すことがある(キーは Vercel にだけ送る)。転送先を TypeSafe だけにする指定(`providerOptions.gateway.only` など)は、口が受け付けるかを確かめていないので送らない(設計 §6.2)
+- 口は `https` で、ホストが `ai-gateway.vercel.sh`、利用者名とポート(443 を除く)が無いときだけ使う。送る直前にもう一度確かめる
+- 並行は 4 つまで。target の数(`jev_usage.targets`)は送る直前に1つずつ数え、上限(数か額)に達していたら残りを送らず `budget` にする
+- 額(`jev_usage.cost_microusd`)は、送る直前に本文の大きさから見込んだ額(1 target あたり 360 マイクロドル以上。1 バイトあたり 0.02)を足し、`gateway.cost` が届いたら差を直す。`cost` が無い・読めない応答、200 以外、timeout では見込みの額のまま残す(上流が課金していることがあるため)。1 target の `cost` が $1 を超える値は読み違いとみなして使わない(WARNING を残す)。上限は足す前の額で判断するので、並行して送る数の分だけ上限を超えうる
+- 1要求 10 秒で `timeout`。429・503 は 0.5 秒・1 秒を空けて2回まで送り直す(送り直しても数えるのは1つ)。最後も 429 なら `rate_limited`、そのほかの 200 以外(401・403 を含む)と通信の失敗は `upstream`。全体で 30 秒を超えたら残りを打ち切って `timeout` にする
+- 答えの形が合わなければ `invalid_answer`:質問の名前がすべてあり、型が合い、choice が criteria の中にあり、`probabilities` の名前が criteria と同じで、確率が 0〜1、和が 1 ± 0.03。`providerMetadata.typesafe.confidence` の値は、あれば 0〜1(無ければ `confidence: null`)。ドキュメントに無い項目(`stats`・知らない質問の答えなど)は読み飛ばす
+- 額は、答えの形が合わなくても `gateway.cost` で直す
+- 返す `sent` は、上流に送ったバイト列を JSON として読み直したもの。`provider` は `providerMetadata.gateway.routing.finalProvider`(英数字と `._-` の 64 文字までのときだけ。ほかは `null`)。`model` は最初に答えた上流の `model`(無ければ `DISPATCHER_JEV_MODEL`)。`usage.inputTokens` は合計、`costUsd` は額の合計(額が1つも無ければ `null`)
+- `results`・`failures` は target の順
+- `failures` の要素は `{serviceId, role, error}`。上流に送った後の失敗(`timeout`・`rate_limited`・`upstream`・`invalid_answer`)には、送った本文 `sent` も入れる(画面の「送った情報を見る」で、外に出た判断材料を全部見せるため)。送る前の失敗(`budget` と、送る直前の確かめで口が使えなくなったとき)には入れない
+- HTTP のクライアントは `httpx2`(`anthropic` が使うものと同じ。本番の依存に明示した)。設計 §3.3 の「httpx は本番の依存にある」は誤りで、`httpx` は開発の依存だけにある
+
+**設定**:設計 §3.3 の表のとおり(`settings.py` の `jev_api_key`・`jev_url`・`jev_model`・`jev_requests_per_ip_hour`・`jev_requests_per_ip_day`・`jev_targets_per_day`・`jev_cost_cents_per_day`)。IP ごとの数え上げはメモリの中(`ratelimit.py` の `Kind` の `"jev"`)、全体の1日の数と額は SQLite の `jev_usage`(§4.10。再起動で 0 に戻らない)。接続元の決め方は Claude の中継と同じ関数(`ratelimit.client_address`)。`DISPATCHER_JEV_PER_IP_HOUR`・`_DAY` を 0 にすると全員が 429 になる(全体の数・額を 0 にしたときは `dailyLimit`)
+
+**テスト**:上流は `httpx2.MockTransport` に差し替え、本物の口は呼ばない。`tests/conftest.py` は、差し替えないテストのために、送ろうとすると失敗する偽物を既定で入れ、`TYPESAFE_AI_VERCEL_KEY` と `DISPATCHER_JEV_*` を消す。中継は送る先の例外を target の失敗として飲み込むので、偽物が呼ばれた回数を数え、後片付けで 1 回以上ならそのテストを失敗にする
+
+**固定のデータの出典**:`server/tests/fixtures/jev_judge_request.json` の数・系統名・行き先は北海道中央バスの GTFS(北海道オープンデータプラットフォーム、CC BY 4.0)から集計して加工した値。出典は `server/tests/fixtures/README.md` に書く
 
 ## 5. システムプロンプト
 

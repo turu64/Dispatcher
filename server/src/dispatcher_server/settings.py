@@ -27,6 +27,14 @@ DEFAULT_SESSIONS_PER_DAY = 20
 DEFAULT_RESEARCH_MAX_TARGETS = 30
 DEFAULT_RESEARCH_CACHE_DAYS = 7
 
+# TypeSafe AI Jev(Vercel AI Gateway 経由)。docs/design-service-groups.md §3.2・§3.3
+DEFAULT_JEV_URL = "https://ai-gateway.vercel.sh/v4/ai/evaluation-model"
+DEFAULT_JEV_MODEL = "typesafe-ai/jev"
+DEFAULT_JEV_PER_IP_HOUR = 6
+DEFAULT_JEV_PER_IP_DAY = 20
+DEFAULT_JEV_TARGETS_PER_DAY = 2000
+DEFAULT_JEV_COST_CENTS_PER_DAY = 100
+
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 # DISPATCHER_SESSION_SECRET が無く DISPATCHER_DEV=1 のときに使う、起動ごとの乱数(再起動で取っ手が無効になる)
@@ -189,6 +197,42 @@ def research_max_targets() -> int:
 
 def research_cache_days() -> int:
     return _positive("DISPATCHER_RESEARCH_CACHE_DAYS", DEFAULT_RESEARCH_CACHE_DAYS)
+
+
+# ---- TypeSafe AI Jev(service のグループ分けの確かめ) ----
+
+
+def jev_api_key() -> str | None:
+    """Vercel AI Gateway のキー。Vercel の口(jev_url の確かめを通ったもの)にだけ送る。値はログにも応答にも出さない。"""
+    return _env("TYPESAFE_AI_VERCEL_KEY")
+
+
+def jev_url() -> str:
+    """Jev の口。ホストが ai-gateway.vercel.sh で https のときだけ使う(確かめは service_groups.py)。"""
+    return _env("DISPATCHER_JEV_URL") or DEFAULT_JEV_URL
+
+
+def jev_model() -> str:
+    """ヘッダー ai-model-id に入れるモデルの名前。"""
+    return _env("DISPATCHER_JEV_MODEL") or DEFAULT_JEV_MODEL
+
+
+def jev_requests_per_ip_hour() -> int:
+    return _count("DISPATCHER_JEV_PER_IP_HOUR", DEFAULT_JEV_PER_IP_HOUR)
+
+
+def jev_requests_per_ip_day() -> int:
+    return _count("DISPATCHER_JEV_PER_IP_DAY", DEFAULT_JEV_PER_IP_DAY)
+
+
+def jev_targets_per_day() -> int:
+    """サーバー全体の、日本時間の1日に Jev に問う target の数の上限。0 なら Jev を使わない。"""
+    return _count("DISPATCHER_JEV_TARGETS_PER_DAY", DEFAULT_JEV_TARGETS_PER_DAY)
+
+
+def jev_cost_cents_per_day() -> int:
+    """サーバー全体の、日本時間の1日の Jev の額の上限(セント。応答の gateway.cost の合計)。0 なら Jev を使わない。"""
+    return _count("DISPATCHER_JEV_COST_CENTS_PER_DAY", DEFAULT_JEV_COST_CENTS_PER_DAY)
 
 
 # ---- 参照データ ----

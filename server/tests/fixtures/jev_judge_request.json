@@ -1,0 +1,145 @@
+{
+  "feed": {
+    "agency": "北海道中央バス",
+    "period": {
+      "start": "20261001",
+      "end": "20270331"
+    },
+    "daysInPeriod": {
+      "weekday": 122,
+      "saturday": 26,
+      "sundayHoliday": 34
+    }
+  },
+  "services": [
+    {
+      "serviceId": "S000001",
+      "tripCount": 4660,
+      "routeCount": 170,
+      "runningDays": {
+        "weekday": 119,
+        "saturday": 0,
+        "sundayHoliday": 0,
+        "total": 119
+      },
+      "coverage": {
+        "weekday": 0.98,
+        "saturday": 0.0,
+        "sundayHoliday": 0.0
+      },
+      "firstDeparture": "05:30",
+      "lastArrival": "23:38",
+      "routes": [
+        {
+          "name": "北７３新琴似２条線",
+          "trips": 130
+        },
+        {
+          "name": "北７２新川線",
+          "trips": 100
+        },
+        {
+          "name": "麻２４あいの里教育大線",
+          "trips": 91
+        }
+      ],
+      "headsigns": [
+        "地下鉄麻生駅",
+        "福住駅",
+        "小樽駅前",
+        "北２４条駅前",
+        "大谷地駅"
+      ],
+      "runningDates": null
+    },
+    {
+      "serviceId": "S000014",
+      "tripCount": 1,
+      "routeCount": 1,
+      "runningDays": {
+        "weekday": 103,
+        "saturday": 0,
+        "sundayHoliday": 0,
+        "total": 103
+      },
+      "coverage": {
+        "weekday": 0.84,
+        "saturday": 0.0,
+        "sundayHoliday": 0.0
+      },
+      "firstDeparture": "09:30",
+      "lastArrival": "10:00",
+      "routes": [
+        {
+          "name": "真１０６滝野線",
+          "trips": 1
+        }
+      ],
+      "headsigns": [
+        "真駒内駅"
+      ],
+      "runningDates": null
+    },
+    {
+      "serviceId": "S000027",
+      "tripCount": 667,
+      "routeCount": 122,
+      "runningDays": {
+        "weekday": 2,
+        "saturday": 25,
+        "sundayHoliday": 32,
+        "total": 59
+      },
+      "coverage": {
+        "weekday": 0.02,
+        "saturday": 0.96,
+        "sundayHoliday": 0.94
+      },
+      "firstDeparture": "05:52",
+      "lastArrival": "23:13",
+      "routes": [
+        {
+          "name": "５５白石本線",
+          "trips": 18
+        },
+        {
+          "name": "北７３新琴似２条線",
+          "trips": 18
+        },
+        {
+          "name": "北７２新川線",
+          "trips": 17
+        }
+      ],
+      "headsigns": [
+        "地下鉄麻生駅",
+        "福住駅",
+        "小樽駅前",
+        "北２４条駅前",
+        "白石営業所"
+      ],
+      "runningDates": null
+    }
+  ],
+  "targets": [
+    {
+      "serviceId": "S000027",
+      "role": "saturday",
+      "candidates": [
+        {
+          "serviceId": "S000001",
+          "routeOverlap": 0.72
+        },
+        {
+          "serviceId": "S000014",
+          "routeOverlap": 0.01
+        }
+      ]
+    },
+    {
+      "serviceId": "S000014",
+      "role": "weekday",
+      "candidates": []
+    }
+  ]
+}

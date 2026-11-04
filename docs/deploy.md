@@ -218,12 +218,17 @@ ${EDITOR:-nano} .env
 | `DISPATCHER_SESSIONS_PER_DAY` | `20` |
 | `DISPATCHER_RESEARCH_MAX_TARGETS` | `30` |
 | `DISPATCHER_RESEARCH_CACHE_DAYS` | `7` |
+| `TYPESAFE_AI_VERCEL_KEY` | Vercel AI Gateway のキー(TypeSafe AI Jev を使うとき。空なら service のグループ分けは規則だけで動く) |
+| `DISPATCHER_JEV_PER_IP_HOUR` / `_DAY` | `6` / `20`(GTFS の読み込み1回が1要求。`0` にすると全員が断られる) |
+| `DISPATCHER_JEV_TARGETS_PER_DAY` | `2000`(全体の1日に Jev に問う service の数) |
+| `DISPATCHER_JEV_COST_CENTS_PER_DAY` | `100`(全体の1日の Jev の額。$1。送る前に見込んだ額を数え、応答の額で直す。並行の数の分だけ超えうる) |
 
 次の変数は書きません。
 
 - `DISPATCHER_DEV`:開発用の緩みです。`compose.yaml` はこの変数をコンテナに渡さないので、`.env` に書いても効きませんが、書かないでください
 - `DISPATCHER_TRUST_PROXY`:`compose.yaml` が `1` に固定しています。`.env` では要りません
 - `DISPATCHER_DB`・`DISPATCHER_SAMPLE_GTFS`・`DISPATCHER_REF_DIR`:`compose.yaml` がボリュームの中の場所を渡しています
+- `DISPATCHER_JEV_URL`・`DISPATCHER_JEV_MODEL`:既定(`https://ai-gateway.vercel.sh/v4/ai/evaluation-model`・`typesafe-ai/jev`)のままにします。`DISPATCHER_JEV_URL` に `https` の `ai-gateway.vercel.sh` 以外を書くと、キーを送らないよう Jev は使えない扱いになります。`DISPATCHER_JEV_MODEL` が `typesafe-ai/` で始まらない・形が違うときは、既定のモデルを使います(同じキーで別のモデルを呼ばないため)
 
 値の取り出し方です。
 
@@ -239,7 +244,7 @@ jq -r '.resources["./environments/dispatcher.yaml"].id'   claude-lock.json
 sed -i "s|^DISPATCHER_SESSION_SECRET=.*|DISPATCHER_SESSION_SECRET=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')|" .env
 ```
 
-API キーは、シェルの履歴に残らないよう、エディタで `.env` に直接書いてください。
+API キー(`ANTHROPIC_API_KEY`・`TYPESAFE_AI_VERCEL_KEY`)は、シェルの履歴に残らないよう、エディタで `.env` に直接書いてください。
 
 確かめる点:
 
@@ -380,6 +385,7 @@ H=https://dispatcher.turutaru.com
 curl -s  $H/api/health                                  # {"status":"ok"}
 curl -s  $H/api/sample-gtfs                             # {"available":true,"name":"道北バス",...}
 curl -s  $H/api/claude/status                           # {"available":true,"tokenRequired":false}
+curl -s  $H/api/service-groups                          # {"available":true,"provider":"TypeSafe AI Jev","via":"Vercel AI Gateway","reason":null}
 curl -s  $H/api/research/demo | jq '.results | length'  # 30
 curl -s  $H/api/holidays -o /dev/null -w '%{http_code}\n'      # 200
 curl -s  $H/api/ref/6542 -o /dev/null -w '%{http_code}\n'      # 200(道北バスの範囲のメッシュ)
@@ -393,6 +399,7 @@ cd /srv/dispatcher
 docker compose exec server id                          # uid=10001(dispatcher)
 docker compose exec server ls -l /data/sample /data/ref | head
 docker compose exec server env | grep -E '^DISPATCHER_(PUBLIC|TRUST_PROXY|AGENT_VERSION|DEV)='   # PUBLIC=1・TRUST_PROXY=1・AGENT_VERSION=3 が出て、DEV は出ないこと
+docker compose exec server sh -c 'test -n "$TYPESAFE_AI_VERCEL_KEY" && echo jev-key-set'    # jev-key-set(値は出さない)
 ```
 
 `env` を全部出さないでください(API キーが画面に出ます)。
@@ -415,10 +422,13 @@ docker compose exec server env | grep -E '^DISPATCHER_(PUBLIC|TRUST_PROXY|AGENT_
 curl -s -X POST -H 'content-type: application/json' -d '{}' $H/api/claude/session
 ```
 - 認証コード(`DISPATCHER_TOKEN`)を設定しないので、AI の中継は 401 にならない。「認証コードが無いと 401」を確かめたいときだけ、`DISPATCHER_TOKEN` を一時的に設定する(`tokenRequired` が `true` になる)
+- `/api/service-groups` の `reason` が `noKey` ならキーが空、`badUrl` なら `DISPATCHER_JEV_URL` が Vercel の口でない、`dailyLimit` なら全体の1日の上限に達している(日本時間の翌日に戻る)。北海道中央バスなど単純でない GTFS を読み込むと、画面が自動で1回 Jev に問う(1 service あたり約 $0.0004)
 - 1回の会話の後、Console で利用額が増えている。サーバーの1日の額も増えている:
 
 ```bash
 docker compose exec server python -c "import sqlite3; print(sqlite3.connect('/var/lib/dispatcher/dispatcher.sqlite3').execute('select day, cents from cost_ledger order by day desc limit 7').fetchall())"
+# Jev の1日の数と額(マイクロドル)
+docker compose exec server python -c "import sqlite3; print(sqlite3.connect('/var/lib/dispatcher/dispatcher.sqlite3').execute('select day, targets, cost_microusd from jev_usage order by day desc limit 7').fetchall())"
 ```
 
 ## 10. 更新と戻し方
@@ -476,9 +486,11 @@ curl -s https://dispatcher.turutaru.com/api/claude/status      # {"available":fa
 
 サンプルの読み込み、地図、編集、出力はそのまま動きます(AI はボタンの外の補助です)。あわせて、Console で API キーを無効にします。全部を止めるときは `docker compose stop` です。
 
+Jev だけを止めるときは、同じように `.env` の `TYPESAFE_AI_VERCEL_KEY` を空にして `docker compose up -d` します(`/api/service-groups` が `"reason":"noKey"` になり、画面は規則だけで service を分けます)。
+
 ## 11. ログの見方
 
-server のログは、日時・回数・エラーの種類だけです。発言、ツールの入力と結果、調査の結果、API キー、取っ手、IP アドレスの生の値は残りません(`docs/interfaces-1105.md` §4.12)。web の nginx はアクセスログを残しません(`access_log off`)。uvicorn も `--no-access-log` で動いています。
+server のログは、日時・回数・エラーの種類だけです。発言、ツールの入力と結果、調査の結果、Jev に送った判断材料と答え(service_id・系統名・行き先を含む)、API キー、取っ手、IP アドレスの生の値は残りません(`docs/interfaces-1105.md` §4.12)。web の nginx はアクセスログを残しません(`access_log off`)。uvicorn も `--no-access-log` で動いています。
 
 ```bash
 cd /srv/dispatcher
@@ -498,6 +510,8 @@ docker compose logs web | tail                  # web の nginx のエラー(起
 | `agent エラー where=… type=… status=…` | Anthropic API の呼び出しの失敗 |
 | `agent session.error type=…` | セッションの中のエラー |
 | `research ツールの失敗` | 調査の保存などの失敗 |
+| `jev 判定しました targets=… answered=… failures=… statuses=… providers=…` | Jev に問うた(1行が1回の読み込み)。`failures` は失敗の種類ごとの数、`providers` は転送先(`typesafe-ai` 以外が出たら Vercel が別の会社に回した。試しの応答では予備の転送先に DigitalOcean があった) |
+| `jev 要求を断りました status=… reason=…` | Jev の中継が断った(`noKey`・`badUrl`・`jev_day_total`・`rate_jev_ip_hour`・`rate_jev_ip_day`・`shape`・`reference`・`body_size` など) |
 
 ```bash
 docker compose logs server | grep -E 'WARNING|reason=' | tail -50

@@ -3,6 +3,7 @@
 - agent_sessions:セッションの取っ手の行(Anthropic のセッションの ID はブラウザに渡さない)
 - cost_ledger:日本時間の日付ごとの利用額(セント。定価で数えた額)
 - research_targets・research_results:前提情報の調査(11/6。公開情報だけ)
+- jev_usage:日本時間の日付ごとの、Jev に問うた target の数と額(マイクロドル。service_groups.py)
 
 会話の中身・ツールの入力と結果・IP アドレスは入れない。
 時刻は UTC の ISO 8601 で、同じ書き方にそろえる(文字列の大小で比べるため)。
@@ -34,6 +35,9 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   tool_calls INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS cost_ledger (day TEXT PRIMARY KEY, cents INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS jev_usage (
+  day TEXT PRIMARY KEY, targets INTEGER NOT NULL DEFAULT 0, cost_microusd INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS research_targets (row_id TEXT, target_id TEXT, PRIMARY KEY (row_id, target_id));
 CREATE TABLE IF NOT EXISTS research_results (
   target_id TEXT PRIMARY KEY, kind TEXT, name TEXT, status TEXT,
@@ -208,6 +212,42 @@ class Store:
     def ledger_cents(self, day: str) -> int:
         rows = self._all("SELECT cents FROM cost_ledger WHERE day = ?", (day,))
         return int(rows[0]["cents"]) if rows else 0
+
+    # ---- jev_usage(Jev の中継。docs/design-service-groups.md §3.3) ----
+
+    def jev_usage(self, day: str) -> tuple[int, int]:
+        """日本時間の日付 day に Jev に問うた target の数と額(マイクロドル)。"""
+        rows = self._all("SELECT targets, cost_microusd FROM jev_usage WHERE day = ?", (day,))
+        return (int(rows[0]["targets"]), int(rows[0]["cost_microusd"])) if rows else (0, 0)
+
+    def reserve_jev_target(self, day: str, *, max_targets: int, max_microusd: int, estimate_microusd: int = 0) -> bool:
+        """上限の内なら target を1つ数え、見込みの額を足して True。上限(数か額)に達していれば数えずに False。
+
+        確かめと加算を1つの鍵の中で行う(並行して送る target が、同じ残りを見て上限を超えないため)。
+        額は足す前の値で判断するので、最後の1つの分(と並行して送る分)だけ上限を超えうる。
+        """
+        estimate = max(0, estimate_microusd)
+        with self._lock:
+            row = self._conn.execute("SELECT targets, cost_microusd FROM jev_usage WHERE day = ?", (day,)).fetchone()
+            targets, cost = (int(row["targets"]), int(row["cost_microusd"])) if row else (0, 0)
+            if targets >= max_targets or cost >= max_microusd:
+                return False
+            self._conn.execute(
+                "INSERT INTO jev_usage (day, targets, cost_microusd) VALUES (?, 1, ?)"
+                " ON CONFLICT(day) DO UPDATE SET targets = targets + 1, cost_microusd = cost_microusd + excluded.cost_microusd",
+                (day, estimate),
+            )
+            return True
+
+    def adjust_jev_cost(self, day: str, delta_microusd: int) -> None:
+        """額を delta だけ直す(応答の額と見込みの額の差。負もある)。0 より下にはしない。"""
+        if delta_microusd == 0:
+            return
+        self._execute(
+            "INSERT INTO jev_usage (day, targets, cost_microusd) VALUES (?, 0, MAX(0, ?))"
+            " ON CONFLICT(day) DO UPDATE SET cost_microusd = MAX(0, cost_microusd + ?)",
+            (day, delta_microusd, delta_microusd),
+        )
 
     # ---- 掃除 ----
 

@@ -14,6 +14,7 @@ from starlette.convertors import Convertor, register_url_convertor
 
 from . import agent_session, research
 from .agent_relay import router as agent_router
+from .service_groups import router as service_groups_router
 from .settings import load_env
 from .store import get_store
 
@@ -36,6 +37,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Dispatcher server", lifespan=lifespan)
 app.include_router(agent_router)
+# service のグループ分けを TypeSafe AI Jev に確かめる中継(docs/design-service-groups.md §3.3)
+app.include_router(service_groups_router)
 
 # リポジトリの最上位(server/src/dispatcher_server/app.py から3つ上)。
 # 開発時(uv の editable インストール)だけ正しい。本番は環境変数で場所を渡す。

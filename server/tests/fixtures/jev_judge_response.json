@@ -1,0 +1,207 @@
+{
+  "model": "typesafe-ai/jev",
+  "results": [
+    {
+      "serviceId": "S000027",
+      "role": "saturday",
+      "provider": "typesafe-ai",
+      "sent": {
+        "state": {
+          "feed": {
+            "agency": "北海道中央バス",
+            "period": "2026-10-01 to 2027-03-31",
+            "days_in_period": {
+              "weekday": "122",
+              "saturday": "26",
+              "sunday_or_holiday": "34"
+            }
+          },
+          "target": {
+            "service_id": "S000027",
+            "asked_as": "saturday",
+            "trips": "667",
+            "route_count": "122",
+            "running_days": {
+              "total": "59",
+              "weekday": "2",
+              "saturday": "25",
+              "sunday_or_holiday": "32"
+            },
+            "coverage": {
+              "weekday": "0.02",
+              "saturday": "0.96",
+              "sunday_or_holiday": "0.94"
+            },
+            "first_departure": "05:52",
+            "last_arrival": "23:13",
+            "routes_with_trip_counts": {
+              "５５白石本線": "18",
+              "北７３新琴似２条線": "18",
+              "北７２新川線": "17"
+            },
+            "headsigns": [
+              "地下鉄麻生駅",
+              "福住駅",
+              "小樽駅前",
+              "北２４条駅前",
+              "白石営業所"
+            ]
+          },
+          "candidates": [
+            {
+              "service_id": "S000001",
+              "trips": "4660",
+              "route_count": "170",
+              "running_days": {
+                "total": "119",
+                "weekday": "119",
+                "saturday": "0",
+                "sunday_or_holiday": "0"
+              },
+              "coverage": {
+                "weekday": "0.98",
+                "saturday": "0.00",
+                "sunday_or_holiday": "0.00"
+              },
+              "first_departure": "05:30",
+              "last_arrival": "23:38",
+              "routes_with_trip_counts": {
+                "北７３新琴似２条線": "130",
+                "北７２新川線": "100",
+                "麻２４あいの里教育大線": "91"
+              },
+              "headsigns": [
+                "地下鉄麻生駅",
+                "福住駅",
+                "小樽駅前",
+                "北２４条駅前",
+                "大谷地駅"
+              ],
+              "route_overlap_with_target": "0.72"
+            },
+            {
+              "service_id": "S000014",
+              "trips": "1",
+              "route_count": "1",
+              "running_days": {
+                "total": "103",
+                "weekday": "103",
+                "saturday": "0",
+                "sunday_or_holiday": "0"
+              },
+              "coverage": {
+                "weekday": "0.84",
+                "saturday": "0.00",
+                "sunday_or_holiday": "0.00"
+              },
+              "first_departure": "09:30",
+              "last_arrival": "10:00",
+              "routes_with_trip_counts": {
+                "真１０６滝野線": "1"
+              },
+              "headsigns": [
+                "真駒内駅"
+              ],
+              "route_overlap_with_target": "0.01"
+            }
+          ]
+        },
+        "questions": {
+          "weekday_counterpart": {
+            "type": "choice",
+            "instructions": "Weekdays are switched to the Saturday timetable. The trips of the service in `target` then run on weekdays, in place of the trips of one weekday service. Which service in `candidates` is the weekday service whose trips the trips of `target` replace? Compare `routes_with_trip_counts`, `route_overlap_with_target` (from 0 to 1, how much the routes of the candidate overlap the routes of `target`), the operating hours (`first_departure`, `last_arrival`), the running days and the service_id naming. A candidate may have a few extra routes or a different number of trips. Choose none only if no candidate runs most of the routes of `target`.",
+            "criteria": {
+              "S000001": "The weekday service with service_id S000001.",
+              "S000014": "The weekday service with service_id S000014.",
+              "none": "No candidate runs most of the routes of the target, so none of them is its weekday counterpart."
+            }
+          }
+        }
+      },
+      "weekdayCounterpart": {
+        "choice": "S000001",
+        "probabilities": {
+          "S000001": 0.95,
+          "S000014": 0.03,
+          "none": 0.02
+        },
+        "confidence": 0.93
+      }
+    },
+    {
+      "serviceId": "S000014",
+      "role": "weekday",
+      "provider": "typesafe-ai",
+      "sent": {
+        "state": {
+          "feed": {
+            "agency": "北海道中央バス",
+            "period": "2026-10-01 to 2027-03-31",
+            "days_in_period": {
+              "weekday": "122",
+              "saturday": "26",
+              "sunday_or_holiday": "34"
+            }
+          },
+          "target": {
+            "service_id": "S000014",
+            "asked_as": "weekday",
+            "trips": "1",
+            "route_count": "1",
+            "running_days": {
+              "total": "103",
+              "weekday": "103",
+              "saturday": "0",
+              "sunday_or_holiday": "0"
+            },
+            "coverage": {
+              "weekday": "0.84",
+              "saturday": "0.00",
+              "sunday_or_holiday": "0.00"
+            },
+            "first_departure": "09:30",
+            "last_arrival": "10:00",
+            "routes_with_trip_counts": {
+              "真１０６滝野線": "1"
+            },
+            "headsigns": [
+              "真駒内駅"
+            ]
+          }
+        },
+        "questions": {
+          "service_kind": {
+            "type": "choice",
+            "instructions": "The service in `target` is judged as a weekday service (it may also run on a few other days). On which weekdays does it run? Base your answer on `target.running_days`, `target.coverage` (the share of the days of each type in `feed.period` on which the service runs, from 0 to 1), `target.running_dates` (given only when the service runs on 10 days or fewer), the route names and the headsigns.",
+            "criteria": {
+              "regular_weekday": "Runs on almost all ordinary weekdays (Monday to Friday, not holidays) in the period.",
+              "limited_weekdays": "Runs only on a clearly limited subset of the weekdays, such as university term days or one particular day of the week.",
+              "specific_dates": "Runs on only a few specific dates, such as event days or a temporary detour."
+            }
+          },
+          "is_school_service": {
+            "type": "boolean",
+            "instructions": "Is the service in `target` mainly for students going to a university or school, running only on class days? Judge from the route names, the headsigns and the running days."
+          }
+        }
+      },
+      "serviceKind": {
+        "choice": "regular_weekday",
+        "probabilities": {
+          "regular_weekday": 0.82,
+          "limited_weekdays": 0.15,
+          "specific_dates": 0.03
+        },
+        "confidence": 0.88
+      },
+      "schoolService": {
+        "probability": 0.05
+      }
+    }
+  ],
+  "failures": [],
+  "usage": {
+    "inputTokens": 12130,
+    "costUsd": 0.000509
+  }
+}

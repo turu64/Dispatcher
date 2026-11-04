@@ -34,7 +34,7 @@ interface GtfsState {
   servicePeriod: { start: string; end: string } | null
   /** 読み込んだ GTFS を入れる。停留所と運行期間もここで求める */
   setLoaded: (loaded: LoadedGtfs) => void
-  /** 読み込み直す前に、前の GTFS を捨てる */
+  /** 読み込み直す前・削除したときに、前の GTFS を捨てる(store/reset.ts の resetAll) */
   clear: () => void
 }
 

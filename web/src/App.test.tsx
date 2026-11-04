@@ -145,6 +145,19 @@ describe('画面の骨組み', () => {
     expect(screen.getByRole('heading', { name: '1. GTFS を読み込む' })).toBeTruthy()
   })
 
+  it('読み込んだ GTFS を削除したら、読み込む前と同じく地図の中央に読み込みの案内を出し、読み込みより先の手順を開けない', () => {
+    load()
+    render(<App />)
+    expect(screen.queryByText('左の欄から GTFS を読み込んでください')).toBeNull()
+    expect(stepButton('3. 減便の方針').disabled).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '読み込んだ GTFS を削除' }))
+    fireEvent.click(within(screen.getByRole('group', { name: '読み込んだ GTFS の削除の確認' })).getByRole('button', { name: '削除する' }))
+    expect(within(screen.getByRole('main', { name: '地図' })).getByText('左の欄から GTFS を読み込んでください')).toBeTruthy()
+    expect(stepButton('3. 減便の方針').disabled).toBe(true)
+    expect(stepButton('1. 読み込み').getAttribute('aria-current')).toBe('step')
+    expect(tab('編集').getAttribute('aria-selected')).toBe('true')
+  })
+
   it('読み込んだあとは見出しからどの手順へも移れ、見出しの番号は一覧の並びになる。次へ・戻るでも移る', () => {
     load()
     render(<App />)

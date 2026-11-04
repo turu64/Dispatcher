@@ -129,7 +129,7 @@ interface ReachState {
 
   /**
    * 読み込んだ GTFS(基準)を渡す(null で捨てる)。起点を選び、既定の日付を選び、計算する。編集後は捨てる。
-   * 呼ぶのは LoadStep の open() だけ。**編集後のフィードを渡さない**(起点が選び直され、追記3の問題が戻る)
+   * 呼ぶのは LoadStep の open() と、GTFS の読み込み直し・削除の初期化(store/reset.ts の resetAll。null を渡す)だけ。**編集後のフィードを渡さない**(起点が選び直され、追記3の問題が戻る)
    */
   setSource: (source: ReachSource | null) => void
   /**
@@ -211,6 +211,20 @@ function messageOf(e: unknown): string {
   return message || '到達圏を計算できませんでした。'
 }
 
+/**
+ * 地図の見せ方の初期値(塗り分けと表示する時間帯)。GTFS を削除・読み込み直したとき(store/reset.ts の resetAll)も、この値に戻す。
+ * しきい値・分数・時間帯の幅・区分は利用者の設定なので、読み込み直しでは残す(削除では reachSettingDefaults に戻す)
+ */
+export const REACH_VIEW_DEFAULTS: Readonly<Pick<ReachState, 'compareMode' | 'selectedHour'>> = { compareMode: 'diff', selectedHour: 6 }
+
+/**
+ * 到達圏の条件(利用者の設定)の初期値。しきい値・分数(params)・時間帯の幅・区分。GTFS を削除したとき(store/reset.ts の
+ * resetAll('delete'))だけ、この値に戻す(読み込み直しでは残す)。params は中を書き換えるので、使うたびに写す
+ */
+export function reachSettingDefaults(): Pick<ReachState, 'params' | 'stepHours' | 'fallbackClass'> {
+  return { params: cloneParams(DEFAULT_REACH_PARAMS), stepHours: 3, fallbackClass: 'suburban' }
+}
+
 /** 到達圏の条件と結果を持つ store を作る */
 export function createReachStore(deps: ReachStoreDeps) {
   return create<ReachState>()((set, get) => {
@@ -269,13 +283,11 @@ export function createReachStore(deps: ReachStoreDeps) {
     return {
       source: null,
       edited: null,
-      compareMode: 'diff',
+      compareMode: REACH_VIEW_DEFAULTS.compareMode,
       origins: null,
       date: null,
-      stepHours: 3,
-      selectedHour: 6,
-      params: cloneParams(DEFAULT_REACH_PARAMS),
-      fallbackClass: 'suburban',
+      selectedHour: REACH_VIEW_DEFAULTS.selectedHour,
+      ...reachSettingDefaults(),
       ref: { status: 'idle' },
       computing: false,
       error: null,

@@ -21,6 +21,12 @@ export default function PolicyStep() {
   const versions = useEditStore((s) => s.versions)
   const draft = useEditStore((s) => s.draft)
   const [editing, setEditing] = useState(false)
+  // GTFS を削除・読み込み直したら(基準が変わったら)、「方針を変える」の途中の状態を捨てる
+  const [editingBase, setEditingBase] = useState(base)
+  if (base !== editingBase) {
+    setEditingBase(base)
+    setEditing(false)
+  }
   const plan = useMemo(() => planOf(history), [history])
   const reason = useMemo(() => policyReasonOf(history), [history])
   const version = lastVersion({ versions })

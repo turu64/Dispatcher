@@ -405,6 +405,20 @@ describe('GTFS を読み込み直したら、DELETE を送り、表示と取っ�
     expect(fake.removed).toEqual([])
   })
 
+  it('GTFS を削除したとき(store/reset.ts):DELETE は1回だけ送り、知らせも消す。次に読み込んでも知らせは出さない', async () => {
+    const { s, fake, reload } = setup()
+    await s().send('一つ目')
+    // resetAll('delete') の順:基準を捨てる(見張りが会話を終える)→ 知らせを残さずに消す
+    reload()
+    s().reset()
+    expect(fake.removed).toEqual(['h1'])
+    expect(s().items).toEqual([])
+    // 次の GTFS を読み込む(基準が変わる)
+    reload()
+    expect(s().items).toEqual([])
+    expect(fake.removed).toEqual(['h1'])
+  })
+
   it('ページを閉じるとき(endSession)も DELETE を送る', async () => {
     const { s, fake } = setup()
     await s().send('一つ目')

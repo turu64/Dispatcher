@@ -99,8 +99,11 @@ export interface EditState {
   undoAll: () => void
   /** Claude に伝えた分を消す(§10 のチャットが送るときに呼ぶ) */
   takeDraftNotices: () => DraftNotice[]
-  /** 読み込み直しで呼ぶ。履歴と下書きを捨てる */
-  setBase: (base: BaseGtfs | null) => void
+  /**
+   * 読み込み直し・削除で呼ぶ(store/reset.ts の resetAll)。履歴と下書きを捨てる。
+   * resetDraftIds で下書きの番号も 1 からに戻す(GTFS の削除だけ。会話の発言も消えるので、番号が重ならない)
+   */
+  setBase: (base: BaseGtfs | null, options?: { resetDraftIds?: boolean }) => void
   /**
    * 下書きの検証の結果(issues)を、今の祝日一覧で作り直す。祝日一覧は下書きを作った(propose)あとに読めることがあり、
    * 下書きの issues は propose のときに固定されるため。祝日の確かめ(holiday*)は warning・info なので、承認を止める判定は変わらない。
@@ -190,7 +193,8 @@ export function draftName(id: string): string {
 /** 編集の store を作る(テストでは時計と到達圏へのつなぎを差し替える) */
 export function createEditStore(deps: EditStoreDeps) {
   const store = create<EditState>()((set, get) => {
-    // 下書きの番号。読み込み直しても戻さない(Claude との会話で番号が重ならないように)
+    // 下書きの番号。読み込み直しても戻さない(会話の欄に残る前の発言と、番号が重ならないように)。
+    // GTFS の削除では会話の発言も消すので、setBase の resetDraftIds で 1 に戻す
     let nextDraft = 1
     // 到達圏の store に最後に渡した値(同じものを続けて渡して、計算し直させないため)
     let published: { feed: GtfsFeed; draft: boolean } | null = null
@@ -366,7 +370,8 @@ export function createEditStore(deps: EditStoreDeps) {
         return notices
       },
 
-      setBase(base) {
+      setBase(base, options) {
+        if (options?.resetDraftIds) nextDraft = 1
         set({ base, history: [], versions: [], draft: null, draftNotices: [], feedVersion: '' })
         publish()
       },

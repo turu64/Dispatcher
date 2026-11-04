@@ -65,7 +65,7 @@ interface ResearchState {
    * AI は呼ばない。読めた対象の数を返す
    */
   loadDemo: (candidateIds: ReadonlySet<string>, fetchImpl?: () => Promise<DemoResult[]>) => Promise<number>
-  /** GTFS を読み込み直したとき。施設の読み込み・選択・結果を消す */
+  /** GTFS を読み込み直したとき・削除したとき(store/reset.ts の resetAll)。施設の読み込み・選択・結果を消す */
   reset: () => void
 }
 
@@ -114,14 +114,17 @@ export const useResearchStore = create<ResearchState>()((set, get) => ({
   },
 
   async loadDemo(candidateIds, fetchImpl = () => fetchDemoResults()) {
-    set({ demo: { status: 'loading' } })
+    const loading: DemoState = { status: 'loading' }
+    set({ demo: loading })
     let list: DemoResult[]
     try {
       list = await fetchImpl()
     } catch (e) {
-      set({ demo: { status: 'error', message: e instanceof Error ? e.message : String(e) } })
+      if (get().demo === loading) set({ demo: { status: 'error', message: e instanceof Error ? e.message : String(e) } })
       return 0
     }
+    // 読んでいる間に GTFS を削除した・読み込み直した(reset)なら捨てる
+    if (get().demo !== loading) return 0
     const usable = list.filter((r) => candidateIds.has(r.targetId))
     get().mergeResults(usable)
     if (usable.length > 0) set({ selected: usable.map((r) => r.targetId).slice(0, get().maxTargets) })

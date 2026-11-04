@@ -96,7 +96,9 @@ function ChatAnnouncer({ store, open }: { store: ChatStoreHook; open: boolean })
   const [message, setMessage] = useState('')
   if (item !== seen) {
     setSeen(item)
-    if (!open && item && !(item.kind === 'assistant' && item.streaming)) setMessage(announceText(item))
+    // GTFS の削除・読み込み直しで発言が空になったら、前の知らせも消す
+    if (item === undefined) setMessage('')
+    else if (!open && !(item.kind === 'assistant' && item.streaming)) setMessage(announceText(item))
   }
   if (open && message !== '') setMessage('')
   return (

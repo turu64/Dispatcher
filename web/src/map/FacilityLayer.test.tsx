@@ -304,6 +304,27 @@ describe('FacilityLayer', () => {
     expect([...column.children].indexOf(picked)).toBeGreaterThan([...column.children].indexOf(legend))
     expect(picked.className).not.toMatch(/(^|\s)(absolute|bottom-)/)
   })
+
+  it('GTFS を削除・読み込み直したら、押した記号の名前を消す(次の GTFS で前提情報の手順を開いても出さない)', async () => {
+    const { map, layers } = fakeMap()
+    const { rerender } = render(<FacilityLayer visible />)
+    await waitFor(() => expect(layers.has(FACILITIES_LAYER)).toBe(true))
+    const onClick = map.on.mock.calls.find((c) => c[0] === 'click')![2] as (e: unknown) => void
+    act(() => onClick({ features: [{ properties: { name: '前の病院', kind: 'hospital', symbol: 'hospital' } }] }))
+    expect(screen.getByRole('status').textContent).toContain('前の病院')
+
+    // 手順「読み込み」に戻って削除し(部品は外れず、隠れるだけ)、次の GTFS を読み込んで前提情報の手順を開き直す
+    rerender(<FacilityLayer visible={false} />)
+    act(() => useGtfsStore.getState().clear())
+    act(() => {
+      useGtfsStore.setState({ feed: smallFeed(), stops: STOPS })
+      const { facilities, sources } = mergeFacilityFiles([FILE])
+      useResearchStore.setState({ facilities: { status: 'ready', key: facilityMeshes(STOPS).join(','), facilities, sources } })
+    })
+    rerender(<FacilityLayer visible />)
+    expect(screen.getByRole('group', { name: '施設の凡例' })).toBeTruthy()
+    expect(screen.queryByRole('status')).toBeNull()
+  })
 })
 
 describe('地図の store の強調', () => {

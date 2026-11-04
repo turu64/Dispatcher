@@ -1,6 +1,8 @@
-import { FileArchiveIcon, TriangleAlertIcon } from 'lucide-react'
+import { FileArchiveIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import StepSection from '@/components/StepSection'
+import { InlineConfirm } from '@/components/steps/editParts'
+import { deleteConfirmMessage } from '@/components/steps/loadText'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Attachment,
@@ -24,6 +26,7 @@ import { loadGtfsInWorker } from '@/gtfs/workerClient'
 import { useEditStore } from '@/store/edit'
 import { useGtfsStore } from '@/store/gtfs'
 import { useReachStore } from '@/store/reach'
+import { resetAll } from '@/store/reset'
 
 type SampleState = { status: 'checking' } | { status: 'ready'; info: SampleGtfsInfo } | { status: 'unreachable' }
 
@@ -115,6 +118,12 @@ export default function LoadStep() {
   const [attempt, setAttempt] = useState<Attempt | null>(null)
   const [error, setError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  // 「読み込んだ GTFS を削除」を押して、確かめている間
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const deleteButton = useRef<HTMLButtonElement>(null)
+  const pickButton = useRef<HTMLButtonElement>(null)
+  const pendingDraft = useEditStore((s) => s.draft)
+  const committedEdits = useEditStore((s) => s.history.length)
   const label = useGtfsStore((s) => s.label)
   const feed = useGtfsStore((s) => s.feed)
   const loadedSample = useGtfsStore((s) => s.sample)
@@ -130,16 +139,15 @@ export default function LoadStep() {
   // ファイル選択とサンプルは、どちらもここから同じ読み込み処理を通す。
   // ZIP の展開と CSV の読み取りは Web Worker で行い、画面を止めない
   async function open(kind: Busy, getData: () => Promise<Blob>, name: string, knownSize: number | null, sampleInfo?: SampleGtfsInfo) {
-    const { clear, setLoaded } = useGtfsStore.getState()
+    const { setLoaded } = useGtfsStore.getState()
     const reach = useReachStore.getState()
     const edit = useEditStore.getState()
     setBusy(kind)
     setAttempt({ name, size: knownSize, isSample: kind === 'sample', status: 'loading' })
     setError(null)
-    clear()
-    reach.setSource(null)
-    // 前の GTFS の編集の履歴と下書きも捨てる
-    edit.setBase(null)
+    setConfirmingDelete(false)
+    // 前の GTFS と、その編集の履歴・下書き・到達圏・前提情報・AI との会話を捨てる(削除と同じ初期化。store/reset.ts)
+    resetAll('reload')
     try {
       const blob = await getData()
       // サンプルの大きさは、取ってきた ZIP のバイト数から出す
@@ -160,6 +168,17 @@ export default function LoadStep() {
     } finally {
       setBusy(null)
     }
+  }
+
+  // 読み込んだ GTFS を削除して、画面を開いた直後と同じにする(読み込み直しと同じ初期化を通す)
+  function removeLoaded() {
+    resetAll('delete')
+    setConfirmingDelete(false)
+    setAttempt(null)
+    setError(null)
+    // 同じファイルをもう一度選べるように、ファイルの選択も空に戻す
+    if (fileInput.current) fileInput.current.value = ''
+    pickButton.current?.focus()
   }
 
   const sampleInfo = sample.status === 'ready' ? sample.info : undefined
@@ -198,6 +217,7 @@ export default function LoadStep() {
           }}
         />
         <Button
+          ref={pickButton}
           type="button"
           variant="outline"
           loading={busy === 'file'}
@@ -254,12 +274,38 @@ export default function LoadStep() {
               <AttachmentTitle>{shown.name}</AttachmentTitle>
               <AttachmentDescription>{details.join('・')}</AttachmentDescription>
             </AttachmentContent>
-            {shown.isSample && (
-              <AttachmentActions>
-                <Badge variant="secondary">サンプル</Badge>
+            {(shown.isSample || shown.status === 'done') && (
+              <AttachmentActions className="gap-1">
+                {shown.isSample && <Badge variant="secondary">サンプル</Badge>}
+                {shown.status === 'done' && (
+                  <Button
+                    ref={deleteButton}
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    disabled={busy !== null}
+                    aria-expanded={confirmingDelete}
+                    onClick={() => setConfirmingDelete(true)}
+                  >
+                    <Trash2Icon aria-hidden="true" data-icon="inline-start" />
+                    読み込んだ GTFS を削除
+                  </Button>
+                )}
               </AttachmentActions>
             )}
           </Attachment>
+        )}
+        {confirmingDelete && shown?.status === 'done' && (
+          <InlineConfirm
+            label="読み込んだ GTFS の削除の確認"
+            message={deleteConfirmMessage({ draft: pendingDraft, committed: committedEdits, sample: shown.isSample })}
+            confirmLabel="削除する"
+            onConfirm={removeLoaded}
+            onCancel={() => {
+              setConfirmingDelete(false)
+              deleteButton.current?.focus()
+            }}
+          />
         )}
         {error && (
           <Alert variant="destructive">

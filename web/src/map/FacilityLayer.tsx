@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { OTHER_STOP_RADIUS_M } from '@/ref/busstops'
 import { FACILITY_KIND_LABELS, type FacilityKind, type ResearchCandidate } from '@/ref/facilities'
+import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
 import { useResearchView } from '@/store/research'
 import { useStepStore } from '@/store/steps'
@@ -122,6 +123,13 @@ export function FacilityLayer({ visible }: { visible: boolean }) {
   const otherStops = useMemo(() => (overlaps ? distinctOtherStops(overlaps.values()) : 0), [overlaps])
   // 押した記号の名前(地図の右上に出す)
   const [picked, setPicked] = useState<{ name: string; detail: string; kind: FacilityKind | null; symbol: FacilitySymbolKind | null } | null>(null)
+  // GTFS を削除・読み込み直したら、押した記号の名前を消す(この部品は手順を移っても外れないので、前の GTFS の施設名が残るため)
+  const feed = useGtfsStore((s) => s.feed)
+  const [pickedFeed, setPickedFeed] = useState(feed)
+  if (feed !== pickedFeed) {
+    setPickedFeed(feed)
+    setPicked(null)
+  }
   // レイヤーは、前提情報の手順を初めて開いたときに足す(開かない人の地図に記号の画像を足さない)。足した後は隠すだけ
   const [used, setUsed] = useState(visible)
   // 記号の画像とレイヤーを足し終えた回数(足し終えたら、点と表示の状態を渡し直す)

@@ -1,13 +1,22 @@
 import { Button } from '@/components/ui/button'
 import HolidayCalendar from '@/components/HolidayCalendar'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { PolicyKind } from '@/gtfs/edit/ops'
 import { holidaysBetween, uncoveredRanges } from '@/gtfs/holidays'
 import { formatDateJa } from '@/lib/dates'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
-import { POLICY_KIND_LABELS } from '../editText'
 
-/** 方針の種類(平日を土曜に・平日を日祝に) */
+/** 入れ替えに使うダイヤの選択肢(値は方針の種類) */
+const TARGET_OPTIONS: ReadonlyArray<{ kind: PolicyKind; label: string }> = [
+  { kind: 'weekdayToSaturday', label: '土曜' },
+  { kind: 'weekdayToSundayHoliday', label: '日祝' },
+]
+
+/**
+ * 方針の種類(平日を土曜に・平日を日祝に)。「[平日] を [土曜] ダイヤに変更する」の文の形で、2つのセレクトで選ぶ。
+ * 変更するダイヤは今は平日だけ(方針の種類が平日の入れ替えだけのため)。セレクトの形は、変更後のダイヤとそろえて文として読めるようにする
+ */
 export function PolicyKindField({
   kind,
   onChange,
@@ -21,14 +30,32 @@ export function PolicyKindField({
   return (
     <fieldset className="flex flex-col gap-1.5">
       <legend className="mb-1 text-sm font-medium">ダイヤの入れ替え方</legend>
-      {(['weekdayToSaturday', 'weekdayToSundayHoliday'] as const).map((k) => (
-        <label key={k} className="flex items-center gap-2 text-sm">
-          <input type="radio" name="policy-kind" value={k} checked={kind === k} onChange={() => onChange(k)} className="size-4 accent-primary" />
-          {POLICY_KIND_LABELS[k]}
-        </label>
-      ))}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
+        <Select value="weekday">
+          <SelectTrigger size="sm" aria-label="変更するダイヤ" className="min-w-20">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="weekday">平日</SelectItem>
+          </SelectContent>
+        </Select>
+        <span>を</span>
+        <Select value={kind} onValueChange={(v) => onChange(v as PolicyKind)}>
+          <SelectTrigger size="sm" aria-label="変更後のダイヤ" className="min-w-20">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {TARGET_OPTIONS.map((o) => (
+              <SelectItem key={o.kind} value={o.kind}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span>ダイヤに変更する</span>
+      </div>
       {sameSatSun && (
-        <p className="text-xs text-muted-foreground">この GTFS では土曜と日祝が同じ時刻表のため、どちらの入れ替え方でも同じ結果になります。</p>
+        <p className="text-xs text-muted-foreground">この GTFS では土曜と日祝が同じ時刻表のため、どちらに変更しても同じ結果になります。</p>
       )}
     </fieldset>
   )

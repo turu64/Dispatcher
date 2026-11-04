@@ -115,6 +115,18 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+// Radix の Select は jsdom に無い scrollIntoView・ポインターの捕捉を使う
+Element.prototype.scrollIntoView ??= () => {}
+Element.prototype.hasPointerCapture ??= () => false
+Element.prototype.releasePointerCapture ??= () => {}
+
+/** shadcn/ui(Radix)の Select をキーボードで開いて、選択肢を選ぶ */
+function chooseOption(scope: HTMLElement, selectName: string, optionName: string) {
+  const trigger = within(scope).getByRole('combobox', { name: selectName })
+  fireEvent.keyDown(trigger, { key: 'Enter' })
+  fireEvent.click(screen.getByRole('option', { name: optionName }))
+}
+
 describe('編集の画面の流れ', () => {
   // 手順を通しで描くので、全件を並列で走らせると既定の 5 秒を超えることがある(単独なら 2 秒ほど)
   it('方針の適用 → 確かめ → 承認 → 比較 → 足し戻し → 元に戻す → 出力を、小さなフィードで通す', async () => {
@@ -229,13 +241,13 @@ describe('編集の画面の流れ', () => {
     load()
     renderSteps()
     const policy = openStep('policy', POLICY)
-    fireEvent.click(within(policy).getByLabelText('平日を日祝ダイヤに'))
+    chooseOption(policy, '変更後のダイヤ', '日祝')
     expect(within(policy).getByLabelText('入れ替えに使うダイヤ(日祝)')).toHaveProperty('value', 'SU')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
     fireEvent.click(within(policy).getByRole('button', { name: 'やめる' }))
     expect(useEditStore.getState().draft).toBeNull()
     expect(useEditStore.getState().history).toEqual([])
-    expect(within(policy).getByLabelText('平日を日祝ダイヤに')).toHaveProperty('checked', true)
+    expect(within(policy).getByRole('combobox', { name: '変更後のダイヤ' }).textContent).toBe('日祝')
   })
 
   it('期間を 7 日以下にすると、方針の確かめで警告し、承認はできるが出力は止まる', async () => {

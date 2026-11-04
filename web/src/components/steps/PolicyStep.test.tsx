@@ -58,7 +58,12 @@ describe('PolicyStep', () => {
 
   it('入力の欄の名前:ダイヤの入れ替え方と、減便の理由(補足は欄外)', () => {
     render(<PolicyStep />)
-    expect(screen.getByRole('group', { name: 'ダイヤの入れ替え方' })).toBeTruthy()
+    const kind = screen.getByRole('group', { name: 'ダイヤの入れ替え方' })
+    // 「[平日] を [土曜] ダイヤに変更する」の文の形の2つのセレクト(ラジオボタンは使わない)
+    expect(within(kind).queryAllByRole('radio')).toHaveLength(0)
+    expect(within(kind).getByRole('combobox', { name: '変更するダイヤ' }).textContent).toBe('平日')
+    expect(within(kind).getByRole('combobox', { name: '変更後のダイヤ' }).textContent).toBe('土曜')
+    expect(kind.textContent).toContain('ダイヤに変更する')
     const reason = screen.getByRole('group', { name: '減便の理由' })
     expect(reason.textContent).toContain('変更指示書に載せます。入力は任意です。')
   })

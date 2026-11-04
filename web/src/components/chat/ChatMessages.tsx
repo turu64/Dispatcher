@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, Check, CircleAlert, CircleMinus, CirclePause, FileText, Info, Loader2, Sparkles, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Check, CircleAlert, CircleMinus, CirclePause, FileText, Info, ListChecks, Loader2, Sparkles, TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -73,7 +73,10 @@ function ToolLine({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
         <span aria-hidden="true" className="flex size-3.5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
           <Check className="size-2.5" strokeWidth={3} />
         </span>
-        <span className="min-w-0 break-words">{DONE_LABELS[item.name] ?? stripEllipsis(item.label)}</span>
+        <span className="min-w-0 break-words">
+          {DONE_LABELS[item.name] ?? stripEllipsis(item.label)}
+          {item.detail ? `(${item.detail})` : ''}
+        </span>
       </p>
     )
   }
@@ -188,7 +191,7 @@ function StoppedCard({ item, store }: { item: Extract<ChatItem, { kind: 'stopped
 
 /**
  * 発言の並び。利用者の文、AI の返答、ツールの動き、下書きの知らせ(「編集で確かめる」ボタンつき)、知らせ、エラー、
- * 止めた知らせ(「続きを頼む」ボタンつき)。store は「続きを頼む」で送る先(テストでは別の store を渡す)
+ * 止めた知らせ(「続きを頼む」ボタンつき)、AI が確かめた便の件数。store は「続きを頼む」で送る先(テストでは別の store を渡す)
  */
 export default function ChatMessages({ items, store = useChatStore }: { items: readonly ChatItem[]; store?: ChatStoreHook }) {
   // 入力中の点は、最後の発言が流れている返答のときだけ、その吹き出しに出す
@@ -237,6 +240,14 @@ export default function ChatMessages({ items, store = useChatStore }: { items: r
             return (
               <li key={item.id} data-kind="notice" className="flex items-start gap-1.5 px-2 text-xs leading-relaxed text-muted-foreground">
                 <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 break-words">{item.text}</span>
+              </li>
+            )
+          case 'checked':
+            // この相談で AI が確かめた便の件数(返答の終わりに1行。指摘18.4)
+            return (
+              <li key={item.id} data-kind="checked" className="flex items-start gap-1.5 pl-9 text-xs leading-relaxed text-muted-foreground">
+                <ListChecks className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 <span className="min-w-0 break-words">{item.text}</span>
               </li>
             )

@@ -340,8 +340,45 @@ describe('「AI に相談」のタブ', () => {
     expect(screen.getByRole('button', { name: '止める' })).toBeTruthy()
     release()
     await waitFor(() => expect(sendButton().disabled).toBe(false))
-    expect(screen.getByText('便を探しました')).toBeTruthy()
+    // 結果の total と AI に返した便の数を添える(指摘18.4)
+    expect(screen.getByText('便を探しました(減便前の平日の便 4 便のうち 4 便)')).toBeTruthy()
     expect(screen.queryByText(TOOLS_WAITING)).toBeNull()
+  })
+
+  it('返答の終わりに、この相談で AI が確かめた便の件数を1行出し、「続きを頼む」の行に件数を入れる(指摘18.4)', async () => {
+    const { store, fake } = setup()
+    const { container } = render(<ChatPanel store={store} />)
+    await waitFor(() => expect(box().disabled).toBe(false))
+    await typeAndSend('便を全部調べて')
+    const results = () => fake.posts.filter((p) => p.body.kind === 'tool_results').length
+    act(() => {
+      fake.last().push({ type: 'tool_call', id: 'sevt_1', name: 'search_trips', input: { scope: 'base_weekday', route_ids: null, stop_name: null, depart_from: null, depart_to: null, limit: 3 } })
+    })
+    await waitFor(() => expect(results()).toBe(1))
+    act(() => {
+      fake.last().push({ type: 'tool_call', id: 'sevt_2', name: 'search_trips', input: { scope: 'base_weekday', route_ids: ['R2'], stop_name: null, depart_from: null, depart_to: null, limit: 5 } })
+    })
+    await waitFor(() => expect(results()).toBe(2))
+    const stopped = 'AI がこの相談でツールを 12 回使ったので、ここで止めました。続けるときは「続きを頼む」を押してください'
+    act(() => {
+      fake.last().push({ type: 'error', id: 'e1', message: stopped, code: 'too_many_tool_calls' }, status('e2', 'idle', 'interrupted'))
+    })
+    const list = screen.getByRole('list', { name: '会話' })
+    await within(list).findByText('この相談で AI が確かめた便:減便前の平日の便 4 便のうち 3 便(ほかに条件で絞って探した便:減便前の平日の便 1 便)')
+    expect([...container.querySelectorAll('[data-kind="tool"]')].map((t) => t.textContent)).toEqual([
+      '便を探しました(減便前の平日の便 4 便のうち 3 便)',
+      '便を探しました(条件に合う減便前の平日の便 1 便のうち 1 便)',
+    ])
+    const line = container.querySelector('[data-kind="checked"]')!
+    expect(line.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+    await act(async () => {
+      fireEvent.click(within(list).getByRole('button', { name: '続きを頼む' }))
+    })
+    const sent = fake.posts.filter((p) => p.body.kind === 'message').at(-1)!.body as Extract<SessionPostBody, { kind: 'message' }>
+    expect(sent.content).toEqual([
+      { type: 'text', text: '[画面の操作] 利用者が、止まった作業の続きを頼みました。減便前の平日の便 4 便のうち 3 便を確かめ済みです。' },
+      { type: 'text', text: '続けてください。' },
+    ])
   })
 
   it('止めるを押すと、interrupt を送る', async () => {
@@ -678,6 +715,7 @@ describe('会話の見た目(吹き出し・入力欄・例文の札)', () => {
         items: [
           { id: 1, kind: 'tool', callId: 'c1', name: 'search_trips', label: '便を探しています…', status: 'running' },
           { id: 2, kind: 'tool', callId: 'c2', name: 'search_trips', label: '便を探しています…', status: 'done' },
+          { id: 6, kind: 'tool', callId: 'c6', name: 'search_trips', label: '便を探しています…', status: 'done', detail: 'なくなる便 292 便のうち 50 便' },
           { id: 3, kind: 'tool', callId: 'c3', name: 'run_validation', label: '検証しています…', status: 'error' },
           { id: 4, kind: 'tool', callId: 'c4', name: 'run_validation', label: '検証しています…', status: 'skipped' },
           { id: 5, kind: 'error', text: '送れませんでした' },
@@ -688,6 +726,7 @@ describe('会話の見た目(吹き出し・入力欄・例文の札)', () => {
     expect([...tools].map((t) => t.textContent)).toEqual([
       '便を探しています…',
       '便を探しました',
+      '便を探しました(なくなる便 292 便のうち 50 便)',
       '検証しています(うまくいきませんでした)',
       '検証しています(行いませんでした)',
     ])

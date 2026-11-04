@@ -9,8 +9,10 @@ import {
   budgetReachedMessage,
   canStop,
   CLAUDE_UNAVAILABLE,
+  checkedLine,
   CONTINUE_LINE,
   CONTINUE_PROMPT,
+  continueLine,
   createChatStore,
   draftMessage,
   dollars,
@@ -23,6 +25,7 @@ import {
   researchStartLine,
   sendBlockedReason,
   sessionTokenStorage,
+  summarizeSearchTrips,
   STATUS_SHAPE,
   STOPPED_NOTICE,
   TOKEN_CHARS,
@@ -643,6 +646,35 @@ describe('調べた結果の対象を、セッションを作るたびに登録�
     // サーバーの返す total(4)は登録済みの対象も含む。会話に入る行は送った対象の数(2)
     expect(s().sentLog.at(-1)!.parts).toEqual([{ kind: 'screen', text: researchStartLine(2) }])
   })
+
+  it('調査の進み具合の分母は、利用者が選んだ対象の数。サーバーの数(登録した調べた結果の対象を含む)からそろえる(A06 の申し送り)', async () => {
+    const { s, fake } = setupWithResearch(demoIds(2))
+    await s().startResearch(['P04:1', 'P04:2', 'P04:1'])
+    expect(s().research).toMatchObject({ active: true, saved: 0, total: 2 })
+    expect(researchText(s().research)).toBe('調べています 0 / 2 件')
+    // サーバーは、登録したデモの2件(保存済み)と選んだ2件を合わせて数える
+    const saved = (id: string, n: number, total: number): SessionStreamEvent => ({
+      type: 'research',
+      id,
+      kind: 'saved',
+      runId: null,
+      name: null,
+      phase: null,
+      result: null,
+      saved: n,
+      total,
+    })
+    fake.last().push(saved('e1', 3, 4))
+    await vi.waitFor(() => expect(researchText(s().research)).toBe('調べています 1 / 2 件'))
+    // あとからデモの結果が増えて(登録して)サーバーの数が増えても、分母は選んだ数のまま
+    fake.last().push(saved('e2', 5, 5))
+    await vi.waitFor(() => expect(s().research).toMatchObject({ saved: 2, total: 2 }))
+    // 新しく始めたら、サーバーの数をそのまま使う
+    s().startOver()
+    await s().send('調べて')
+    fake.last().push(saved('e3', 1, 3))
+    await vi.waitFor(() => expect(s().research).toMatchObject({ saved: 1, total: 3 }))
+  })
 })
 
 describe('ツールを使いすぎて止めた知らせ(指摘15.2)', () => {
@@ -679,5 +711,122 @@ describe('ツールを使いすぎて止めた知らせ(指摘15.2)', () => {
     await s().send('別の質問')
     fake.last().push(status('e9', 'idle', 'interrupted'))
     await vi.waitFor(() => expect(s().items.at(-1)).toMatchObject({ kind: 'notice', text: STOPPED_NOTICE }))
+  })
+})
+
+// ---- A08(指摘18.4) ----
+
+describe('AI が確かめた便の件数(指摘18.4)', () => {
+  const search = (extra: Record<string, unknown> = {}) => ({
+    scope: 'base_weekday',
+    route_ids: null,
+    stop_name: null,
+    depart_from: null,
+    depart_to: null,
+    limit: 2,
+    ...extra,
+  })
+  let callNo = 0
+  /** search_trips を呼ばせて、結果を送り終えるまで待つ */
+  async function callSearch(t: ReturnType<typeof setup>, input: Record<string, unknown>) {
+    const id = `sevt_${++callNo}`
+    const before = t.fake.posts.filter((p) => p.body.kind === 'tool_results').length
+    t.fake.last().push({ type: 'tool_call', id, name: 'search_trips', input })
+    await vi.waitFor(() => expect(t.fake.posts.filter((p) => p.body.kind === 'tool_results').length).toBe(before + 1))
+    return t.s().items.find((i) => i.kind === 'tool' && i.callId === id)
+  }
+  const checkedItems = (t: ReturnType<typeof setup>) => t.s().items.filter((i) => i.kind === 'checked')
+
+  it('search_trips の項目に「減便前の平日の便 4 便のうち 2 便」の形の件数を添える。条件で絞ったときは「条件に合う」を付ける', async () => {
+    const t = setup()
+    await t.s().send('平日の便を見せて')
+    expect(await callSearch(t, search())).toMatchObject({ status: 'done', detail: '減便前の平日の便 4 便のうち 2 便' })
+    expect(await callSearch(t, search({ route_ids: ['R2'], limit: 5 }))).toMatchObject({ status: 'done', detail: '条件に合う減便前の平日の便 1 便のうち 1 便' })
+    // 失敗した呼び出し(減便の方針が無いので removed は探せない)には件数を付けない
+    const failed = await callSearch(t, search({ scope: 'removed' }))
+    expect(failed).toMatchObject({ status: 'error' })
+    expect(failed && 'detail' in failed ? failed.detail : undefined).toBeUndefined()
+  })
+
+  it('返答の終わりに、この相談で AI が確かめた便を1行出す。条件で絞った結果は件数だけを添え、相談ごとに数え直す', async () => {
+    const t = setup()
+    await t.s().send('平日の便を見せて')
+    await callSearch(t, search())
+    // 同じ便を2回返しても1回と数え、total は最新のもの
+    await callSearch(t, search({ limit: 3 }))
+    // R2 の便は、条件を付けずに探した3便(7:00・7:30・8:00)に無い
+    await callSearch(t, search({ route_ids: ['R2'], limit: 5 }))
+    t.fake.last().push({ type: 'message', id: 'm1', messageId: 'm1', text: '4 便のうち 3 便を見ました' }, status('e1', 'idle', 'end_turn'))
+    await vi.waitFor(() => expect(checkedItems(t)).toHaveLength(1))
+    expect(checkedItems(t)[0]).toMatchObject({
+      text: 'この相談で AI が確かめた便:減便前の平日の便 4 便のうち 3 便(ほかに条件で絞って探した便:減便前の平日の便 1 便)',
+    })
+    expect(t.s().items.at(-1)?.kind).toBe('checked')
+    // 同じ相談の idle がもう一度来ても、同じ行は出さない
+    t.fake.last().push(status('e2', 'idle', 'end_turn'))
+    await vi.waitFor(() => expect(t.s().replying).toBe(false))
+    expect(checkedItems(t)).toHaveLength(1)
+
+    // 次の相談は数え直す。条件で絞った結果しか無ければ、行は出さない
+    await t.s().send('R2 の便は?')
+    await callSearch(t, search({ route_ids: ['R2'], limit: 5 }))
+    t.fake.last().push(status('e3', 'idle', 'end_turn'))
+    await vi.waitFor(() => expect(t.s().replying).toBe(false))
+    expect(checkedItems(t)).toHaveLength(1)
+    await t.s().send('全部見て')
+    await callSearch(t, search({ limit: 1 }))
+    t.fake.last().push(status('e4', 'idle', 'end_turn'))
+    await vi.waitFor(() => expect(checkedItems(t)).toHaveLength(2))
+    expect(checkedItems(t)[1]).toMatchObject({ text: 'この相談で AI が確かめた便:減便前の平日の便 4 便のうち 1 便' })
+  })
+
+  it('「続きを頼む」の [画面の操作] の行に確かめた件数を入れ、続きの返答では数え続ける', async () => {
+    const t = setup()
+    await t.s().send('便を全部調べて')
+    await callSearch(t, search())
+    t.fake.last().push(
+      { type: 'error', id: 'e1', message: 'AI がこの相談でツールを 12 回使ったので、ここで止めました。', code: 'too_many_tool_calls' },
+      status('e2', 'idle', 'interrupted'),
+    )
+    await vi.waitFor(() => expect(checkedItems(t)).toHaveLength(1))
+    // 止めた知らせのあとに、件数の行
+    expect(t.s().items.slice(-2).map((i) => i.kind)).toEqual(['stopped', 'checked'])
+    expect(await t.s().continueStopped()).toBe(true)
+    expect(t.messages().at(-1)).toEqual([
+      { type: 'text', text: '[画面の操作] 利用者が、止まった作業の続きを頼みました。減便前の平日の便 4 便のうち 2 便を確かめ済みです。' },
+      { type: 'text', text: CONTINUE_PROMPT },
+    ])
+    await callSearch(t, search({ limit: 4 }))
+    t.fake.last().push(status('e3', 'idle', 'end_turn'))
+    await vi.waitFor(() => expect(checkedItems(t)).toHaveLength(2))
+    expect(checkedItems(t)[1]).toMatchObject({ text: 'この相談で AI が確かめた便:減便前の平日の便 4 便のうち 4 便' })
+    // 確かめた便が無ければ、続きの行は今までの文のまま
+    expect(continueLine(new Map())).toBe(CONTINUE_LINE)
+  })
+
+  it('結果の数は AI に届いた便から数える。省いた便・同じ trip_id の別の feed・結果の形が違うとき', () => {
+    const outcome = (body: unknown) => ({ content: JSON.stringify(body), isError: false })
+    const body = {
+      status: 'ok',
+      scope: 'removed',
+      total: 292,
+      returned: 50,
+      truncated: 2,
+      trips: [
+        { feed: 'base', trip_id: 'T1' },
+        { feed: 'edited', trip_id: 'T1' },
+      ],
+    }
+    const s1 = summarizeSearchTrips({ scope: 'removed', route_ids: [], stop_name: ' ', depart_from: null, depart_to: null, limit: 50 }, outcome(body))
+    expect(s1).toEqual({ scope: 'removed', total: 292, tripKeys: ['base:T1', 'edited:T1'], filtered: false })
+    // offset は条件ではなく、hints は条件
+    expect(summarizeSearchTrips({ scope: 'removed', offset: 50 }, outcome(body))?.filtered).toBe(false)
+    expect(summarizeSearchTrips({ scope: 'removed', hints: ['morning'] }, outcome(body))?.filtered).toBe(true)
+    expect(summarizeSearchTrips({}, { content: JSON.stringify(body), isError: true })).toBeNull()
+    expect(summarizeSearchTrips({}, outcome({ status: 'error', message: 'x' }))).toBeNull()
+    expect(summarizeSearchTrips({}, { content: 'not json', isError: false })).toBeNull()
+    // 20KB を超えた結果は AI に届かない
+    expect(summarizeSearchTrips({}, outcome({ ...body, pad: 'x'.repeat(21 * 1024) }))).toBeNull()
+    expect(checkedLine(new Map())).toBeNull()
   })
 })

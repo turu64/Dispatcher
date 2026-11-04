@@ -113,7 +113,8 @@ describe('画面の骨組み', () => {
     const next = screen.getByRole('button', { name: /^次へ/ }) as HTMLButtonElement
     expect(next.disabled).toBe(true)
     expect(screen.getByText('GTFS を読み込むと先へ進めます')).toBeTruthy()
-    expect((screen.getByRole('button', { name: /^戻る/ }) as HTMLButtonElement).disabled).toBe(true)
+    // 最初の手順では「戻る」を出さない
+    expect(screen.queryByRole('button', { name: /^戻る/ })).toBeNull()
     expect(screen.getByRole('heading', { name: '1. GTFS を読み込む' })).toBeTruthy()
     // 方針の手順は描いてあるが隠れている
     expect(screen.queryByRole('heading', { name: '3. 減便の方針' })).toBeNull()
@@ -141,6 +142,9 @@ describe('画面の骨組み', () => {
     expect(screen.queryByRole('heading', { name: '1. GTFS を読み込む' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^次へ/ }))
     expect(screen.getByRole('heading', { name: '6. 出力' })).toBeTruthy()
+    // 最後の手順では「次へ」を出さない
+    expect(screen.queryByRole('button', { name: /^次へ/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /^戻る/ })).toBeTruthy()
     // 出力の中のタブの見出しには番号を付けない
     expect(screen.getByRole('heading', { name: 'GTFS を出力' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /^戻る/ }))

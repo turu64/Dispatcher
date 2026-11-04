@@ -140,3 +140,201 @@ it('min・max の外の日は選べず(disabled)、中の日は選べる', () =>
     expect(screen.getByText('2026年11月')).toBeTruthy()
   })
 })
+
+/** 期間のカレンダーで、'YYYYMMDD' の日のボタンを探す(2か月を並べても、日付で1つに決まる) */
+function dayButton(container: HTMLElement, date: string): HTMLButtonElement {
+  const iso = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`
+  const found = container.querySelector<HTMLButtonElement>(`td[data-day="${iso}"] button`)
+  if (!found) throw new Error(`${date} のセルが見つかりません`)
+  return found
+}
+
+describe('HolidayCalendar(1日の選択は前のまま)', () => {
+  it('mode を渡さなければ1か月だけ出し、1日を選ぶ。期間の位置の印・読み上げは付けない', () => {
+    const onChange = vi.fn()
+    const { container } = render(<HolidayCalendar value="20261104" onChange={onChange} holidays={holidays} />)
+    expect(container.querySelectorAll('[role="grid"]')).toHaveLength(1)
+    expect(container.querySelector('[role="grid"]')?.getAttribute('aria-multiselectable')).toBe('false')
+    expect(container.querySelector('[data-range-part]')).toBeNull()
+    expect(cell(container, 4).getAttribute('aria-label')).toBe('2026年11月4日 水曜日')
+    expect(cell(container, 4).dataset.selectedSingle).toBe('true')
+    fireEvent.click(cell(container, 12))
+    expect(onChange).toHaveBeenCalledWith('20261112')
+  })
+})
+
+describe('HolidayCalendar(期間)', () => {
+  it('開始日・終了日は濃く、間の日は帯で示し、読み上げの名前に開始日・終了日・期間の中が入る', () => {
+    const { container } = render(
+      <HolidayCalendar mode="range" start="20261102" end="20261106" onDayClick={() => {}} holidays={holidays} />,
+    )
+    const start = dayButton(container, '20261102')
+    expect(start.dataset.rangeStart).toBe('true')
+    expect(start.getAttribute('aria-label')).toBe('2026年11月2日 月曜日、開始日')
+    expect(dayButton(container, '20261106').dataset.rangeEnd).toBe('true')
+    expect(dayButton(container, '20261106').getAttribute('aria-label')).toBe('2026年11月6日 金曜日、終了日')
+    const middle = dayButton(container, '20261104')
+    expect(middle.dataset.rangeMiddle).toBe('true')
+    expect(middle.className).toContain('data-[range-middle=true]:bg-(--band)')
+    expect(middle.getAttribute('aria-label')).toBe('2026年11月4日 水曜日、期間の中')
+    // 範囲の外の日は位置を読み上げない
+    expect(dayButton(container, '20261110').getAttribute('aria-label')).toBe('2026年11月10日 火曜日')
+    // 範囲の日のセル(gridcell)は選択中として読み上げる。グリッドは複数選択
+    expect(container.querySelector('td[data-day="2026-11-04"]')?.getAttribute('aria-selected')).toBe('true')
+    expect(container.querySelector('[role="grid"]')?.getAttribute('aria-multiselectable')).toBe('true')
+  })
+
+  it('帯の中の祝日・土日は、文字の色と読み上げの名前(祝日名)を残す。開始日・終了日は主色の上の文字色にする', () => {
+    const { container } = render(
+      <HolidayCalendar mode="range" start="20261121" end="20261129" onDayClick={() => {}} holidays={holidays} />,
+    )
+    const holiday = dayButton(container, '20261123')
+    expect(holiday.dataset.kind).toBe('holiday')
+    expect(holiday.dataset.rangeMiddle).toBe('true')
+    expect(holiday.className).toContain('data-[range-middle=true]:text-red-700')
+    // ダークの帯の上では対比が足りるよう -300 にする
+    expect(holiday.className).toContain('dark:data-[range-middle=true]:text-red-300')
+    expect(holiday.className).not.toContain('dark:data-[range-middle=true]:text-red-400')
+    expect(holiday.className).not.toContain('data-[range-middle=true]:text-foreground')
+    expect(holiday.title).toBe('勤労感謝の日')
+    expect(holiday.getAttribute('aria-label')).toBe('2026年11月23日 月曜日、祝日 勤労感謝の日、期間の中')
+    const sat = dayButton(container, '20261128')
+    expect(sat.className).toContain('data-[range-middle=true]:text-blue-700')
+    expect(sat.className).toContain('dark:data-[range-middle=true]:text-blue-300')
+    expect(sat.getAttribute('aria-label')).toBe('2026年11月28日 土曜日、土曜、期間の中')
+    // 開始日(21日・土曜)・終了日(29日・日曜)は赤・青の文字色を使わない
+    expect(dayButton(container, '20261121').className).not.toContain('text-blue-700')
+    expect(dayButton(container, '20261129').className).not.toContain('text-red-700')
+    expect(dayButton(container, '20261129').getAttribute('aria-label')).toBe('2026年11月29日 日曜日、日曜、終了日')
+  })
+
+  it('開始日と終了日が同じ日なら、その日を開始日・終了日として示す', () => {
+    const { container } = render(
+      <HolidayCalendar mode="range" start="20261110" end="20261110" onDayClick={() => {}} holidays={holidays} />,
+    )
+    expect(dayButton(container, '20261110').getAttribute('aria-label')).toBe('2026年11月10日 火曜日、開始日・終了日')
+    expect(container.querySelectorAll('[data-range-middle="true"]')).toHaveLength(0)
+  })
+
+  it('開始日だけのときは開始日だけを濃く示し、帯は出さない', () => {
+    const { container } = render(
+      <HolidayCalendar mode="range" start="20261110" end={null} onDayClick={() => {}} holidays={holidays} />,
+    )
+    expect(dayButton(container, '20261110').dataset.selectedSingle).toBe('true')
+    expect(dayButton(container, '20261110').getAttribute('aria-label')).toBe('2026年11月10日 火曜日、開始日')
+    expect(container.querySelectorAll('[data-range-part="middle"], [data-range-part="open"]')).toHaveLength(0)
+  })
+
+  it('当面の間(openEnd)なら終了日を使わず、開始日の翌日から max までを薄い帯で示す', () => {
+    const { container } = render(
+      <HolidayCalendar mode="range" start="20261110" end="20261112" openEnd onDayClick={() => {}} max="20261125" holidays={holidays} />,
+    )
+    expect(dayButton(container, '20261110').getAttribute('aria-label')).toBe('2026年11月10日 火曜日、開始日')
+    // 終了日(12日)は使わない
+    expect(dayButton(container, '20261112').dataset.rangeEnd).not.toBe('true')
+    const open = Array.from(container.querySelectorAll<HTMLButtonElement>('[data-range-part="open"]'))
+    expect(open[0]?.textContent).toBe('11')
+    expect(open.at(-1)?.textContent).toBe('25')
+    expect(open).toHaveLength(15)
+    expect(container.querySelector('td[data-day="2026-11-25"]')?.className).toContain('bg-(--band-open)')
+    expect(container.querySelector('td[data-day="2026-11-26"]')?.className).not.toContain('bg-(--band-open)')
+    // 帯の中の祝日は文字の色と祝日名を残す
+    expect(dayButton(container, '20261123').className).toContain('text-red-700')
+    expect(dayButton(container, '20261123').getAttribute('aria-label')).toBe('2026年11月23日 月曜日、祝日 勤労感謝の日、期間の中(当面の間)')
+  })
+
+  it('押した日を onDayClick で返す。min・max の外の日は押せない', () => {
+    const onDayClick = vi.fn()
+    const { container } = render(
+      <HolidayCalendar mode="range" start={null} end={null} onDayClick={onDayClick} min="20261102" max="20261120" holidays={holidays} />,
+    )
+    expect(dayButton(container, '20261101').disabled).toBe(true)
+    fireEvent.click(dayButton(container, '20261101'))
+    fireEvent.click(dayButton(container, '20261121'))
+    expect(onDayClick).not.toHaveBeenCalled()
+    fireEvent.click(dayButton(container, '20261105'))
+    expect(onDayClick).toHaveBeenLastCalledWith('20261105')
+    // 選んでいる日を押しても返す(開始日と同じ日を終了日にできる)
+    cleanup()
+    const { container: c2 } = render(
+      <HolidayCalendar mode="range" start="20261105" end={null} onDayClick={onDayClick} min="20261102" max="20261120" holidays={holidays} />,
+    )
+    fireEvent.click(dayButton(c2, '20261105'))
+    expect(onDayClick).toHaveBeenLastCalledWith('20261105')
+  })
+
+  it('2か月を並べるときは横に並べ、最後の月が max の月を越えないように開く。選んだ日の下の文は出さない', () => {
+    const { container } = render(
+      <HolidayCalendar mode="range" start="20261124" end={null} onDayClick={() => {}} min="20261001" max="20261130" holidays={holidays} numberOfMonths={2} />,
+    )
+    const captions = Array.from(container.querySelectorAll('[role="grid"]')).length
+    expect(captions).toBe(2)
+    expect(screen.getByText('2026年10月')).toBeTruthy()
+    expect(screen.getByText('2026年11月')).toBeTruthy()
+    expect(screen.queryByTestId('selected-date')).toBeNull()
+    expect(screen.getByRole('button', { name: '次の月へ' }).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('有効期間が1か月に収まるときは、2か月を頼まれても1か月だけ出す(全部押せない月を並べない)', () => {
+    const { container } = render(
+      <HolidayCalendar mode="range" start={null} end={null} onDayClick={() => {}} min="20261102" max="20261125" holidays={holidays} numberOfMonths={2} />,
+    )
+    expect(container.querySelectorAll('[role="grid"]')).toHaveLength(1)
+    expect(screen.getByText('2026年11月')).toBeTruthy()
+    expect(screen.queryByText('2026年12月')).toBeNull()
+    expect(screen.getByRole('button', { name: '前の月へ' }).getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByRole('button', { name: '次の月へ' }).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('今日は、セルの背景(帯と重なる)ではなく日付の太字と下線で示す。1日の選択のカレンダーは前のまま', () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-12T03:00:00Z') })
+    try {
+      const { container } = render(
+        <HolidayCalendar mode="range" start="20261110" end="20261114" onDayClick={() => {}} holidays={holidays} />,
+      )
+      const todayCell = container.querySelector('td[data-day="2026-11-12"]')!
+      expect(todayCell.hasAttribute('data-today')).toBe(true)
+      expect(todayCell.className).not.toContain('bg-muted')
+      const today = dayButton(container, '20261112')
+      expect(today.className).toContain('font-semibold')
+      expect(today.className).toContain('underline')
+      expect(today.className).not.toContain('font-normal')
+      // 今日でない日には付けない
+      expect(dayButton(container, '20261111').className).not.toContain('underline')
+      cleanup()
+      const { container: single } = render(<HolidayCalendar value="20261104" onChange={() => {}} holidays={holidays} />)
+      expect(single.querySelector('td[data-day="2026-11-12"]')!.className).toContain('bg-muted')
+      expect(cell(single, 12).className).not.toContain('underline')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('キーボード:矢印キーで日を動かし、焦点のある日のボタンを押す(click)と、その日を返す', () => {
+    const onDayClick = vi.fn()
+    const { container } = render(
+      <HolidayCalendar mode="range" start="20261110" end={null} onDayClick={onDayClick} min="20261101" max="20261130" holidays={holidays} />,
+    )
+    const from = dayButton(container, '20261110')
+    from.focus()
+    fireEvent.focus(from)
+    fireEvent.keyDown(from, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(dayButton(container, '20261111'))
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(dayButton(container, '20261118'))
+    // 日はボタンなので、ブラウザでは Enter・スペースが click になる。jsdom はキーから click を起こさないため、焦点のあるボタンの click で確かめる
+    fireEvent.click(document.activeElement!)
+    expect(onDayClick).toHaveBeenLastCalledWith('20261118')
+  })
+})
+
+describe('HolidayCalendar(並べる月の数が変わったとき)', () => {
+  it('2か月から1か月に減って開始日の月が見えなくなったら、開始日の月を開く', () => {
+    const props = { mode: 'range' as const, start: '20261125', end: null, onDayClick: () => {}, min: '20261001', max: '20261130', holidays }
+    const { rerender } = render(<HolidayCalendar {...props} numberOfMonths={2} />)
+    expect(screen.getByText('2026年10月')).toBeTruthy()
+    rerender(<HolidayCalendar {...props} numberOfMonths={1} />)
+    expect(screen.queryByText('2026年10月')).toBeNull()
+    expect(screen.getByText('2026年11月')).toBeTruthy()
+  })
+})

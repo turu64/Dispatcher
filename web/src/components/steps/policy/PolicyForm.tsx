@@ -140,17 +140,23 @@ export function PolicyForm({
   const problems = useMemo(() => allProblems.filter((p) => !PERIOD_PROBLEM_CODES.has(p.code)), [allProblems])
   // 平日の service の calendar に日付の正しくない行があって、期間の中で1日も走らないとき、その行は数えていないと添える
   const weekdayCalendarNote = useMemo(() => (weekday ? invalidCalendarNote(feed, weekday) : null), [feed, weekday])
-  const sameSatSun = useMemo(
-    () => (saturday && sundayHoliday && saturday !== sundayHoliday ? sameTimetable(feed, saturday, sundayHoliday) : false),
-    [feed, saturday, sundayHoliday],
+  // 土曜と日祝が同じ時刻表かは、入力の GTFS の有効期間で推定した service で決める。期間で推定した guess は期間がそろうまで
+  // 無いので、それに頼ると期間を選ぶ途中(1回目と2回目の押下の間)で案内が出たり消えたりして、下のカレンダーが上下に動く
+  const inputGuess: ServiceChoice | null = useMemo(
+    () => (input ? guessServiceChoice(feed, services, input) : null),
+    [feed, services, input],
   )
+  const sameSatSun = useMemo(() => {
+    const sat = overrides.saturday?.value ?? inputGuess?.saturday ?? null
+    const sun = overrides.sundayHoliday?.value ?? inputGuess?.sundayHoliday ?? null
+    return sat && sun && sat !== sun ? sameTimetable(feed, sat, sun) : false
+  }, [feed, overrides.saturday, overrides.sundayHoliday, inputGuess])
   const routeStats = useMemo(() => routeTripCounts(feed, weekday, replacement), [feed, weekday, replacement])
 
   const pick = (role: ChoiceRole, value: string) => {
     setOverrides((o) => ({ ...o, [role]: { value, guessAtPick: guess?.[role] ?? null } }))
   }
   const hasError = allProblems.some((p) => p.severity === 'error')
-  const periodMessage = !start ? '開始日を選んでください。' : !indefinite && !end ? '終了日を選んでください。' : null
 
   function submit(replaceClaudeDraft = false) {
     if (!settings) return
@@ -198,7 +204,6 @@ export function PolicyForm({
         indefinite={indefinite}
         onIndefiniteChange={setIndefinite}
         validity={validity}
-        periodMessage={periodMessage}
         periodProblems={periodProblems}
         holidayState={holidayState}
       />

@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
+import { basePlan, smallFeed, withRows } from '@/gtfs/edit/form2.fixture'
 import type { RouteDiff, WeekdayDiff } from '@/gtfs/edit/diff'
 import type { EditOp } from '@/gtfs/edit/ops'
 import { chatToolDeps } from '@/store/chat'
@@ -32,21 +32,36 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-/** 期間の欄のカレンダー(「開始日」「終了日」)の中で、月を months 回めくってから、その月の day 日を押す */
-function pickDay(name: '開始日' | '終了日', day: number, months = 0) {
-  const group = screen.getByRole('group', { name })
-  for (let i = 0; i < Math.abs(months); i++) {
-    fireEvent.click(within(group).getByRole('button', { name: months > 0 ? '次の月へ' : '前の月へ' }))
-  }
-  const cells = Array.from(group.querySelectorAll<HTMLButtonElement>('button[data-kind]'))
-  const cell = cells.find((b) => b.firstChild?.textContent === String(day))
-  if (!cell) throw new Error(`${name}のカレンダーに ${day} 日が見つかりません`)
-  fireEvent.click(cell)
+/** 減便の期間のカレンダー(1つ。2か月を並べる) */
+function periodCalendar(): HTMLElement {
+  return screen.getByRole('group', { name: '減便の期間' })
 }
 
-/** 期間の欄のカレンダーが「選んだ日」として出している文 */
-function selectedText(name: '開始日' | '終了日'): string {
-  return within(screen.getByRole('group', { name })).getByTestId('selected-date').textContent ?? ''
+/** 減便の期間のカレンダーで 'YYYYMMDD' の日のボタン。見えていなければ null */
+function dayIn(group: HTMLElement, date: string): HTMLButtonElement | null {
+  const iso = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`
+  return group.querySelector<HTMLButtonElement>(`td[data-day="${iso}"] button`)
+}
+
+/** 減便の期間のカレンダーで 'YYYYMMDD' の日を押す。見えていなければ次の月へめくる */
+function pickDate(date: string) {
+  const group = periodCalendar()
+  for (let i = 0; i < 24; i++) {
+    const button = dayIn(group, date)
+    if (button) {
+      fireEvent.click(button)
+      return
+    }
+    const next = within(group).getByRole('button', { name: '次の月へ' })
+    if (next.getAttribute('aria-disabled') === 'true') break
+    fireEvent.click(next)
+  }
+  throw new Error(`減便の期間のカレンダーに ${date} が見つかりません`)
+}
+
+/** カレンダーの下の、選んだ期間の文 */
+function periodSummary(): string {
+  return screen.getByTestId('period-summary').textContent ?? ''
 }
 
 describe('PolicyStep', () => {
@@ -117,10 +132,12 @@ describe('PolicyStep', () => {
     render(<PolicyStep />)
     // 平日の service を利用者が選んだままにする(選ばないと、走らない service は推定の候補から外れ、service が決まらない)
     fireEvent.change(screen.getByLabelText('入れ替え元のダイヤ(平日)'), { target: { value: 'WK' } })
-    // 2026-11-07(土)〜11-08(日)。平日 WK の calendar とは重なるが、月〜金の日が1日も無い
-    pickDay('開始日', 7, 1)
+    // 2026-11-07(土)〜11-08(日)。平日 WK の calendar とは重なるが、月〜金の日が1日も無い。
+    // 当面の間のまま開始日を押し、チェックを外して終了日を押す
+    pickDate('20261107')
     fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
-    pickDay('終了日', 8)
+    pickDate('20261108')
+    expect(periodSummary()).toBe('期間:2026年11月7日(土)〜11月8日(日)(2日間)')
     const check = screen.getByRole('region', { name: '減便内容の確認' })
     const issue = check.querySelector('[data-code="weekdayNotActive"]')
     expect(issue?.getAttribute('data-severity')).toBe('error')
@@ -195,7 +212,7 @@ describe('PolicyStep', () => {
     expect(summary.textContent).toContain('運転士の一時的な欠員(欠員 2 名)')
     expect(summary.textContent).toContain('承認した減便の方針:平日を土曜ダイヤに')
     fireEvent.click(within(summary).getByRole('button', { name: '減便の方針を変える' }))
-    expect(selectedText('開始日')).toContain('11月1日')
+    expect(periodSummary()).toBe('期間:2026年11月1日(日)から当面の間')
     expect(screen.getByLabelText('理由のメモ')).toHaveProperty('value', '欠員 2 名')
     fireEvent.click(screen.getByRole('button', { name: '変えずに戻る' }))
     expect(screen.getByRole('region', { name: '承認した減便の方針' })).toBeTruthy()
@@ -215,8 +232,9 @@ describe('PolicyStep', () => {
     expect(form.noValidate).toBe(true)
 
     // 入力の有効期間の外の日はカレンダーで選べない(10/1 の前の月へはめくれず、11/30 の次の月へもめくれない)
-    const end = screen.getByRole('group', { name: '終了日' })
-    expect(within(end).getByRole('button', { name: '次の月へ' }).getAttribute('aria-disabled')).toBe('true')
+    const calendar = periodCalendar()
+    expect(within(calendar).getByRole('button', { name: '次の月へ' }).getAttribute('aria-disabled')).toBe('true')
+    expect(within(calendar).getByRole('button', { name: '前の月へ' }).getAttribute('aria-disabled')).toBe('true')
 
     // アプリ側の確かめ(checkPolicy)の警告が出る
     const check = screen.getByRole('region', { name: '減便内容の確認' })
@@ -234,31 +252,191 @@ describe('PolicyStep', () => {
 
   it('入力の有効期間の外の日は、カレンダーの日のボタンが押せない(disabled)', () => {
     render(<PolicyStep />)
-    // 開始日のカレンダーは 2026-10 を開いている。10 月は 1 日から選べる。11 月は 30 日まで選べる
-    const group = screen.getByRole('group', { name: '開始日' })
-    const day = (n: number) => Array.from(group.querySelectorAll<HTMLButtonElement>('button[data-kind]')).find((b) => b.firstChild?.textContent === String(n))
-    expect(day(1)).toHaveProperty('disabled', false)
-    fireEvent.click(within(group).getByRole('button', { name: '次の月へ' }))
-    expect(day(30)).toHaveProperty('disabled', false)
-    // 12 月へはめくれない
+    // 減便の期間のカレンダーは 2026-10 と 2026-11 を並べる。10 月は 1 日から、11 月は 30 日まで選べる
+    const group = periodCalendar()
+    expect(group.querySelectorAll('[role="grid"]')).toHaveLength(2)
+    expect(dayIn(group, '20261001')).toHaveProperty('disabled', false)
+    expect(dayIn(group, '20261130')).toHaveProperty('disabled', false)
+    // 9 月・12 月へはめくれない
+    expect(within(group).getByRole('button', { name: '前の月へ' }).getAttribute('aria-disabled')).toBe('true')
     expect(within(group).getByRole('button', { name: '次の月へ' }).getAttribute('aria-disabled')).toBe('true')
   })
 
-  it('終了日が開始日より前なら、badPeriod の理由を期間の欄の下に出し、「対象便を確かめる」を押せない', () => {
+  it('期間は1つのカレンダーで、1回目に押した日が開始日、2回目に押した日が終了日になる', () => {
+    render(<PolicyStep />)
+    // 既定は今日(10/20)から当面の間。チェックを外すと終了日を空にして、次に押す日を終了日にする
+    expect(periodSummary()).toBe('期間:2026年10月20日(火)から当面の間')
+    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    expect(periodSummary()).toBe('開始日:2026年10月20日(火)。終了日をカレンダーで選んでください。')
+    pickDate('20261113')
+    expect(periodSummary()).toBe('期間:2026年10月20日(火)〜11月13日(金)(25日間)')
+    const group = periodCalendar()
+    expect(dayIn(group, '20261020')?.dataset.rangeStart).toBe('true')
+    expect(dayIn(group, '20261113')?.dataset.rangeEnd).toBe('true')
+    expect(dayIn(group, '20261101')?.dataset.rangeMiddle).toBe('true')
+    expect(screen.getByText(/出力の有効期間は 2026年10月20日\(火\)〜2026年11月13日\(金\)\(25日\)/)).toBeTruthy()
+
+    // 期間が決まったあとに押すと、その日から選び直す
+    pickDate('20261109')
+    expect(periodSummary()).toBe('開始日:2026年11月9日(月)。終了日をカレンダーで選んでください。')
+    // 開始日より前の日を押すと、それを新しい開始日にする
+    pickDate('20261102')
+    expect(periodSummary()).toBe('開始日:2026年11月2日(月)。終了日をカレンダーで選んでください。')
+    // 開始日と同じ日を押すと1日だけの期間
+    pickDate('20261102')
+    expect(periodSummary()).toBe('期間:2026年11月2日(月)の1日間')
+    expect(dayIn(group, '20261102')?.getAttribute('aria-label')).toContain('開始日・終了日')
+    expect(screen.getByText(/出力の有効期間は 2026年11月2日\(月\)〜2026年11月2日\(月\)\(1日\)/)).toBeTruthy()
+  })
+
+  it('減便の期間の欄は、名前を legend から取り、案内と期間の文を説明として指す。同じ名前のグループは1つだけ', () => {
+    render(<PolicyStep />)
+    const groups = screen.getAllByRole('group', { name: '減便の期間' })
+    expect(groups).toHaveLength(1)
+    expect(groups[0].tagName).toBe('FIELDSET')
+    const describedBy = (groups[0].getAttribute('aria-describedby') ?? '').split(' ')
+    expect(describedBy).toHaveLength(2)
+    const [hint, summary] = describedBy.map((id) => document.getElementById(id))
+    expect(summary).toBe(screen.getByTestId('period-summary'))
+    expect(hint?.textContent).toContain('開始日から入力の末日までを薄い帯で示します')
+    // 当面の間を外すと、決めたあとに押せば選び直すことも案内する
+    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    expect(hint?.textContent).toBe(
+      'カレンダーで開始日、終了日の順に押してください。開始日と同じ日を押すと1日だけの期間になります。期間を決めたあとに押すと、その日から選び直します。',
+    )
+  })
+
+  it('「期間を選び直す」は、当面の間で開始日が空なら押せない(使わない終了日の値が残っていても)', () => {
+    const base = useEditStore.getState().base!
+    // 開始日が空で当面の間の方針。終了日の値は入力の末日(20261130)が入っているが、当面の間では使わない
+    render(<PolicyForm base={base} initial={basePlan({ period: { start: '', end: null } })} initialReason={null} />)
+    expect(periodSummary()).toBe('開始日をカレンダーで選んでください。')
+    const resetButton = screen.getByRole('button', { name: '期間を選び直す' })
+    expect(resetButton).toHaveProperty('disabled', true)
+    // 当面の間を外すと終了日も空にするので、押せないまま
+    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    expect(resetButton).toHaveProperty('disabled', true)
+    // 開始日を押すと押せる
+    pickDate('20261105')
+    expect(resetButton).toHaveProperty('disabled', false)
+  })
+
+  it('2か月を並べるかは、欄の幅を rem で比べて決める(ブラウザの既定の文字を大きくすると、同じ幅でも1か月にする)', () => {
+    // ResizeObserver は使えるが通知しない形にして、最初の幅(getBoundingClientRect)だけで決める
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+        unobserve() {}
+      },
+    )
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 600 } as DOMRect)
+    try {
+      // 16px なら 33.75rem = 540px。600px の欄に2か月を並べる
+      document.documentElement.style.fontSize = '16px'
+      render(<PolicyStep />)
+      expect(periodCalendar().querySelectorAll('[role="grid"]')).toHaveLength(2)
+      cleanup()
+      // 20px なら 33.75rem = 675px。同じ 600px の欄では1か月にする
+      document.documentElement.style.fontSize = '20px'
+      render(<PolicyStep />)
+      expect(periodCalendar().querySelectorAll('[role="grid"]')).toHaveLength(1)
+    } finally {
+      document.documentElement.style.fontSize = ''
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('減便の期間の欄(fieldset)は、中身の幅に広がらないよう min-w-0 にする', () => {
+    render(<PolicyStep />)
+    expect(periodCalendar().className).toContain('min-w-0')
+  })
+
+  it('土曜と日祝が同じ時刻表の案内は、期間を選ぶ途中(1回目と2回目の押下の間)でも出たままにする', () => {
+    // 日曜の service(SU)を、土曜(SA)と同じ便にしたフィード
+    const feed0 = smallFeed()
+    const saTrips = feed0.tables.get('trips')!.rows.filter((r) => r.service_id === 'SA')
+    const suTrips = saTrips.map((r) => ({ ...r, service_id: 'SU', trip_id: r.trip_id!.replace(/_SA$/, '_SU') }))
+    const trips = [...feed0.tables.get('trips')!.rows.filter((r) => r.service_id !== 'SU'), ...suTrips]
+    const stopTimes0 = feed0.tables.get('stop_times')!.rows.filter((r) => !r.trip_id!.endsWith('_SU'))
+    const suStopTimes = stopTimes0.filter((r) => r.trip_id!.endsWith('_SA')).map((r) => ({ ...r, trip_id: r.trip_id!.replace(/_SA$/, '_SU') }))
+    const feed = withRows(withRows(feed0, 'trips', trips), 'stop_times', [...stopTimes0, ...suStopTimes])
+    act(() => useEditStore.getState().setBase({ feed, zip: new ArrayBuffer(0), label: 'test.zip', sample: null }))
+    render(<PolicyStep />)
+    const note = () => screen.queryByText(/土曜と日祝が同じ時刻表のため/)
+    expect(note()).not.toBeNull()
+    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    // 開始日だけの間(期間がそろっていない)も、案内は出たまま
+    expect(periodSummary()).toContain('終了日をカレンダーで選んでください')
+    expect(note()).not.toBeNull()
+    pickDate('20261110')
+    expect(note()).not.toBeNull()
+    // 期間が決まったあとに押して選び直す途中も同じ
+    pickDate('20261105')
+    expect(periodSummary()).toContain('終了日をカレンダーで選んでください')
+    expect(note()).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '期間を選び直す' }))
+    expect(note()).not.toBeNull()
+  })
+
+  it('当面の間なら押した日が開始日になり、開始日から入力の末日までを薄い帯で示す', () => {
+    render(<PolicyStep />)
+    pickDate('20261116')
+    expect(periodSummary()).toBe('期間:2026年11月16日(月)から当面の間')
+    const group = periodCalendar()
+    expect(dayIn(group, '20261116')?.dataset.rangePart).toBe('start')
+    expect(dayIn(group, '20261117')?.dataset.rangePart).toBe('open')
+    expect(dayIn(group, '20261130')?.dataset.rangePart).toBe('open')
+    expect(dayIn(group, '20261115')?.dataset.rangePart).toBeUndefined()
+    // 終了日は無い(range_end の印が付く日は無い)
+    expect(group.querySelector('[data-range-end="true"]')).toBeNull()
+    // もう一度押すと、その日が開始日になる(終了日にはならない)
+    pickDate('20261120')
+    expect(periodSummary()).toBe('期間:2026年11月20日(金)から当面の間')
+  })
+
+  it('「期間を選び直す」で開始日・終了日を空にし、案内を出し、焦点をカレンダーの日に移す', () => {
     render(<PolicyStep />)
     fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
-    pickDay('開始日', 7, 1)
-    pickDay('終了日', 3)
+    pickDate('20261110')
+    expect(periodSummary()).toContain('〜11月10日(火)')
+    const resetButton = screen.getByRole('button', { name: '期間を選び直す' })
+    resetButton.focus()
+    fireEvent.click(resetButton)
+    expect(periodSummary()).toBe('開始日をカレンダーで選んでください。')
+    // 押せなくなったボタンに焦点を残さず、カレンダーの Tab で入る日(最後に押した 11/10)に移す
+    expect(document.activeElement).toBe(dayIn(periodCalendar(), '20261110'))
+    expect(document.activeElement?.getAttribute('tabindex')).toBe('0')
+    expect(resetButton).toHaveProperty('disabled', true)
+    expect(periodCalendar().querySelector('[aria-selected="true"]')).toBeNull()
+    expect(screen.getByRole('button', { name: '期間を選び直す' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', true)
+    pickDate('20261105')
+    pickDate('20261125')
+    expect(periodSummary()).toBe('期間:2026年11月5日(木)〜11月25日(水)(21日間)')
+  })
+
+  it('終了日が開始日より前(既存の方針など)なら、badPeriod の理由を期間の欄の下に出し、「対象便を確かめる」を押せない', () => {
+    // カレンダーでは開始日より前を押すと新しい開始日になるので、終了日が開始日より前になるのは渡された方針だけ
+    const base = useEditStore.getState().base!
+    render(
+      <PolicyForm base={base} initial={basePlan({ period: { start: '20261107', end: '20261103' } })} initialReason={null} />,
+    )
     const reason = screen.getByRole('group', { name: '期間の確認' })
     const issue = reason.querySelector('[data-code="badPeriod"]')
     expect(issue?.getAttribute('data-severity')).toBe('error')
     expect(issue?.textContent).toContain('終了日(2026年11月3日)が開始日(2026年11月7日)より前です')
+    // カレンダーは開始日だけを示し、帯は描かない
+    expect(periodSummary()).toBe('開始日:2026年11月7日(土)、終了日:2026年11月3日(火)')
+    expect(periodCalendar().querySelector('[data-range-middle="true"]')).toBeNull()
     // 理由は期間の欄の下だけに出し、「方針の確かめ」には重ねない
-    expect(screen.getByText('期間', { selector: 'legend' }).closest('fieldset')!.contains(reason)).toBe(true)
+    expect(screen.getByText('減便の期間', { selector: 'legend' }).closest('fieldset')!.contains(reason)).toBe(true)
     expect(screen.queryByRole('region', { name: '減便内容の確認' })?.querySelector('[data-code="badPeriod"]') ?? null).toBeNull()
     expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', true)
-    // 終了日を直すと理由が消える
-    pickDay('終了日', 20)
+    // 選び直すと理由が消える(押した日から選び直し、次に押した日が終了日)
+    pickDate('20261107')
+    pickDate('20261120')
     expect(screen.queryByRole('group', { name: '期間の確認' })).toBeNull()
     expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', false)
   })
@@ -295,9 +473,9 @@ describe('PolicyStep', () => {
   it('日付が正しい calendar の行だけなら、weekdayNotActive の文に日付の注意を足さない', () => {
     render(<PolicyStep />)
     fireEvent.change(screen.getByLabelText('入れ替え元のダイヤ(平日)'), { target: { value: 'WK' } })
+    pickDate('20261107')
     fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
-    pickDay('開始日', 7, 1)
-    pickDay('終了日', 8)
+    pickDate('20261108')
     const issue = screen.getByRole('region', { name: '減便内容の確認' }).querySelector('[data-code="weekdayNotActive"]')
     expect(issue?.textContent).toContain('1日も走りません')
     expect(issue?.textContent).not.toContain('日付の正しくない')

@@ -21,6 +21,7 @@ import { formatCount, formatPercent, formatPointChange } from '@/reach/summary'
 import { useGtfsStore } from '@/store/gtfs'
 import { selectablePeriod, useReachStore, type ReachSnapshot, type RefState, type StepHours } from '@/store/reach'
 import { NoServiceDaysMessage } from './DateBandStep'
+import DriverPanel from './reach/DriverPanel'
 
 /**
  * 影響(到達圏。減便の前後)。上部に今の比較する日付と時間帯の幅(1行)、続けて参照データの状態、時間帯ごとの結果の表。
@@ -71,6 +72,7 @@ export default function ReachStep() {
           {snapshot && <ReachSummaryTable snapshot={snapshot} selectedHour={selectedHour} invalidStops={invalidStops} />}
           {snapshot && <ReachNotes snapshot={snapshot} />}
           {snapshot && <ZeroServiceSummary snapshot={snapshot} />}
+          <DriverPanel />
           <ReachConditions
             params={params}
             onThreshold={(v) => store().setDensityThreshold(v)}

@@ -10,6 +10,7 @@ import { useHolidayStore } from '@/store/holidays'
 import { useReachStore } from '@/store/reach'
 import { useResearchStore } from '@/store/research'
 import { resetAll } from '@/store/reset'
+import { useServiceGroupsStore } from '@/store/serviceGroups'
 import { useSidePanelStore } from '@/store/sidePanel'
 import { useStepStore } from '@/store/steps'
 import LoadStep from './LoadStep'
@@ -76,9 +77,9 @@ describe('LoadStep の版と期間', () => {
     expect(wk.textContent).toContain('4 便・3 系統')
     expect(table.querySelector('[data-service="SA"]')!.textContent).toContain('入れ替えに使う')
 
-    // 表で直したら、要約は「走る日から判定しました」と言わず、直した分け方と書く
-    fireEvent.keyDown(within(table).getByRole('combobox', { name: 'SA の便を入れる平日の service' }), { key: 'Enter' })
-    fireEvent.click(screen.getByRole('option', { name: '使わない' }))
+    // 表は読む専用(U04)。減便の方針の手順の手動の欄で直したら、要約は「走る日から判定しました」と言わず、直した分け方と書く
+    expect(within(table).queryByRole('combobox')).toBeNull()
+    act(() => useServiceGroupsStore.getState().edit({ kind: 'weekdayToSaturday', serviceId: 'SA', into: null }))
     expect(screen.getByTestId('service-groups-summary').textContent).toBe(
       '直した分け方:平日 WK・日祝 SU。土曜ダイヤに変えるときは、入れ替えに使う service がないため、WK の便を期間の間なくします。',
     )
@@ -231,7 +232,7 @@ describe('LoadStep の読み込みの欄', () => {
 })
 
 const DELETE = '読み込んだ GTFS を削除'
-const CONFIRM = '読み込んだ GTFS の削除の確認'
+const CONFIRM = '読み込んだ GTFS を削除しますか'
 
 async function loadFile(name = 'dohoku.zip') {
   const file = zipFile(name, 2048)
@@ -258,27 +259,57 @@ describe('読み込んだ GTFS の削除', () => {
     expect(await screen.findByRole('button', { name: DELETE })).toBeTruthy()
   })
 
-  it('押すとすぐには消さず、画面の中で確かめる。「やめる」なら何も消えない', async () => {
+  it('押すとすぐには消さず、AlertDialog で確かめる。「やめる」なら何も消えず、焦点は削除のボタンに戻る', async () => {
     mocks.loadGtfsInWorker.mockResolvedValue(smallFeed())
     render(<LoadStep />)
     await loadFile()
     const base = useEditStore.getState().base
     const button = screen.getByRole('button', { name: DELETE })
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog')
+    // 押すまでは、ダイアログも画面の中の確かめの欄も無い
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.queryByRole('group', { name: '読み込んだ GTFS の削除の確認' })).toBeNull()
     fireEvent.click(button)
 
-    const confirm = screen.getByRole('group', { name: CONFIRM })
-    expect(confirm.textContent).toContain(
+    const dialog = screen.getByRole('alertdialog', { name: CONFIRM })
+    // 本文はダイアログの説明(aria-describedby)になる
+    const described = document.getElementById(dialog.getAttribute('aria-describedby') ?? '')
+    expect(described?.textContent).toBe(
       '読み込んだ GTFS と、減便の方針・平日に戻した便などの編集、前提情報の調査の結果、AI との会話を消して、最初の状態に戻します。パソコンの中の元のファイルは消えません。',
     )
-    expect(within(confirm).getByRole('button', { name: '削除する' })).toBeTruthy()
-    expect(button.getAttribute('aria-expanded')).toBe('true')
+    expect(within(dialog).getByRole('button', { name: '削除する' }).getAttribute('data-variant')).toBe('destructive')
+    // 最初の焦点は「やめる」
+    const cancel = within(dialog).getByRole('button', { name: 'やめる' })
+    await waitFor(() => expect(document.activeElement).toBe(cancel))
 
-    fireEvent.click(within(confirm).getByRole('button', { name: 'やめる' }))
-    expect(screen.queryByRole('group', { name: CONFIRM })).toBeNull()
+    fireEvent.click(cancel)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(useEditStore.getState().base).toBe(base)
     expect(useGtfsStore.getState().label).toBe('dohoku.zip')
     expect(screen.getByRole('group', { name: ATTACHMENT }).getAttribute('data-state')).toBe('done')
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: DELETE }))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: DELETE })))
+  })
+
+  it('Escape で閉じても何も消えない', async () => {
+    mocks.loadGtfsInWorker.mockResolvedValue(smallFeed())
+    render(<LoadStep />)
+    await loadFile()
+    fireEvent.click(screen.getByRole('button', { name: DELETE }))
+    fireEvent.keyDown(screen.getByRole('alertdialog', { name: CONFIRM }), { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(useGtfsStore.getState().label).toBe('dohoku.zip')
+    expect(useEditStore.getState().base).not.toBeNull()
+  })
+
+  it('読み込みを始めたら、削除の確かめのダイアログを閉じる', async () => {
+    mocks.loadGtfsInWorker.mockResolvedValueOnce(smallFeed()).mockReturnValueOnce(new Promise(() => {}))
+    render(<LoadStep />)
+    await loadFile()
+    fireEvent.click(screen.getByRole('button', { name: DELETE }))
+    expect(screen.getByRole('alertdialog', { name: CONFIRM })).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('GTFS の ZIP ファイル'), { target: { files: [zipFile('b.zip', 2048)] } })
+    await screen.findByRole('button', { name: '読み込み中' })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
   })
 
   it('確かめの文に、承認待ちの下書きと承認済みの編集の数を添える', async () => {
@@ -292,7 +323,7 @@ describe('読み込んだ GTFS の削除', () => {
     })
     const draftId = useEditStore.getState().draft!.id
     fireEvent.click(screen.getByRole('button', { name: DELETE }))
-    expect(screen.getByRole('group', { name: CONFIRM }).textContent).toContain(`承認待ちの下書き #${draftId} と、承認済みの編集 1 件も消えます。`)
+    expect(screen.getByRole('alertdialog', { name: CONFIRM }).textContent).toContain(`承認待ちの下書き #${draftId} と、承認済みの編集 1 件も消えます。`)
   })
 
   it('「削除する」で、画面を開いた直後と同じに戻り、ファイルの選択が空に戻る。そのあと同じファイルをもう一度読み込める', async () => {
@@ -309,13 +340,13 @@ describe('読み込んだ GTFS の削除', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: DELETE }))
-    fireEvent.click(within(screen.getByRole('group', { name: CONFIRM })).getByRole('button', { name: '削除する' }))
+    fireEvent.click(within(screen.getByRole('alertdialog', { name: CONFIRM })).getByRole('button', { name: '削除する' }))
 
-    // 画面:ファイルの欄・読み込んだ GTFS の表・確かめが消え、「ファイルを選ぶ」に焦点が移る
+    // 画面:ファイルの欄・読み込んだ GTFS の表・ダイアログが消え、「ファイルを選ぶ」に焦点が移る
     expect(screen.queryByRole('group', { name: ATTACHMENT })).toBeNull()
-    expect(screen.queryByRole('group', { name: CONFIRM })).toBeNull()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(screen.queryByRole('heading', { name: 'dohoku.zip' })).toBeNull()
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'ファイルを選ぶ' }))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'ファイルを選ぶ' })))
     expect((screen.getByLabelText('GTFS の ZIP ファイル') as HTMLInputElement).value).toBe('')
     // store:GTFS・編集・到達圏・会話・前提情報・手順・タブ
     expect(useGtfsStore.getState().feed).toBeNull()

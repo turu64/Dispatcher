@@ -1,10 +1,24 @@
 import { FileArchiveIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import StepSection from '@/components/StepSection'
-import { InlineConfirm } from '@/components/steps/editParts'
 import ServiceGroupsCard from '@/components/steps/load/ServiceGroupsCard'
-import { deleteConfirmMessage } from '@/components/steps/loadText'
+import {
+  DELETE_DIALOG_CANCEL,
+  DELETE_DIALOG_CONFIRM,
+  DELETE_DIALOG_TITLE,
+  deleteConfirmMessage,
+} from '@/components/steps/loadText'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   Attachment,
   AttachmentActions,
@@ -90,8 +104,11 @@ export default function LoadStep() {
   const [attempt, setAttempt] = useState<Attempt | null>(null)
   const [error, setError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  // 「読み込んだ GTFS を削除」を押して、確かめている間
+  // 「読み込んだ GTFS を削除」を押して、ダイアログで確かめている間。本文は開いた時点の文を持ち、閉じる動きの間に文が変わらないようにする
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleteMessage, setDeleteMessage] = useState('')
+  // ダイアログを「削除する」で閉じたか。閉じた後の焦点の行き先(削除したら「ファイルを選ぶ」、やめたら削除のボタン)を決める
+  const deleted = useRef(false)
   const deleteButton = useRef<HTMLButtonElement>(null)
   const pickButton = useRef<HTMLButtonElement>(null)
   const pendingDraft = useEditStore((s) => s.draft)
@@ -117,6 +134,7 @@ export default function LoadStep() {
     setBusy(kind)
     setAttempt({ name, size: knownSize, isSample: kind === 'sample', status: 'loading' })
     setError(null)
+    // 読み込みを始めたら、削除の確かめは閉じる
     setConfirmingDelete(false)
     // 前の GTFS と、その編集の履歴・下書き・到達圏・前提情報・AI との会話を捨てる(削除と同じ初期化。store/reset.ts)
     resetAll('reload')
@@ -144,6 +162,7 @@ export default function LoadStep() {
 
   // 読み込んだ GTFS を削除して、画面を開いた直後と同じにする(読み込み直しと同じ初期化を通す)
   function removeLoaded() {
+    deleted.current = true
     resetAll('delete')
     setConfirmingDelete(false)
     setAttempt(null)
@@ -151,6 +170,12 @@ export default function LoadStep() {
     // 同じファイルをもう一度選べるように、ファイルの選択も空に戻す
     if (fileInput.current) fileInput.current.value = ''
     pickButton.current?.focus()
+  }
+
+  function askDelete(isSample: boolean) {
+    deleted.current = false
+    setDeleteMessage(deleteConfirmMessage({ draft: pendingDraft, committed: committedEdits, sample: isSample }))
+    setConfirmingDelete(true)
   }
 
   const sampleInfo = sample.status === 'ready' ? sample.info : undefined
@@ -256,8 +281,8 @@ export default function LoadStep() {
                     variant="ghost"
                     size="xs"
                     disabled={busy !== null}
-                    aria-expanded={confirmingDelete}
-                    onClick={() => setConfirmingDelete(true)}
+                    aria-haspopup="dialog"
+                    onClick={() => askDelete(shown.isSample)}
                   >
                     <Trash2Icon aria-hidden="true" data-icon="inline-start" />
                     読み込んだ GTFS を削除
@@ -267,18 +292,33 @@ export default function LoadStep() {
             )}
           </Attachment>
         )}
-        {confirmingDelete && shown?.status === 'done' && (
-          <InlineConfirm
-            label="読み込んだ GTFS の削除の確認"
-            message={deleteConfirmMessage({ draft: pendingDraft, committed: committedEdits, sample: shown.isSample })}
-            confirmLabel="削除する"
-            onConfirm={removeLoaded}
-            onCancel={() => {
-              setConfirmingDelete(false)
-              deleteButton.current?.focus()
+        <AlertDialog
+          open={confirmingDelete}
+          onOpenChange={(isOpen) => {
+            // 「やめる」・Escape で閉じたら何も消さない
+            if (!isOpen) setConfirmingDelete(false)
+          }}
+        >
+          <AlertDialogContent
+            onCloseAutoFocus={(e) => {
+              // 削除したら「ファイルを選ぶ」へ、やめたら削除のボタンへ焦点を戻す
+              e.preventDefault()
+              const target = deleted.current ? pickButton.current : (deleteButton.current ?? pickButton.current)
+              target?.focus()
             }}
-          />
-        )}
+          >
+            <AlertDialogHeader>
+              <AlertDialogTitle>{DELETE_DIALOG_TITLE}</AlertDialogTitle>
+              <AlertDialogDescription>{deleteMessage}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{DELETE_DIALOG_CANCEL}</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={removeLoaded}>
+                {DELETE_DIALOG_CONFIRM}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>

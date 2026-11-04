@@ -11,3 +11,8 @@ export function deleteConfirmMessage({ draft, committed, sample }: { draft: Pick
   parts.push(sample ? 'サンプルは、もう一度読み込めます。' : 'パソコンの中の元のファイルは消えません。')
   return parts.join('')
 }
+
+/** 削除の確かめ(AlertDialog)の見出しとボタン */
+export const DELETE_DIALOG_TITLE = '読み込んだ GTFS を削除しますか'
+export const DELETE_DIALOG_CONFIRM = '削除する'
+export const DELETE_DIALOG_CANCEL = 'やめる'

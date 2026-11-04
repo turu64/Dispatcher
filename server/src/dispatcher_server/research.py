@@ -324,6 +324,41 @@ def parse_start_ids(value: Any) -> list[str]:
     return ids
 
 
+def parse_known_ids(value: Any) -> list[str]:
+    """POST /api/claude/session/research/known の target_ids を確かめ、参照データにある対象の ID の並び(重なりを除く)を返す。
+
+    上限は get_research_results と同じ MAX_RESULT_IDS(調べる対象の上限 DISPATCHER_RESEARCH_MAX_TARGETS ではない)。
+    """
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_RESULT_IDS:
+        raise ResearchInputError(400, f"target_ids は 1〜{MAX_RESULT_IDS} 件の文字列の配列にしてください")
+    for item in value:
+        if not isinstance(item, str) or not item or len(item) > MAX_TARGET_ID_CHARS:
+            raise ResearchInputError(400, "target_ids の各要素は target_id の文字列にしてください")
+    ids = list(dict.fromkeys(value))
+    index = load_targets()
+    if not index:
+        raise ResearchInputError(503, MSG_NO_REF)
+    unknown = [target_id for target_id in ids if target_id not in index]
+    if unknown:
+        raise ResearchInputError(400, f"参照データに無い対象があります:{_ids_text(unknown)}")
+    return ids
+
+
+def register_known(row_id: str, target_ids: list[str], now: float | None = None) -> dict[str, int]:
+    """保存済みの結果(demo か、期限の切れていない web)がある対象だけを、このセッションの対象の後ろに足す。
+
+    会話には何も入れない(調整役の「調査を始めたときだけ調べる」規則を動かさないため)。返すのは
+    registered(この要求で新しく足した数。既に対象にあった ID と、使える結果の無い ID は数えない)と
+    total(足した後のこのセッションの対象の数)。
+    """
+    now = time.time() if now is None else now
+    store = get_store()
+    rows = store.valid_research_results(target_ids, now)
+    usable = [target_id for target_id in target_ids if target_id in rows]
+    registered = store.add_research_targets(row_id, usable, now)
+    return {"registered": registered, "total": len(store.research_target_ids(row_id))}
+
+
 def start_line(count: int) -> str:
     """調査を始めたことを会話に入れる [画面の操作] の行(docs/interfaces-1105.md §6.2)。"""
     return START_LINE.format(count=count)

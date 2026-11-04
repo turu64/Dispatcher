@@ -600,6 +600,149 @@ def test_get_research_returns_targets_and_saved_results(monkeypatch: pytest.Monk
     assert body["missing"] == [OPERATOR] and body["saved"] == 1 and body["total"] == 2
 
 
+# ---- POST /api/claude/session/research/known(指摘15.1。会話の行を送らずに保存済みの結果の対象を登録する) ----
+
+
+def post_known(client: TestClient, handle: str, body: Any) -> Any:
+    return client.post("/api/claude/session/research/known", json=body, headers=headers(handle))
+
+
+def test_known_registers_demo_targets_so_the_coordinator_can_read_them_without_a_message(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic, tmp_path: Path) -> None:
+    enable(monkeypatch)
+    seed = tmp_path / "demo.json"
+    seed.write_text(json.dumps([seed_item(SCHOOL), seed_item(HOSPITAL)], ensure_ascii=False), encoding="utf-8")
+    assert research.run_seed([str(seed)]) == 0
+    handle = create(client)
+    row_id = row_id_of(handle)
+    # 登録の前は、調整役が読んでも空(15.1 の「保存済みの調査結果はありませんでした」)
+    before, is_error = run("get_research_results", {"target_ids": None}, now=time.time(), row=row_id)
+    assert not is_error and before == {"status": "ok", "results": [], "missing": []}
+
+    response = post_known(client, handle, {"target_ids": [SCHOOL, HOSPITAL]})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"registered": 2, "total": 2}
+    after, is_error = run("get_research_results", {"target_ids": None}, now=time.time(), row=row_id)
+    assert not is_error
+    assert [(r["target_id"], r["origin"]) for r in after["results"]] == [(SCHOOL, "demo"), (HOSPITAL, "demo")]
+    assert after["missing"] == []
+    targets, _ = run("get_research_targets", None, now=time.time(), row=row_id)
+    assert all(target["cached"] is not None for target in targets["targets"])
+    # 会話には何も入れず、発言にも数えない
+    assert fake.calls_named("events.send") == []
+    assert get_store().get_session(row_id)["messages"] == 0
+
+
+def test_known_appends_without_duplicates_and_skips_ids_without_usable_results(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic) -> None:
+    enable(monkeypatch)
+    handle = create(client)
+    row_id = row_id_of(handle)
+    now = time.time()
+    store = get_store()
+    common = {"facts": [], "sources": [], "note": "", "status": "not_found", "cache_days": 7}
+    store.save_research_result(target_id=CLINIC, kind="clinic", name="テスト診療所", now=now, **common)
+    store.save_research_result(target_id=SCHOOL, kind="school", name="テスト第一高等学校", now=now, origin="demo", **common)
+    # 期限の切れた web の結果は使えない(掃除の前でも)
+    store.save_research_result(target_id=HOSPITAL, kind="hospital", name="テスト総合病院", now=now - 30 * DAY, **common)
+    store.set_research_targets(row_id, [CLINIC])
+
+    response = post_known(client, handle, {"target_ids": [SCHOOL, CLINIC, HOSPITAL, OPERATOR, SCHOOL]})
+    assert response.status_code == 200, response.text
+    # CLINIC は既にある、HOSPITAL は期限切れ、OPERATOR は結果が無い
+    assert response.json() == {"registered": 1, "total": 2}
+    assert store.research_target_ids(row_id) == [CLINIC, SCHOOL]
+    # 同じ集まりをもう一度送っても増えない
+    again = post_known(client, handle, {"target_ids": [SCHOOL, CLINIC]})
+    assert again.json() == {"registered": 0, "total": 2}
+    assert store.research_target_ids(row_id) == [CLINIC, SCHOOL]
+    # 結果の無い ID だけでも 200(何も足さない)
+    none = post_known(client, handle, {"target_ids": [OPERATOR]})
+    assert none.status_code == 200 and none.json() == {"registered": 0, "total": 2}
+    assert fake.calls_named("events.send") == []
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "fragment"),
+    [
+        ([SCHOOL], 400, "本文は target_ids だけ"),
+        ({"target_ids": [SCHOOL], "names": ["ブラウザの名前"]}, 400, "本文は target_ids だけ"),
+        ({"target_ids": []}, 400, "1〜50 件"),
+        ({"target_ids": None}, 400, "1〜50 件"),
+        ({"target_ids": SCHOOL}, 400, "1〜50 件"),
+        ({"target_ids": [f"P29:{n:012d}" for n in range(51)]}, 400, "1〜50 件"),
+        ({"target_ids": [1]}, 400, "target_id の文字列"),
+        ({"target_ids": [""]}, 400, "target_id の文字列"),
+        ({"target_ids": [SCHOOL, "P29:無い学校"]}, 400, "参照データに無い対象があります:P29:無い学校"),
+    ],
+)
+def test_known_rejects_bad_bodies(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic, body: Any, status: int, fragment: str) -> None:
+    enable(monkeypatch)
+    handle = create(client)
+    get_store().seed_research_results(
+        [{"target_id": SCHOOL, "kind": "school", "name": "テスト第一高等学校", "checked_at": iso(NOW), **research._clean_record(record(SCHOOL))}]
+    )
+    response = post_known(client, handle, body)
+    assert response.status_code == status
+    assert fragment in response.json()["detail"]
+    assert get_store().research_target_ids(row_id_of(handle)) == []
+    assert fake.calls_named("events.send") == []
+
+
+def test_known_accepts_more_than_the_research_max_targets(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic) -> None:
+    # 上限は get_research_results と同じ 50 件(調べる対象の上限 DISPATCHER_RESEARCH_MAX_TARGETS ではない)
+    enable(monkeypatch)
+    monkeypatch.setenv("DISPATCHER_RESEARCH_MAX_TARGETS", "1")
+    handle = create(client)
+    response = post_known(client, handle, {"target_ids": [SCHOOL, HOSPITAL]})
+    assert response.status_code == 200, response.text
+
+
+def test_known_without_ref_data_is_503(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic, tmp_path: Path) -> None:
+    enable(monkeypatch)
+    monkeypatch.setenv("DISPATCHER_REF_DIR", str(tmp_path / "none"))
+    handle = create(client)
+    response = post_known(client, handle, {"target_ids": [SCHOOL]})
+    assert response.status_code == 503
+    assert response.json()["detail"] == research.MSG_NO_REF
+
+
+def test_known_does_not_count_as_a_message_and_works_while_a_browser_tool_waits(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic) -> None:
+    enable(monkeypatch)
+    monkeypatch.setenv("DISPATCHER_MESSAGES_PER_IP_HOUR", "1")
+    handle = create(client)
+    for _ in range(3):
+        assert post_known(client, handle, {"target_ids": [SCHOOL]}).status_code == 200
+    # 発言の上限(1 時間に 1 回)は使っていない
+    assert client.post("/api/claude/session/research", json={"target_ids": [SCHOOL]}, headers=headers(handle)).status_code == 200
+    assert client.post("/api/claude/session/research", json={"target_ids": [SCHOOL]}, headers=headers(handle)).status_code == 429
+    sent = len(fake.calls_named("events.send"))
+    # AI がブラウザのツールの結果を待っていても、会話に何も入れないので登録できる(409 にならない)
+    other = create(client)
+    fake.history = [tool_use("apply_policy", event_id="sevt_wait")]
+    assert post_known(client, other, {"target_ids": [SCHOOL]}).status_code == 200
+    assert len(fake.calls_named("events.send")) == sent
+
+
+def test_known_needs_the_token_and_the_handle_and_logs_only_counts(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic, caplog: pytest.LogCaptureFixture) -> None:
+    enable(monkeypatch)
+    handle = create(client)
+    url = "/api/claude/session/research/known"
+    body = {"target_ids": [SCHOOL]}
+    assert client.post(url, json=body, headers={"X-Dispatcher-Token": "wrong-token", "X-Dispatcher-Session": handle}).status_code == 401
+    assert client.post(url, json=body, headers=headers()).status_code == 404
+    assert client.post(url, json=body, headers=headers(handle[:-2] + "xx")).status_code == 404
+    get_store().seed_research_results(
+        [{"target_id": SCHOOL, "kind": "school", "name": "テスト第一高等学校", "checked_at": iso(NOW), **research._clean_record(record(SCHOOL))}]
+    )
+    with caplog.at_level(logging.INFO, logger="dispatcher_server"):
+        assert client.post(url, json=body, headers=headers(handle)).status_code == 200
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "requested=1 registered=1 total=1" in logged
+    for secret in (SCHOOL, "テスト第一高等学校", handle, TOKEN):
+        assert secret not in logged
+    assert client.delete("/api/claude/session", headers=headers(handle)).status_code == 202
+    assert client.post(url, json=body, headers=headers(handle)).status_code == 410
+
+
 # ---- デモ用の結果の取り込み ----
 
 

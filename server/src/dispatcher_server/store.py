@@ -291,6 +291,36 @@ class Store:
                 self._conn.execute("ROLLBACK")
                 raise
 
+    def add_research_targets(self, row_id: str, target_ids: list[str], now: float | None = None) -> int:
+        """このセッションの調査の対象の後ろに target_ids を足す(今の対象は消さない。既にある ID は足さない)。
+
+        保存済みの結果の対象を、会話の行を送らずに登録するときに使う(POST /api/claude/session/research/known)。
+        新しく足した数を返す。now を渡せば行の最後の操作も今にする。
+        """
+        with self._lock:
+            self._conn.execute("BEGIN")
+            try:
+                before = {
+                    row["target_id"]
+                    for row in self._conn.execute(
+                        "SELECT target_id FROM research_targets WHERE row_id = ?", (row_id,)
+                    ).fetchall()
+                }
+                added = [target_id for target_id in dict.fromkeys(target_ids) if target_id not in before]
+                self._conn.executemany(
+                    "INSERT OR IGNORE INTO research_targets (row_id, target_id) VALUES (?, ?)",
+                    [(row_id, target_id) for target_id in added],
+                )
+                if now is not None:
+                    self._conn.execute(
+                        "UPDATE agent_sessions SET last_activity_at = ? WHERE row_id = ?", (iso(now), row_id)
+                    )
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+        return len(added)
+
     def research_target_ids(self, row_id: str) -> list[str]:
         """このセッションの調査の対象(入れた順)。"""
         rows = self._all("SELECT target_id FROM research_targets WHERE row_id = ? ORDER BY rowid", (row_id,))

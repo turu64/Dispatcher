@@ -3,6 +3,8 @@
  *
  * - POST /api/claude/session/research:調べる対象(target_ids だけ)を送る。サーバーは参照データで名前・種類・位置を入れ、
  *   [画面の操作] の行を会話に入れる。合言葉と取っ手(セッション)が要る
+ * - POST /api/claude/session/research/known:保存済みの結果(デモを含む)がある対象を、会話の行を送らずにセッションへ登録する
+ *   (target_ids だけ。1〜50 件)。AI が get_research_results で読めるようにするだけで、調査は始めない(指摘15.1)
  * - GET /api/claude/session/research:このセッションの対象と、保存済みの結果
  * - GET /api/research/demo:デモ用の保存済みの結果(origin: demo)。AI を呼ばない。合言葉は要らない
  *
@@ -66,6 +68,17 @@ export interface ResearchOverview extends ResearchStartView {
   saved: number
 }
 
+/** POST /api/claude/session/research/known の返答 */
+export interface ResearchKnownView {
+  /** この要求で新しく登録した数(既に登録済みの対象と、使える結果の無い対象は数えない) */
+  registered: number
+  /** 登録した後の、このセッションの対象の数 */
+  total: number
+}
+
+/** 1回の registerKnown で送れる target_id の数(サーバーの MAX_RESULT_IDS) */
+export const MAX_KNOWN_IDS = 50
+
 /** デモ用の保存済みの結果(対象の位置つき) */
 export interface DemoResult extends ResearchResult {
   municipality: string | null
@@ -76,6 +89,11 @@ export interface DemoResult extends ResearchResult {
 export interface ResearchApi {
   /** POST /api/claude/session/research。失敗は ClaudeRequestError */
   start: (token: string | null, handle: string, targetIds: readonly string[]) => Promise<ResearchStartView>
+  /**
+   * POST /api/claude/session/research/known。保存済みの結果がある対象を、会話の行を送らずに登録する。
+   * targetIds は 1〜MAX_KNOWN_IDS 件。失敗は ClaudeRequestError
+   */
+  registerKnown: (token: string | null, handle: string, targetIds: readonly string[]) => Promise<ResearchKnownView>
   /** GET /api/claude/session/research。失敗は ClaudeRequestError */
   overview: (token: string | null, handle: string) => Promise<ResearchOverview>
 }
@@ -179,6 +197,14 @@ function parseStartView(body: unknown): ResearchStartView {
   return { targets, total: num(body.total) ?? targets.length, maxTargets: num(body.max_targets) ?? targets.length }
 }
 
+function parseKnownView(body: unknown): ResearchKnownView {
+  if (!isObj(body)) throw new ClaudeRequestError(null, RESEARCH_SHAPE)
+  const registered = num(body.registered)
+  const total = num(body.total)
+  if (registered === null || total === null) throw new ClaudeRequestError(null, RESEARCH_SHAPE)
+  return { registered, total }
+}
+
 /** GET /api/claude/session/research の返答を読む */
 export function parseOverview(body: unknown): ResearchOverview {
   const view = parseStartView(body)
@@ -230,6 +256,11 @@ export function createResearchApi(fetchImpl?: typeof fetch, base = '/api/claude'
       const headers = { 'Content-Type': 'application/json', ...authHeaders(token, handle) }
       const body = await call(`${base}/session/research`, { method: 'POST', headers, body: JSON.stringify({ target_ids: targetIds }) })
       return parseStartView(body)
+    },
+    async registerKnown(token, handle, targetIds) {
+      const headers = { 'Content-Type': 'application/json', ...authHeaders(token, handle) }
+      const body = await call(`${base}/session/research/known`, { method: 'POST', headers, body: JSON.stringify({ target_ids: targetIds }) })
+      return parseKnownView(body)
     },
     async overview(token, handle) {
       const body = await call(`${base}/session/research`, { method: 'GET', headers: authHeaders(token, handle) })

@@ -100,6 +100,7 @@ function setup(options: { tokenRequired?: boolean; start?: ResearchApi['start'];
       options.overview ??
         (async (): Promise<ResearchOverview> => ({ targets: [], total: 0, maxTargets: 30, results: [HIGH_RESULT], missing: [], saved: 1 })),
     ),
+    registerKnown: vi.fn(async () => ({ registered: 0, total: 0 })),
   }
   const deps: ChatStoreDeps = {
     fetchStatus: async () => ({ available: true, tokenRequired: options.tokenRequired ?? false }),

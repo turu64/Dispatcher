@@ -7,6 +7,7 @@ import pytest
 
 from dispatcher_server.ratelimit import JST, RateLimiter, jst_day
 from dispatcher_server.store import get_store
+from dispatcher_server.store import iso as store_iso
 
 
 def test_tables_have_no_columns_for_conversation_or_ip() -> None:
@@ -165,3 +166,21 @@ def test_invalid_numbers_fall_back_to_defaults(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setenv("DISPATCHER_SESSION_BUDGET_CENTS", value)
     assert settings.sessions_per_ip_hour() == 3
     assert settings.session_budget_cents() == 300
+
+
+def test_add_research_targets_appends_without_duplicates_and_keeps_the_order() -> None:
+    store = get_store()
+    now = time.time()
+    store.insert_session("a", "sesn_a", 1, now - 600)
+    store.set_research_targets("a", ["P29:2", "P04:1"])
+    assert store.add_research_targets("a", ["P11:x", "P04:1", "P29:3", "P11:x"], now) == 2
+    assert store.research_target_ids("a") == ["P29:2", "P04:1", "P11:x", "P29:3"]
+    assert store.get_session("a")["last_activity_at"] == store_iso(now)
+    # 同じ集まりをもう一度足しても変わらない。空でもよい
+    assert store.add_research_targets("a", ["P29:3", "P29:2"]) == 0
+    assert store.add_research_targets("a", []) == 0
+    assert store.research_target_ids("a") == ["P29:2", "P04:1", "P11:x", "P29:3"]
+    # ほかのセッションの対象には入らない。置き換え(set_research_targets)はそのまま
+    assert store.research_target_ids("b") == []
+    store.set_research_targets("a", ["P29:9"])
+    assert store.research_target_ids("a") == ["P29:9"]

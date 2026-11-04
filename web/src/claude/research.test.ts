@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkedAtText, createResearchApi, parseResult, RESEARCH_SHAPE, safeUrl } from './research'
+import { checkedAtText, createResearchApi, MAX_KNOWN_IDS, parseResult, RESEARCH_SHAPE, safeUrl } from './research'
 import { ClaudeRequestError } from './sse'
 
 /** サーバーの返答の形(snake_case)の対象 */
@@ -80,6 +80,50 @@ describe('createResearchApi', () => {
       },
     ])
     expect(overview.saved).toBe(1)
+  })
+
+  it('registerKnown は known の口に target_ids だけを送り、{registered, total} を読む', async () => {
+    const fetchImpl = fakeFetch(200, { registered: 2, total: 3 })
+    const api = createResearchApi(fetchImpl as unknown as typeof fetch)
+    const view = await api.registerKnown('tok', 'handle-1', ['P29:01234567890A', 'P04:0123456789ab'])
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('/api/claude/session/research/known')
+    expect(init?.method).toBe('POST')
+    expect(init?.headers).toEqual({ 'Content-Type': 'application/json', 'X-Dispatcher-Token': 'tok', 'X-Dispatcher-Session': 'handle-1' })
+    expect(JSON.parse(init?.body as string)).toEqual({ target_ids: ['P29:01234567890A', 'P04:0123456789ab'] })
+    expect(view).toEqual({ registered: 2, total: 3 })
+    expect(MAX_KNOWN_IDS).toBe(50)
+
+    // 合言葉が無ければ取っ手だけ
+    const noToken = fakeFetch(200, { registered: 0, total: 0 })
+    await createResearchApi(noToken as unknown as typeof fetch).registerKnown(null, 'h', ['P29:x'])
+    expect(noToken.mock.calls[0][1]?.headers).toEqual({ 'Content-Type': 'application/json', 'X-Dispatcher-Session': 'h' })
+  })
+
+  it('registerKnown の失敗は ClaudeRequestError(サーバーの detail・つながらない・形が違う)', async () => {
+    const rejected = createResearchApi(fakeFetch(400, { detail: '参照データに無い対象があります:P29:x' }) as unknown as typeof fetch)
+    const error = await rejected.registerKnown(null, 'h', ['P29:x']).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ClaudeRequestError)
+    expect((error as ClaudeRequestError).status).toBe(400)
+    expect((error as ClaudeRequestError).message).toBe('参照データに無い対象があります:P29:x')
+
+    const gone = createResearchApi(fakeFetch(410, { detail: 'AI との会話は終わっています。新しく始めてください' }) as unknown as typeof fetch)
+    const e410 = await gone.registerKnown(null, 'h', ['P29:x']).catch((e: unknown) => e)
+    expect((e410 as ClaudeRequestError).status).toBe(410)
+
+    const offline = createResearchApi((async () => {
+      throw new TypeError('failed')
+    }) as unknown as typeof fetch)
+    const eOffline = await offline.registerKnown(null, 'h', ['P29:x']).catch((e: unknown) => e)
+    expect(eOffline).toBeInstanceOf(ClaudeRequestError)
+    expect((eOffline as ClaudeRequestError).status).toBeNull()
+
+    for (const body of [{ registered: 'x', total: 1 }, { total: 1 }, []]) {
+      const bad = createResearchApi(fakeFetch(200, body) as unknown as typeof fetch)
+      const eBad = await bad.registerKnown(null, 'h', ['P29:x']).catch((e: unknown) => e)
+      expect(eBad).toBeInstanceOf(ClaudeRequestError)
+      expect((eBad as ClaudeRequestError).message).toBe(RESEARCH_SHAPE)
+    }
   })
 
   it('失敗はサーバーの detail を持つ ClaudeRequestError。形が違えば RESEARCH_SHAPE', async () => {

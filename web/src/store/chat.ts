@@ -103,7 +103,7 @@ function isSet(v: unknown): boolean {
 
 /**
  * search_trips の入力と結果から、AI に返した便を読む。結果が ok でない・20KB を超えて AI に届かない・形が違うときは null。
- * 件数は結果の trips の数(fitResult が後ろを省いたときは returned より少ない)
+ * 件数は結果の trips の数(20KB に収めるために便を省いたときは、省いた後の数。tools.ts の fitTrips が returned も同じ数に直す)
  */
 export function summarizeSearchTrips(input: unknown, outcome: ToolOutcome): SearchTripsSummary | null {
   if (outcome.isError || byteLength(outcome.content) > MAX_RESULT_BYTES) return null

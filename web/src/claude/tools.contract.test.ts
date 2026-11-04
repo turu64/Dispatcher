@@ -5,6 +5,7 @@ import {
   ADD_BACK_ITEM_KEYS,
   POLICY_KIND_NAMES,
   REASON_CATEGORY_NAMES,
+  RESTORE_HINT_KINDS,
   SEARCH_SCOPES,
   SERVER_TOOL_LABELS,
   STEP_HOURS_VALUES,
@@ -66,11 +67,27 @@ describe('ツールの名前と required の項目が claude_tools.json と一�
     expect(Object.keys(items.properties ?? {}).sort()).toEqual([...ADD_BACK_ITEM_KEYS].sort())
   })
 
-  it('決まった値(kind・reason_category・scope・step_hours)が同じ', () => {
+  it('決まった値(kind・reason_category・scope・step_hours・hints)が同じ', () => {
     const policy = byName.get('apply_policy')!.input_schema.properties!
     expect(enumOf(policy.kind).sort()).toEqual(Object.keys(POLICY_KIND_NAMES).sort())
     expect(enumOf(policy.reason_category).sort()).toEqual(Object.keys(REASON_CATEGORY_NAMES).sort())
     expect(enumOf(byName.get('search_trips')!.input_schema.properties!.scope).sort()).toEqual([...SEARCH_SCOPES].sort())
     expect(enumOf(byName.get('summarize_impact')!.input_schema.properties!.step_hours)).toEqual([...STEP_HOURS_VALUES])
+    // search_trips の hints は判断材料の識別子(restore.ts の RestoreHint)の配列か null
+    const hints = byName.get('search_trips')!.input_schema.properties!.hints
+    expect((hints.anyOf ?? []).map((a) => a.type).sort()).toEqual(['array', 'null'])
+    expect(enumOf(hints.anyOf!.find((a) => a.type === 'array')!.items).sort()).toEqual([...RESTORE_HINT_KINDS].sort())
+  })
+
+  it('判断材料の説明は、画面の名前で書き、「唯一の便」と言い換えない(指摘15.3)。evening は 15〜21時', () => {
+    const search = byName.get('search_trips')!.description
+    expect(search).not.toContain('唯一の便)')
+    expect(search).toContain('onlyTripInBand「時間帯の便がなくなる」')
+    expect(search).toContain('onlyServiceAtStop「停留所の発車がなくなる」')
+    expect(search).toContain('evening「夕方・夜(15〜21時)」')
+    expect(search).not.toContain('15〜19時')
+    for (const key of ['hint_texts', 'band', 'route_weekday_trips', 'truncated', 'next_offset']) expect(search).toContain(key)
+    const impact = byName.get('summarize_impact')!.description
+    for (const key of ['round_trip', 'facility_access', 'facility_access_unavailable', 'drivers']) expect(impact).toContain(key)
   })
 })

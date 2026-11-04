@@ -206,7 +206,7 @@ ${EDITOR:-nano} .env
 | `DISPATCHER_PUBLIC` | `1`(認証コードなしで公開する) |
 | `DISPATCHER_TOKEN` | 空のまま(認証コードを使うときだけ設定) |
 | `DISPATCHER_AGENT_ID` | `claude-lock.json` の `.resources["./agents/coordinator.md"].id` |
-| `DISPATCHER_AGENT_VERSION` | `3`(`claude-lock.json` の同じ項目の `version`。`ant apply` で上がったら直す) |
+| `DISPATCHER_AGENT_VERSION` | `claude-lock.json` の同じ項目の `version`(11/5 の時点で `3`。ツールの定義の変更(11/6 の A10)を `ant apply` したら `4`。手順 10 の「エージェントを更新したとき」) |
 | `DISPATCHER_ENVIRONMENT_ID` | `claude-lock.json` の `.resources["./environments/dispatcher.yaml"].id` |
 | `DISPATCHER_SESSION_SECRET` | 32 バイト以上の乱数(下のコマンド) |
 | `ANTHROPIC_WORKSPACE_ID` | 空のまま(ワークスペース単位のキーでは要りません) |
@@ -405,7 +405,7 @@ VPS の上で、コンテナの中から日本語のファイル名が読める�
 cd /srv/dispatcher
 docker compose exec server id                          # uid=10001(dispatcher)
 docker compose exec server ls -l /data/sample /data/ref | head
-docker compose exec server env | grep -E '^DISPATCHER_(PUBLIC|TRUST_PROXY|AGENT_VERSION|DEV)='   # PUBLIC=1・TRUST_PROXY=1・AGENT_VERSION=3 が出て、DEV は出ないこと
+docker compose exec server env | grep -E '^DISPATCHER_(PUBLIC|TRUST_PROXY|AGENT_VERSION|DEV)='   # PUBLIC=1・TRUST_PROXY=1・AGENT_VERSION=(claude-lock.json の調整役の version)が出て、DEV は出ないこと
 docker compose exec server sh -c 'test -n "$TYPESAFE_AI_VERCEL_KEY" && echo jev-key-set'    # jev-key-set(値は出さない)
 ```
 
@@ -463,6 +463,16 @@ curl -s http://127.0.0.1:8080/api/health
 1. 手元で `claude-lock.json` の調整役の `version` を確かめる
 2. VPS の `.env` の `DISPATCHER_AGENT_VERSION` を直し、`docker compose up -d`
 3. 新しいセッションから新しい版を使う。開いているセッションは、前の版のまま動く
+
+**ツールの定義が変わる版は、サーバーの版の更新と画面の公開を同じデプロイで行います。** ツールの定義の正は `server/src/dispatcher_server/claude_tools.json` で、入力を確かめるのは画面(`web/src/claude/tools.ts`)なので、調整役の版と画面のコードは対になっています。
+
+- 例:調整役の版 4(11/6 の A10)は、`search_trips` の入力に `offset`・`hints` を足し、`summarize_impact` の結果の `drivers`(要る運転士の数(目安))を読む。新しい画面は、版 3 の調整役が2つの項目を送らなくても受け付ける(なければ `null` として読む)。古い画面は版 4 の調整役が送る `offset`・`hints` を「知らない項目」として断るので、版 4 だけを先に使うと便の検索がすべて失敗になる
+- 手順:
+  1. 手元で `ant apply`(利用者の承認のうえで)し、`claude-lock.json` の調整役の `version`(版 4)をコミットする。ツールの定義を変えたコミットと同じ枝に入れる
+  2. VPS で、そのコミットを取得して `.env` の `DISPATCHER_AGENT_VERSION` を新しい版にする
+  3. `docker compose up -d --build` を1回だけ実行する(web と server のイメージを作り直し、server は新しい `.env` を読む)。画面を先に、版を後に、と分けない
+  4. 画面を読み込み直してから AI に相談し、`search_trips` の結果に `next_offset` があること、`summarize_impact` の結果に `drivers` があることを確かめる(「AI に送る情報」で見られる)
+- 戻すときは、コードを前のコミットに戻すのと同じデプロイで `DISPATCHER_AGENT_VERSION` も前の版に戻す(版 3 の調整役と新しい画面の組は動くが、版 4 の調整役と古い画面の組は動かない)
 
 ### 戻し方
 

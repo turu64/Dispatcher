@@ -4,7 +4,8 @@ import type { GroupedPolicyServices } from '../gtfs/groups/view'
 import { createEditStore, type BaseGtfs } from '../store/edit'
 import { runTool, type PolicyServices, type ReachAccess, type ToolDeps } from './tools'
 
-// 確定したダイヤのグループ分け(複数の組)で、AI のツールが動くこと(docs/design-service-groups.md §5.3)
+// ダイヤのグループ分けの自動の入れ替えの案(複数の組。status が confirmed、Jev の答えを待っていない)で、AI のツールが動くこと
+// (docs/design-service-groups.md §5.3)。グループ分けを利用者が確定する操作は無い(指摘19)
 
 const NOW = new Date('2026-11-04T00:30:00Z')
 
@@ -199,7 +200,7 @@ describe('承認したあとの add_back_trips・search_trips は、すべての
 
   it('base_weekday は期間に走る組の平日の service の便(期間に走らない 01001_C と残す 01002_RIT は入れない)', async () => {
     const { deps } = await approved()
-    const r = await runTool('search_trips', { scope: 'base_weekday', route_ids: null, stop_name: null, depart_from: null, depart_to: null, limit: 50 }, deps)
+    const r = await runTool('search_trips', { scope: 'base_weekday', route_ids: null, stop_name: null, depart_from: null, depart_to: null, limit: 50, offset: null, hints: null }, deps)
     expect(r.isError).toBe(false)
     const ids = (parse(r.content).trips as { trip_id: string }[]).map((t) => t.trip_id).sort()
     expect(ids).toEqual(['R1_01001_0700', 'R1_01001_0800_K', 'R1_01001_0900_A', 'R1_01005_1200_MSN', 'R2_0900_WB', 'R3_01001_0730'])
@@ -207,14 +208,14 @@ describe('承認したあとの add_back_trips・search_trips は、すべての
 
   it('removed(なくなる便)に、期間に走らないため組ごと除いた 01001_C の便を入れない', async () => {
     const { deps } = await approved()
-    const r = await runTool('search_trips', { scope: 'removed', route_ids: null, stop_name: null, depart_from: null, depart_to: null, limit: 50 }, deps)
+    const r = await runTool('search_trips', { scope: 'removed', route_ids: null, stop_name: null, depart_from: null, depart_to: null, limit: 50, offset: null, hints: null }, deps)
     const ids = (parse(r.content).trips as { trip_id: string }[]).map((t) => t.trip_id).sort()
     expect(ids).toEqual(['R1_01005_1200_MSN', 'R2_0900_WB', 'R3_01001_0730'])
   })
 
   it('方針が無いときの base_weekday は、確定したグループ分けの平日の service の便', async () => {
     const { deps } = setup({ weekday: 'WK', saturday: 'SA', sundayHoliday: null, groups: CONFIRMED })
-    const r = await runTool('search_trips', { scope: 'base_weekday', route_ids: null, stop_name: null, depart_from: null, depart_to: null, limit: 50 }, deps)
+    const r = await runTool('search_trips', { scope: 'base_weekday', route_ids: null, stop_name: null, depart_from: null, depart_to: null, limit: 50, offset: null, hints: null }, deps)
     const ids = (parse(r.content).trips as { trip_id: string }[]).map((t) => t.trip_id)
     expect(ids).toContain('R1_01001_1000_C')
     expect(ids).toContain('R2_0900_WB')

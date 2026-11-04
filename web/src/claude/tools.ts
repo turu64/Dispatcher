@@ -15,6 +15,7 @@ import { activeServiceIds, isValidGtfsDate } from '@/gtfs/calendar'
 import { createTripBriefer, restoreTotals, type TripBrief, type WeekdayDiff } from '@/gtfs/edit/diff'
 import { facilityAccess, type FacilityAccessEntry, type FacilityAccessWindow } from '@/gtfs/edit/facilityAccess'
 import { formatMinutes, type FacilityWindow } from '@/gtfs/edit/facilityHours'
+import type { DutyParams, DutyPlace } from '@/gtfs/edit/duties'
 import { activeWeekdayServicesOf, type Form2Result } from '@/gtfs/edit/form2'
 import {
   checkPolicy,
@@ -40,9 +41,10 @@ import {
 import {
   compareByHints,
   createRestoreHinter,
-  hintSentence,
+  RESTORE_HINT_LABELS,
   type HintFacility,
   type NearFacility,
+  type RestoreHint,
   type RestoreHintContext,
   type RestoreHintDetail,
 } from '@/gtfs/edit/restore'
@@ -53,6 +55,7 @@ import type { GtfsFeed } from '@/gtfs/load'
 import { toStops } from '@/gtfs/parse'
 import { timingNotices, validateEdit, type ValidationIssue } from '@/gtfs/validate/edit'
 import { formatPercent } from '@/reach/summary'
+import { compareDrivers, useDriversStore, type DriverComparison } from '@/store/drivers'
 import { blockingIssues, diffOf, draftName, lastVersion, type Draft, type EditState } from '@/store/edit'
 import type { ReachSnapshot, StepHours } from '@/store/reach'
 
@@ -70,9 +73,20 @@ export const TOOL_INPUT_KEYS: Record<ToolName, readonly string[]> = {
   add_back_trips: ['items'],
   undo_edit: [],
   summarize_impact: ['date', 'step_hours'],
-  search_trips: ['scope', 'route_ids', 'stop_name', 'depart_from', 'depart_to', 'limit'],
+  search_trips: ['scope', 'route_ids', 'stop_name', 'depart_from', 'depart_to', 'limit', 'offset', 'hints'],
   run_validation: [],
 }
+
+/**
+ * 調整役の版 3(offset・hints を知らない)が送らない項目。なければ null として読む(ant apply で版 4 に上げるまでと、
+ * 版 3 のまま開いているセッションのため。claude_tools.json では required のまま)
+ */
+export const LEGACY_OPTIONAL_KEYS: Partial<Record<ToolName, readonly string[]>> = {
+  search_trips: ['offset', 'hints'],
+}
+
+/** search_trips の hints に使える判断材料の識別子(restore.ts の RestoreHint。claude_tools.json の enum と同じ) */
+export const RESTORE_HINT_KINDS = Object.keys(RESTORE_HINT_LABELS) as RestoreHint[]
 
 /** add_back_trips の items の1件の項目 */
 export const ADD_BACK_ITEM_KEYS = ['trip_id', 'reason', 'school_days_only'] as const
@@ -111,6 +125,8 @@ export const INPUT_LIMITS = {
   /** search_trips の limit */
   minLimit: 1,
   maxLimit: 50,
+  /** search_trips の offset */
+  maxOffset: 100_000,
 } as const
 
 /** ツールの動きとして画面に出す文(docs/interfaces-1105.md §6.4) */
@@ -182,7 +198,7 @@ export interface ToolDeps {
   today: () => string
   /**
    * 方針の手順で画面が推定・選択している service。validity は Claude が指定した期間から作った新しい有効期間
-   * (画面の推定を同じ期間で作り直すときに使う。[画面の状態] の行では null)。GTFS が無ければ null
+   * (画面の推定を同じ期間で作り直すときに使う。[画面の状態] の行では null)。GTFS がなければ null
    */
   policyServices: (validity: { start: string; end: string } | null) => PolicyServices | null
   /**
@@ -195,6 +211,19 @@ export interface ToolDeps {
   reachTimeoutMs?: number
   /** search_trips が、到達圏の計算中に終わるのを待つ上限(ミリ秒)。既定 20000。過ぎたら到達圏を使う手がかりを出さずに返す */
   hintWaitMs?: number
+  /**
+   * 要る運転士の数(目安)の欄の入力(欠員・仮定・営業所などの場所。D06)。summarize_impact の drivers に使う。
+   * 省けば要る運転士の数の store(useDriversStore)の今の値を読む
+   */
+  drivers?: () => DriverSettings
+}
+
+/** 要る運転士の数(目安)の推定の入力のうち、利用者が影響(到達圏)の手順の欄で決めるもの */
+export interface DriverSettings {
+  params: DutyParams
+  places: readonly DutyPlace[]
+  /** 欠員(その日に乗務できない運転士の数)。入れていなければ null */
+  shortage: number | null
 }
 
 export interface ToolOutcome {
@@ -219,7 +248,7 @@ const NO_EDIT =
   '減便の方針の下書きも承認済みの減便の方針もないため、比較する減便後の GTFS がありません。先に apply_policy を使ってください。'
 const NO_REACH_HINTS = '到達圏の比較がまだないため、到達圏を使う判断材料は出していません。'
 const HINT_TEXTS_NOTE =
-  'hints(判断材料の名前)と hint_texts(hints と同じ並びの文)は、時間帯・停留所・系統の全体のどれについての判断材料かを書いたものです。利用者に説明するときは「唯一の便」とは書かず、hint_texts の言い方を使ってください。band は onlyTripInBand のときの、その系統の始発の時間帯(3時間ごと)の名前と、その系統・時間帯の減便前(before)・減便後(after)の平日の便数です(ほかの判断材料では null)。route_weekday_trips は、その系統の減便前・減便後の平日の便数です(方向は分けていません)。'
+  'hint_texts は hints と同じ並びの短い文で、時間帯・停留所・系統の全体のどれについての判断材料かを書いたものです。利用者に説明するときは「唯一の便」とは書かず、hint_texts の言い方を使ってください。系統の便数は route_weekday_trips(減便前・減便後の平日の便数。方向は分けていません)を使ってください。'
 const REACH_BUSY_HINTS = '到達圏の計算が終わらなかったため、到達圏を使う判断材料は出していません。しばらくしてから探し直してください。'
 
 const NO_FACILITY_HINTS_WITHOUT_REACH =
@@ -227,17 +256,22 @@ const NO_FACILITY_HINTS_WITHOUT_REACH =
 const NO_FACILITY_DATA =
   '手順2「前提情報」の学校・病院の参照データを読み込めていないため、学校・病院の判断材料(nearFacility・nearby_facilities)は出していません(該当がないという意味ではありません)。'
 const FACILITY_NOTE =
-  'nearby_facilities は、便の停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)の学校と入院設備のある病院(国土数値情報。距離はコードが出したもの)のうち、施設ごとの時間帯の窓に当たるもので、便ごとに3件まで(省いた数は nearby_facilities_omitted)。窓に当たらず徒歩圏にあるだけの施設は、数だけを nearby_without_match に書く。matches は窓に当たる停留所と時刻(「07:40着 学校前」の形。着・発は窓の向き)。時間帯の窓は、前提情報の調査で調べた外来の受付時間・始業・終業の時刻をコードが読めた施設ではその時刻から決め(病院は受付開始の30分前〜午前の受付終了に着く・午前の受付終了〜最後の受付終了の2時間後に出る、学校は始業の1時間前〜始業に着く・終業〜終業の2時間後に出る)、窓と根拠の時刻を window に書く(「着 7:30〜11:30・発 11:30〜17:15(調べた外来の受付 8:00〜11:30・13:00〜15:15)」の形)。window のない施設と、window で既定と書いた向きは既定の窓(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)。並びは priority_rank(重要拠点の優先順位。1 が最も高い)、距離の順。facility_research は、返した便の近くの施設のうち調べたもの(10 件まで。出典 URL と確認日時つきで、その後に変わっていることがある)。'
+  'nearby_facilities は、便の停留所の徒歩圏にあり、施設ごとの時間帯の窓に当たる学校・病院です(便ごとに優先順位・距離の順で 1 件。ほかに当たる施設の数は nearby_facilities_omitted)。学校・病院を読み込んでいて nearby_facilities のない便は、窓に当たる施設が徒歩圏にありません。window のない施設は既定の窓です。'
+/** offset が 0 より大きいとき、項目の説明の notes の代わりに入れる文 */
+const NOTES_ON_FIRST_PAGE = '項目の説明は offset 0 の結果の notes と同じです(省きました)。'
 
 /** search_trips の便ごとに出す施設の数の上限(結果の大きさを抑える) */
-const MAX_FACILITIES_PER_TRIP = 3
+const MAX_FACILITIES_PER_TRIP = 1
 /** facility_research に入れる施設の数の上限 */
-const MAX_RESEARCHED_FACILITIES = 10
-/** facility_research の事実の値の長さの上限(文字) */
-const MAX_FACT_CHARS = 60
+const MAX_RESEARCHED_FACILITIES = 5
+/** facility_research の事実の数と、値の長さ(文字)の上限 */
+const MAX_FACTS = 3
+const MAX_FACT_CHARS = 40
+/** search_trips の便ごとの via(通る主な停留所)の数 */
+const MAX_VIA_STOPS = 2
 
 /**
- * 施設の窓のうち調べた結果から決めたものがあれば、窓と根拠の短い文(T27)。どちらも既定なら null(FACILITY_NOTE の既定の窓)。
+ * 施設の窓のうち調べた結果から決めたものがあれば、窓と根拠の短い文(T27)。どちらも既定なら null(既定の窓は tool の説明に書く)。
  * 着く・出る窓が同じ事実から決まっていれば根拠は1回だけ書く(「着 7:30〜11:30・発 11:30〜17:15(調べた外来の受付 8:00〜11:30)」)
  */
 function windowSummary(f: HintFacility): string | null {
@@ -251,9 +285,14 @@ function windowSummary(f: HintFacility): string | null {
   return `${span(arrive, '着')}(${why(arrive)})・${span(depart, '発')}(${why(depart)})`
 }
 
+/** 窓に当たった停留所と時刻(「07:40着 学校前」の形。着は arrive、発は depart の窓) */
+function matchTexts(n: NearFacility): string[] {
+  return n.matches.map((m) => `${m.time}${m.timing === 'arrive' ? '着' : '発'} ${m.stopName}`)
+}
+
 /**
- * 便の近くの学校・病院(search_trips の nearby_facilities の1件。結果の大きさを抑えるため、窓の名前・停留所ごとの距離・種類の英字は入れない)。
- * 窓を調べた結果から決めた施設だけ window を付ける(既定の窓は FACILITY_NOTE に書く)
+ * 便の近くの学校・病院(search_trips の nearby_facilities の1件)。結果の大きさを抑えるため、最寄りの停留所の名前・窓の名前・
+ * 種類の英字は入れない(停留所は matches にある)。窓を調べた結果から決めた施設だけ window を付ける
  */
 function nearFacilityJson(n: NearFacility): Record<string, unknown> {
   const f = n.facility
@@ -263,10 +302,7 @@ function nearFacilityJson(n: NearFacility): Record<string, unknown> {
     name: f.name,
     category: f.categoryLabel,
     priority_rank: f.rank,
-    nearest_stop: n.stopName,
-    distance_m: n.distanceM,
-    // 「07:40着 学校前」の形(着は arrive、発は depart の窓)
-    matches: n.matches.map((m) => `${m.time}${m.timing === 'arrive' ? '着' : '発'} ${m.stopName}`),
+    matches: matchTexts(n),
     ...(window !== null ? { window } : {}),
   }
 }
@@ -281,7 +317,33 @@ function facilityResearchJson(f: HintFacility): Record<string, unknown> {
     status: r.status,
     checked_at: r.checkedAt,
     origin: r.origin,
-    facts: r.facts.map((x) => ({ label: x.label, value: clip(x.value), source_url: x.url })),
+    facts: r.facts.slice(0, MAX_FACTS).map((x) => ({ label: x.label, value: clip(x.value), source_url: x.url })),
+    ...(r.facts.length > MAX_FACTS ? { facts_omitted: r.facts.length - MAX_FACTS } : {}),
+  }
+}
+
+/** 数を桁区切りにする(判断材料の短い文に入れる) */
+function count(n: number): string {
+  return n.toLocaleString('ja-JP')
+}
+
+/**
+ * 判断材料の短い文(search_trips の hint_texts。結果の大きさを抑えるため、画面の文 restore.ts の hintSentence より短くする。指摘18.4)。
+ * 画面の判断材料の名前(RESTORE_HINT_LABELS)に、便ごとに違う数だけを括弧で添える。何についての判断材料か(時間帯・停留所・
+ * 系統の全体)は名前と tool の説明で分かる。「唯一の便」とは書かない(指摘15.3)。系統の便数は route_weekday_trips に、
+ * 学校・病院の名前と時刻は nearby_facilities にある
+ */
+export function shortHintText(hint: RestoreHint, detail: RestoreHintDetail): string {
+  const label = RESTORE_HINT_LABELS[hint]
+  switch (hint) {
+    case 'onlyTripInBand':
+      return detail.band ? `${label}(${detail.band.label})` : label
+    case 'nearFacility': {
+      const matched = (detail.facilities ?? []).filter((n) => n.matches.length > 0).length
+      return matched > 0 ? `${label}(${count(matched)} 施設)` : label
+    }
+    default:
+      return label
   }
 }
 
@@ -290,9 +352,9 @@ function slashDate(date: string): string {
   return `${date.slice(0, 4)}/${date.slice(4, 6)}/${date.slice(6, 8)}`
 }
 
-/** 到達圏を使う手がかりを、どの日付の比較から出したか */
-function reachDateNote(date: string): string {
-  return `到達圏を使う判断材料(onlyServiceAtStop・restoresLostCells)は、比較する日付 ${slashDate(date)} の減便前後の到達圏の比較から出しています。`
+/** 到達圏を使う手がかりを、どの日付・どの時間帯の幅の比較から出したか */
+function reachDateNote(date: string, stepHours: StepHours): string {
+  return `到達圏を使う判断材料(onlyServiceAtStop・restoresLostCells)は、比較する日付 ${slashDate(date)} の減便前後の到達圏の比較から、画面の時間帯の幅(${stepHours} 時間ごと)で出しています。`
 }
 
 /** 比較の日付に平日の service が走らないので、どの便にも到達圏を使う手がかりが出ない(「該当なし」ではない) */
@@ -493,7 +555,7 @@ function totalsJson(base: GtfsFeed, accepted: readonly string[]): Record<string,
     unknown_duration: t.unknownDuration,
     earliest_start: t.earliestStart,
     latest_end: t.latestEnd,
-    note: '営業運行時間は、各便の始発から終着までの合計です(回送・待機・点呼は含まず、必要な運転士の人数ではありません)。',
+    note: '営業運行時間は、各便の始発から終着までの合計です(回送・待機・点呼は含みません)。要る運転士の数(勤務の数の下限の目安)と欠員との比較は、summarize_impact の drivers で見られます。',
   }
 }
 
@@ -954,11 +1016,25 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
   })
   const zeroStops = snap.zeroStops ?? []
   const result = basis.result
-  // 往復と学校・病院に着く便(A07)は、比較する日付の減便前と、今の減便後(元に戻す下書きで編集がなくなるなら減便前のまま)を比べる
+  // 往復と学校・病院に着く便(A07)は、比較する日付の減便前と、今の減便後(元に戻す下書きで編集がなくなるなら減便前のまま)を比べる。
+  // 平日ダイヤの service は、元に戻す下書きで減便前に戻るときも、承認済みの最後の版の方針から取る(画面の平日便を戻す手順の
+  // RestoreStep.tsx の checkWeekdayResult と同じ)。比較する日付に平日ダイヤが走らないことを、該当なしと取り違えないため
   const editedFeed = result?.feed ?? state.base.feed
-  const weekdays = result ? activeWeekdayServicesOf(result) : undefined
+  const weekdayResult = result ?? lastVersion(state)
+  const weekdays = weekdayResult ? activeWeekdayServicesOf(weekdayResult) : undefined
   const roundTrip = roundTripJson(roundTripCheck(state.base.feed, editedFeed, snap.date, { weekdayServices: weekdays }))
   const access = facilityAccessJson(state.base.feed, editedFeed, snap.date, weekdays, deps.hintContext(editedFeed))
+  const drivers = driversJson(
+    compareDrivers({
+      base: state.base.feed,
+      // 画面の欄(useDriverComparison)と同じく、到達圏の store に渡している減便後(元に戻す下書きで減便前に戻るなら減便前)と比べる
+      edited: { feed: editedFeed, draft: basis.kind === 'draft' },
+      date: snap.date,
+      // 要る運転士の数の欄(store/drivers.ts の weekdayServicesOfEdit)と同じく、方針が分からないとき(元に戻す下書きで減便前に戻る)は null
+      weekdayServices: result ? activeWeekdayServicesOf(result) : null,
+      ...(deps.drivers ?? defaultDriverSettings)(),
+    }),
+  )
   const body: Record<string, unknown> = {
     status: 'ok',
     ...basisFields(basis),
@@ -979,6 +1055,7 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
     round_trip: roundTrip,
     facility_access: access.json,
     ...(access.unavailable !== null ? { facility_access_unavailable: access.unavailable } : {}),
+    drivers,
     notes: [
       ...notes,
       '区画(セル)は 125m 四方です。到達圏から外れる割合の分母は、減便前の GTFS で徒歩圏に停留所・駅がある区画(coverable_cells)です。',
@@ -986,6 +1063,7 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
       'scope が feed の停留所・系統は、出力のどの日にも便が来ません。day はこの日だけ便がなくなります。',
       ROUND_TRIP_NOTE,
       FACILITY_ACCESS_TOOL_NOTE,
+      DRIVERS_NOTE,
     ],
   }
   return ok(fitImpactLists(body), ['zero_service_routes'])
@@ -998,7 +1076,10 @@ const ROUND_TRIP_NOTE =
   'round_trip は、比較する日付の減便前と減便後を、系統の方向(始発 → 終着の停留所名)ごとに比べた往復の確かめです。problems は、方向の便がなくなる(directionVanishes)・帰りの便がない(noReturn。行きの方向に朝の窓の便があり、逆向きに帰りの窓の便が 0)・終発が早まる(lastEarlier)・始発が遅くなる(firstLater)の順で、上位 20 件まで(省いた数は problems_omitted)。counts は種類ごとの全体の件数です。逆向きが見つからない系統(循環・片道)は no_reverse の数だけで、problems には入りません。'
 
 const FACILITY_ACCESS_TOOL_NOTE =
-  'facility_access は、学校・病院ごとに、徒歩圏の停留所に着く窓の中に着く便と、出る窓の中に出る便を、比較する日付の減便前と減便後で数えたものです。facilities は、着く便か出る便が減便後に 0 便になる施設だけを、重要拠点の優先順位(priority_rank)・距離の順に上位 20 件まで(省いた数は facilities_omitted)。窓の source が research なら調べた結果(basis に読んだ時刻、source_url に出典)、default なら既定の窓です。乗車人数・混み具合・鉄道との乗り継ぎは判定していません。'
+  'facility_access は、学校・病院ごとに、徒歩圏の停留所で降りられて着く窓の中に着く便と、乗れて出る窓の中に出る便を、比較する日付に走る便だけ減便前と減便後で数えたものです。facilities は、着く便か出る便が減便後に 0 便になる施設だけを、重要拠点の優先順位(priority_rank)・距離の順に上位 20 件まで(省いた数は facilities_omitted)。窓は始業・外来の受付などに間に合う時間帯の目安で、source が research なら調べた結果(basis に読んだ時刻、source_url に出典)、default なら既定の窓です。乗車人数・混み具合・鉄道との乗り継ぎは判定していません。'
+
+const DRIVERS_NOTE =
+  'drivers は、比較する日付の便を時刻順に勤務へつなぎ、改善基準告示の上限で区切った勤務の数(要る運転士の数の下限の目安)と営業運行時間を、減便前と減便後で比べたものです(画面の手順4「影響(到達圏)」の「要る運転士の数(目安)」と同じ計算)。判定(verdict)は「減便で減る勤務の数(前 − 後)」と欠員の比較だけです。目安であって、休息期間・休日・予備の要員・実際の仕業と交番は事業者が判断します。'
 
 function sideJson(s: RoundTripSide): Record<string, unknown> {
   return { trips: s.trips, first: s.first, last: s.last }
@@ -1112,9 +1193,45 @@ function facilityAccessJson(
       facilities_without_stops: r.withoutStops.length,
       facilities: top.map(accessEntryJson),
       facilities_omitted: lost.length - top.length,
-      note: r.note,
     },
     unavailable: null,
+  }
+}
+
+/** 要る運転士の数の欄の今の値(ToolDeps.drivers を省いたとき) */
+function defaultDriverSettings(): DriverSettings {
+  const s = useDriversStore.getState()
+  return { params: s.params, places: s.places, shortage: s.shortage }
+}
+
+/**
+ * summarize_impact の drivers(D06。指摘24)。数は store/drivers.ts の compareDrivers(画面の DriverPanel と同じ計算)。
+ * verdict の kind は、no_edited(減便後の GTFS がない)・not_weekday(比較する日付に平日ダイヤが走らない)・no_shortage(欠員を
+ * 入れていない)・enough(減る勤務の数 ≥ 欠員)・short(減る勤務の数 < 欠員。missing が足りない数)
+ */
+function driversJson(c: DriverComparison): Record<string, unknown> {
+  const v = c.verdict
+  const kind = { noEdited: 'no_edited', notWeekday: 'not_weekday', noShortage: 'no_shortage', enough: 'enough', short: 'short' }[v.kind]
+  return {
+    date: c.date,
+    draft: c.draft,
+    service_hours: {
+      before_min: c.before.hours.serviceMinutes,
+      after_min: c.after?.hours.serviceMinutes ?? null,
+      reduction_min: c.hours?.reduction.serviceMinutes ?? null,
+      before_trips: c.before.hours.trips,
+      after_trips: c.after?.hours.trips ?? null,
+    },
+    duties: { before: c.before.duties.dutyCount, after: c.after?.duties.dutyCount ?? null, diff: c.dutyDiff },
+    operator_runs_before: c.operatorRuns,
+    shortage: c.shortage,
+    verdict: {
+      kind,
+      ...('reduced' in v ? { reduced: v.reduced } : {}),
+      ...('missing' in v ? { missing: v.missing } : {}),
+    },
+    places: c.placesEffect?.count ?? 0,
+    assumptions: c.assumptions,
   }
 }
 
@@ -1165,10 +1282,28 @@ function byTime(a: TripBrief, b: TripBrief): number {
   return r || (a.tripId < b.tripId ? -1 : a.tripId > b.tripId ? 1 : 0)
 }
 
-/** stop_names は 20 個を超えたら、最初の 10 個と最後の 10 個にする */
-function stopNamesOf(names: readonly string[]): { names: string[]; omitted: number } {
-  if (names.length <= 20) return { names: [...names], omitted: 0 }
-  return { names: [...names.slice(0, 10), ...names.slice(-10)], omitted: names.length - 20 }
+/** 施設や乗り換えの目印になりやすい停留所の名前(via で先に選ぶ) */
+const MAIN_STOP_PATTERN = /学校|高校|中学|小学|大学|高専|病院|医院|医療|クリニック|駅|役場|役所|支所|ターミナル|センター/
+
+/**
+ * 便が通る主な停留所(始発・終着を除き、MAX_VIA_STOPS 個まで。通る順)。stop_name で絞ったときはその停留所を先に、
+ * 次に施設や駅の名前を含む停留所を、足りなければ途中の停留所を等間隔に選ぶ(結果の大きさを抑えるため。指摘18.4)
+ */
+function viaStopsOf(names: readonly string[], stopName: string | null): string[] {
+  const middle = names.slice(1, -1)
+  const picked = new Set<number>()
+  const take = (pred: (n: string) => boolean) => {
+    middle.forEach((n, i) => {
+      if (picked.size < MAX_VIA_STOPS && pred(n) && ![...picked].some((j) => middle[j] === n)) picked.add(i)
+    })
+  }
+  if (stopName !== null) take((n) => n.includes(stopName))
+  take((n) => MAIN_STOP_PATTERN.test(n))
+  for (let k = 1; picked.size < MAX_VIA_STOPS && k <= MAX_VIA_STOPS; k++) {
+    const i = Math.floor((middle.length * k) / (MAX_VIA_STOPS + 1))
+    if (i < middle.length && ![...picked].some((j) => middle[j] === middle[i])) picked.add(i)
+  }
+  return [...picked].sort((a, b) => a - b).map((i) => middle[i])
 }
 
 /**
@@ -1187,8 +1322,26 @@ async function hintContextOf(deps: ToolDeps, feed: GtfsFeed, signal?: AbortSigna
   return { ctx, note: ctx ? null : busy ? REACH_BUSY_HINTS : NO_REACH_HINTS }
 }
 
+/** 入力に無い項目を null にする(調整役の版 3 が送らない項目。LEGACY_OPTIONAL_KEYS) */
+function withLegacyDefaults(input: unknown, name: ToolName): unknown {
+  const keys = LEGACY_OPTIONAL_KEYS[name]
+  if (!keys || typeof input !== 'object' || input === null || Array.isArray(input)) return input
+  const o = input as Record<string, unknown>
+  const missing = keys.filter((k) => !Object.hasOwn(o, k))
+  return missing.length === 0 ? input : { ...o, ...Object.fromEntries(missing.map((k) => [k, null])) }
+}
+
+/** search_trips の hints(判断材料の識別子の配列か null。空の配列は null と同じ) */
+function hintFilterOf(value: unknown): Set<RestoreHint> | null {
+  const list = stringArrayOf(value, 'hints', RESTORE_HINT_KINDS.length, true)
+  if (list === null) return null
+  const unknown = list.filter((h) => !(RESTORE_HINT_KINDS as readonly string[]).includes(h))
+  if (unknown.length > 0) throw new InputError(`hints の ${unknown.join('・')} は判断材料の名前ではありません。使えるのは ${RESTORE_HINT_KINDS.join('・')} です。`)
+  return list.length > 0 ? new Set(list as RestoreHint[]) : null
+}
+
 async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal): Promise<ToolOutcome> {
-  const o = objectOf(input, TOOL_INPUT_KEYS.search_trips)
+  const o = objectOf(withLegacyDefaults(input, 'search_trips'), TOOL_INPUT_KEYS.search_trips)
   const scope = stringOf(o.scope, 'scope') as SearchScope
   if (!SEARCH_SCOPES.includes(scope)) throw new InputError(`scope は ${SEARCH_SCOPES.join('・')} のどれかにしてください。`)
   let routeIds: Set<string> | null = null
@@ -1202,6 +1355,11 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
   const to = nullableClockOf(o.depart_to, 'depart_to')
   if (from !== null && to !== null && to <= from) throw new InputError('depart_to は depart_from より後の時刻にしてください。')
   const limit = integerIn(o.limit, 'limit', INPUT_LIMITS.minLimit, INPUT_LIMITS.maxLimit)
+  const offset = o.offset === null ? 0 : integerIn(o.offset, 'offset', 0, INPUT_LIMITS.maxOffset)
+  const hintFilter = hintFilterOf(o.hints)
+  if (hintFilter !== null && scope !== 'removed' && scope !== 'base_weekday') {
+    throw new InputError('hints で絞れるのは、scope が removed か base_weekday のときだけです(ほかの scope の便には判断材料を出しません)。')
+  }
 
   const state = deps.edit()
   const base = state.base
@@ -1217,6 +1375,7 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
   const basis = basisOf(state)
   const result = basis.result
   if (!result && scope !== 'base_weekday') return fail(`${NO_EDIT} scope が base_weekday なら、減便前の平日の便を探せます。`)
+  if (!result && hintFilter !== null) return fail(`${NO_EDIT} 判断材料は減便の方針があるときだけ出すため、hints では絞れません。`)
 
   const plan = result?.plan ?? null
   const diff = result ? diffOf(base.feed, result) : null
@@ -1232,7 +1391,7 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
     trips = baseTrips.filter((t) => accepted.has(trimmed(t.trip_id))).map(briefBase).sort(byTime)
   } else {
     // 減便の方針があれば、そのすべての組の平日の service(期間に走らないため組ごと除いた service は除く)。
-    // 無ければ、確定したグループ分けの平日の service(土曜・日祝のどちらかで組になるもの)、それも無ければ画面の平日の service
+    // 無ければ、自動の入れ替えの案のグループ分けの平日の service(土曜・日祝のどちらかで組になるもの)、それも無ければ画面の平日の service
     let weekdays: Set<string> | null = result ? activeWeekdayServicesOf(result) : null
     if (weekdays === null) {
       const input0 = feedValidity(base.feed)
@@ -1261,89 +1420,99 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
       (to === null || (t.firstSeconds !== null && t.firstSeconds < to)),
   )
 
-  // 手がかり(足し戻しの候補になる基準の便だけ)。索引と ctx は1回だけ作り、候補の一覧すべてに使う
-  const notes: string[] = []
+  // 手がかり(足し戻しの候補になる基準の便だけ)。索引と ctx は1回だけ作り、候補の一覧すべてに使う。
+  // offset で続きを読むときも、並びと hints の絞り込みが同じになるよう、ページの前の便も含めて全部に出す
+  const stateNotes: string[] = []
+  const explainNotes: string[] = []
   const details = new Map<TripBrief, RestoreHintDetail>()
-  // 学校・病院の手がかりを出したか(出したときだけ、便ごとの nearby_facilities を配列にする。出していなければ null)
+  // 学校・病院の手がかりを出したか(出したときだけ、便ごとの nearby_facilities を入れる)
   let facilityHints = false
   if (plan && result && diff && (scope === 'removed' || scope === 'base_weekday') && filtered.length > 0) {
     const hinter = createRestoreHinter(base.feed, result.feed, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
     const { ctx, note } = await hintContextOf(deps, result.feed, signal)
-    if (note) notes.push(note)
+    if (note) stateNotes.push(note)
     if (ctx) {
       // 比較の日付に平日の便が走らなければ、どの便にも2つは出ない。Claude が「調べていない」と「該当なし」を取り違えないよう書く
-      notes.push(activeServiceIds(base.feed, ctx.date).has(plan.weekdayService.trim()) ? reachDateNote(ctx.date) : reachNotRunningNote(ctx.date))
+      stateNotes.push(
+        activeServiceIds(base.feed, ctx.date).has(plan.weekdayService.trim())
+          ? reachDateNote(ctx.date, deps.reach.getState().stepHours)
+          : reachNotRunningNote(ctx.date),
+      )
       facilityHints = ctx.facilities !== undefined
-      notes.push(facilityHints ? FACILITY_NOTE : NO_FACILITY_DATA)
+      if (facilityHints) explainNotes.push(FACILITY_NOTE)
+      else stateNotes.push(NO_FACILITY_DATA)
     } else {
-      notes.push(NO_FACILITY_HINTS_WITHOUT_REACH)
+      stateNotes.push(NO_FACILITY_HINTS_WITHOUT_REACH)
     }
     for (const t of filtered) details.set(t, hinter(t, ctx ?? undefined))
+    if (hintFilter !== null) filtered = filtered.filter((t) => details.get(t)!.hints.some((h) => hintFilter.has(h)))
     if (scope === 'removed') {
       filtered = filtered
         .map((trip) => ({ trip, detail: details.get(trip)! }))
         .sort(compareByHints)
         .map((c) => c.trip)
     }
+  } else if (hintFilter !== null) {
+    filtered = []
   }
 
-  const shown = filtered.slice(0, limit)
+  const shown = filtered.slice(offset, offset + limit)
   // 調べた施設の結果は、返す便の近くの施設の分だけ、施設ごとに1回入れる(便ごとに繰り返さない)
   const researched = new Map<string, HintFacility>()
   const list = shown.map((t) => {
     const detail = details.get(t)
-    const names = stopNamesOf(t.stopNames)
-    let nearby: Record<string, unknown>[] | null = null
-    let nearbyOmitted = 0
-    let withoutMatch = 0
-    if (facilityHints && detail) {
-      // 窓に当たる施設だけを返し、徒歩圏にあるだけの施設は数だけにする(手がかりにならない施設で結果が 20KB を超え、便が省かれないように)
-      const all = detail.facilities ?? []
-      const matched = all.filter((n) => n.matches.length > 0)
-      const picked = matched.slice(0, MAX_FACILITIES_PER_TRIP)
-      nearby = picked.map(nearFacilityJson)
-      nearbyOmitted = matched.length - picked.length
-      withoutMatch = all.length - matched.length
-      for (const n of picked) {
-        if (n.facility.research && researched.size < MAX_RESEARCHED_FACILITIES) researched.set(n.facility.targetId, n.facility)
-      }
-    }
-    return {
+    const trip: Record<string, unknown> = {
       feed: t.feed,
       trip_id: t.tripId,
       route_id: t.routeId,
       route_name: t.routeName,
       headsign: t.headsign,
       first_stop: t.firstStopName,
-      last_stop: t.lastStopName,
       first_departure: t.firstDeparture,
+      last_stop: t.lastStopName,
       last_arrival: t.lastArrival,
-      stop_names: names.names,
-      stop_names_omitted: names.omitted,
-      hints: detail?.hints ?? [],
-      // 判断材料の文(hints と同じ並び)。時間帯・停留所・系統の全体のどれについての判断材料かと、数はコードが書く(A07。指摘15.3)
-      hint_texts: detail ? detail.hints.map((h) => hintSentence(h, detail)) : [],
-      band: detail?.band ?? null,
-      route_weekday_trips: detail ? { before: detail.routeTrips.before, after: detail.routeTrips.after } : null,
-      lost_cells: detail?.lostCells ?? null,
-      nearby_facilities: nearby,
-      ...(nearbyOmitted > 0 ? { nearby_facilities_omitted: nearbyOmitted } : {}),
-      ...(withoutMatch > 0 ? { nearby_without_match: withoutMatch } : {}),
+      stop_count: t.stopNames.length,
+      via: viaStopsOf(t.stopNames, stopName),
     }
+    if (!detail) return trip
+    trip.hints = detail.hints
+    // 判断材料の短い文(hints と同じ並び)。時間帯・停留所・系統の全体のどれについての判断材料かと、数はコードが書く(指摘15.3)
+    trip.hint_texts = detail.hints.map((h) => shortHintText(h, detail))
+    if (detail.band) trip.band = detail.band
+    trip.route_weekday_trips = { before: detail.routeTrips.before, after: detail.routeTrips.after }
+    if (detail.lostCells) trip.lost_cells = { cells: detail.lostCells.cells, population: Math.round(detail.lostCells.population) }
+    if (facilityHints) {
+      // 窓に当たる施設だけを返す(手がかりにならない施設で結果が 20KB を超え、便が省かれないように)
+      const matched = (detail.facilities ?? []).filter((n) => n.matches.length > 0)
+      const picked = matched.slice(0, MAX_FACILITIES_PER_TRIP)
+      if (picked.length > 0) trip.nearby_facilities = picked.map(nearFacilityJson)
+      for (const n of picked) {
+        if (n.facility.research && researched.size < MAX_RESEARCHED_FACILITIES) researched.set(n.facility.targetId, n.facility)
+      }
+    }
+    return trip
   })
-  if (scope === 'removed' || scope === 'base_weekday') {
-    notes.push('lost_cells は、この便だけを平日に戻したときに到達圏に戻る区画(セル)の数と推計人口です(ほかの便を平日に戻したときとの重なりは考えていません)。')
-    if (details.size > 0) notes.push(HINT_TEXTS_NOTE)
+  if ((scope === 'removed' || scope === 'base_weekday') && details.size > 0) {
+    explainNotes.push(HINT_TEXTS_NOTE)
+    explainNotes.push('lost_cells は、この便だけを平日に戻したときに到達圏に戻る区画(セル)の数と推計人口です(ほかの便を平日に戻したときとの重なりは考えていません)。')
   }
-  notes.push('trip_id は feed とあわせて読んでください。加わる便(feed が edited)は、なくなる減便前の便(feed が base)と同じ trip_id のことがあります。')
+  explainNotes.push(
+    '並びは同じ入力なら毎回同じです(scope removed は判断材料の多い順、ほかは始発の時刻の順。同じなら trip_id の順)。ただし、到達圏の比較や学校・病院の読み込みが途中で変わると、判断材料と並びが変わります。',
+    'trip_id は feed とあわせて読んでください。加わる便(feed が edited)は、なくなる減便前の便(feed が base)と同じ trip_id のことがあります。',
+  )
+  if (offset > 0 && offset >= filtered.length) stateNotes.push(`offset(${offset})が対象の便の数(${filtered.length})以上のため、返す便はありません。`)
+  const notes = [...stateNotes, ...(offset === 0 ? explainNotes : [NOTES_ON_FIRST_PAGE])]
+  const nextOffset = offset + list.length < filtered.length ? offset + list.length : null
   const body: Record<string, unknown> = {
     status: 'ok',
     scope,
     ...basisFields(basis),
     total: filtered.length,
+    offset,
     // 20KB に収めるために便を省いたら、省いた後の数に直す(fitTrips)
     returned: list.length,
-    omitted_over_limit: filtered.length - list.length,
+    omitted_over_limit: Math.max(0, filtered.length - offset - list.length),
+    next_offset: nextOffset,
     ...(resolvedRoutes.length > 0 ? { routes: resolvedRoutes } : {}),
     notes,
     ...(facilityHints ? { facility_research: [...researched.values()].map(facilityResearchJson) } : {}),
@@ -1368,22 +1537,25 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
 
 /**
  * search_trips の結果を 20KB に収める。超えたら trips を後ろから省き、returned を省いた後の便の数に直し、
- * 省いた便の数を truncated に書く(returned + truncated + omitted_over_limit = total)。
+ * 省いた便の数を truncated に、続きの位置を next_offset に書く(offset + returned + truncated + omitted_over_limit = total)。
  * fitResult に任せると returned が省く前の数のまま残り、Claude が受け取った便の数と続きの位置を読み違えるため、ここで数え直す
  */
 export function fitTrips(body: Record<string, unknown>): string {
   let text = JSON.stringify(body)
   const trips = body.trips
   if (byteLength(text) <= MAX_RESULT_BYTES || !Array.isArray(trips)) return text
+  const offset = typeof body.offset === 'number' ? body.offset : 0
   const kept = [...trips]
   while (kept.length > 0) {
     kept.pop()
     const cut = trips.length - kept.length
+    const next = offset + kept.length
     const copy: Record<string, unknown> = {
       ...body,
       returned: kept.length,
+      next_offset: next,
       truncated: cut,
-      truncated_note: `結果が 20KB を超えたため、trips の後ろから ${cut} 件を省きました。returned(${kept.length})は省いた後に trips に入れた便の数で、省いた ${cut} 件は trips に入っていません。省いた便は、depart_from・route_ids などで条件を絞って探し直してください。`,
+      truncated_note: `結果が 20KB を超えたため、trips の後ろから ${cut} 件を省きました。returned(${kept.length})は省いた後に trips に入れた便の数で、省いた ${cut} 件は trips に入っていません。続きは、同じ条件で offset を ${next} にして読んでください。`,
       trips: kept,
     }
     text = JSON.stringify(copy)

@@ -21,7 +21,7 @@ function cand(tripId: string, routeId: string, firstSeconds: number | null, hint
     durationMin: null,
     signature: '',
   } satisfies TripBrief
-  return { trip, detail: { hints, lostCells: population === undefined ? null : { cells: 1, population } } }
+  return { trip, detail: { hints, lostCells: population === undefined ? null : { cells: 1, population }, band: null, routeTrips: { before: 0, after: 0 } } }
 }
 
 describe('compareCandidates', () => {

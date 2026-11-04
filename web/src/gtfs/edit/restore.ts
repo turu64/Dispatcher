@@ -35,14 +35,18 @@ export type RestoreHint =
   | 'lastTripOfRoute'
   /**
    * その系統のその始発の時間帯(3時間ごと。diff.ts の START_BANDS)で、この便を足し戻さないと編集後の平日の便が 0。
-   * 同じ時間帯のなくなる便が複数あれば、どれにも付く
+   * 同じ時間帯のなくなる便が複数あれば、どれにも付く(「唯一の便」ではない。指摘15.3。前後の便数は RestoreHintDetail.band)。
+   * 方向は分けない
    */
   | 'onlyTripInBand'
   /** 始発が [6:00, 9:00)(通勤・通学。3時間の帯1つ) */
   | 'morning'
   /** 始発が [15:00, 21:00)(帰宅。3時間の帯2つ。U05 で 19時から 21時に広げた) */
   | 'evening'
-  /** その便の乗れる停留所のどれかで、比較の日付・その時間帯(地図の時間帯の幅)に、編集後の出発が 0 になる(11/5) */
+  /**
+   * その便の乗れる停留所のどれかで、比較の日付・その時間帯(地図の時間帯の幅)に、編集後の出発が 0 になる(11/5)。
+   * 同じ停留所・時間帯のなくなる便が複数あれば、どれにも付く
+   */
   | 'onlyServiceAtStop'
   /** その便の乗れる停留所が、その時間帯(地図の時間帯の幅)に「減便で外れた」セルを、区分のバス停の距離の中に含む(11/5) */
   | 'restoresLostCells'
@@ -65,6 +69,13 @@ export interface RestoreHintDetail {
    * ctx に施設が無いときと、徒歩圏に施設が1つも無いときは入れない(項目ごと無い)
    */
   facilities?: NearFacility[]
+  /**
+   * onlyTripInBand のとき、その系統のその始発の時間帯(3時間ごと。START_BANDS の名前。例「6〜9時」)と、その系統・時間帯の
+   * 減便前・減便後の平日の便数(after は 0)。ほかは null(A03。指摘15.3)
+   */
+  band: { label: string; before: number; after: number } | null
+  /** その系統の減便前・減便後の平日の便数(方向は分けない。A03) */
+  routeTrips: { before: number; after: number }
 }
 
 // ---- 学校・病院の手がかり(T19)----
@@ -213,10 +224,10 @@ export const RESTORE_HINT_LABELS: Record<RestoreHint, string> = {
   routeWouldVanish: '全曜日で便がなくなる系統',
   firstTripOfRoute: '系統の始発',
   lastTripOfRoute: '系統の終発',
-  onlyTripInBand: '時間帯で唯一の便',
+  onlyTripInBand: '時間帯の便がなくなる',
   morning: '朝(6〜9時)',
   evening: '夕方・夜(15〜21時)',
-  onlyServiceAtStop: '停留所で唯一の便',
+  onlyServiceAtStop: '停留所の発車がなくなる',
   restoresLostCells: '到達圏が戻る',
   nearFacility: '学校・病院の近く',
 }
@@ -224,6 +235,52 @@ export const RESTORE_HINT_LABELS: Record<RestoreHint, string> = {
 /** morning・evening の始発の時刻の範囲(時。開始を含み終わりを含まない)。どちらも3時間ごとの時間帯の区切りに合わせる(U05) */
 export const MORNING = { from: 6, to: 9 } as const
 export const EVENING = { from: 15, to: 21 } as const
+
+/** 数を桁区切りにする(理由の文に入れる) */
+function count(n: number): string {
+  return n.toLocaleString('ja-JP')
+}
+
+/**
+ * 判断材料を説明する1文(画面と AI に出す。A03、指摘15.3)。時間帯・停留所・系統の全体のどれについての判断材料かを書き、
+ * 「唯一の便」とは書かない。数はすべて detail から入れる(コードが出した数)。系統の便数は方向を分けない。
+ * 例:「6〜9時に、この系統の便が減便後 0 便になります(減便前 3 便)」「系統の平日の始発です(系統の平日 11 便。方向は分けていません)」
+ */
+export function hintSentence(hint: RestoreHint, detail: RestoreHintDetail): string {
+  const route = detail.routeTrips
+  switch (hint) {
+    case 'weekdayOnlyRoute':
+      return `平日だけの系統です(入れ替えに使うダイヤに、この系統の便がありません。系統の平日 ${count(route.before)} 便)`
+    case 'routeWouldVanish':
+      return `平日に戻さないと、この系統は減便後に全曜日で便がなくなります(系統の平日 ${count(route.before)} 便)`
+    case 'firstTripOfRoute':
+      return `系統の平日の始発です(系統の平日 ${count(route.before)} 便。方向は分けていません)`
+    case 'lastTripOfRoute':
+      return `系統の平日の終発です(系統の平日 ${count(route.before)} 便。方向は分けていません)`
+    case 'onlyTripInBand': {
+      const band = detail.band
+      if (!band) return '始発の時間帯(3時間ごと)に、この系統の減便後の平日の便がなくなります'
+      return `${band.label}に、この系統の便が減便後 ${count(band.after)} 便になります(減便前 ${count(band.before)} 便)`
+    }
+    case 'morning':
+      return `始発が${RESTORE_HINT_LABELS.morning}の便です`
+    case 'evening':
+      return `始発が${RESTORE_HINT_LABELS.evening}の便です`
+    case 'onlyServiceAtStop':
+      return '平日に戻さないと、この便が発車する停留所のどれかで、比較する日付のその時間帯の発車が減便後 0 便になります'
+    case 'restoresLostCells': {
+      const lost = detail.lostCells
+      if (!lost) return '平日に戻すと、到達圏から外れる区画が戻ります'
+      return `平日に戻すと、到達圏から外れる区画のうち ${count(lost.cells)} 区画(推計人口 約 ${count(Math.round(lost.population))} 人)が戻ります(この便だけを平日に戻したときの値)`
+    }
+    case 'nearFacility': {
+      const matched = (detail.facilities ?? []).filter((n) => n.matches.length > 0)
+      if (matched.length === 0) return '停留所の徒歩圏にある学校・病院の時間帯に当たります'
+      const more = matched.length > 1 ? `。ほか ${count(matched.length - 1)} 施設` : ''
+      return `停留所の徒歩圏にある学校・病院の時間帯に当たります(${nearFacilityText(matched[0])}${more})`
+    }
+  }
+}
 
 const HINT_ORDER: RestoreHint[] = [
   'weekdayOnlyRoute',
@@ -250,6 +307,25 @@ function firstSecondsByRoute(trips: readonly TripBrief[]): Map<string, number[]>
     const list = out.get(t.routeId)
     if (list) list.push(t.firstSeconds)
     else out.set(t.routeId, [t.firstSeconds])
+  }
+  return out
+}
+
+/** 系統(route_id)ごとの便数 */
+function countByRoute(trips: readonly TripBrief[]): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const t of trips) out.set(t.routeId, (out.get(t.routeId) ?? 0) + 1)
+  return out
+}
+
+/** 系統 × 始発の時間帯(3時間ごと。START_BANDS)ごとの便数。キーは `${route_id}\t${時間帯の名前}`。始発の時刻の無い便は数えない */
+function countByRouteBand(trips: readonly TripBrief[]): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const t of trips) {
+    const band = startBandOf(t.firstSeconds)
+    if (band === START_BAND_NO_TIME) continue
+    const key = `${t.routeId}\t${band}`
+    out.set(key, (out.get(key) ?? 0) + 1)
   }
   return out
 }
@@ -520,14 +596,11 @@ export function createRestoreHinter(
   for (const t of edited.tables.get('trips')?.rows ?? []) editedRoutes.add(trimmed(t.route_id))
 
   const baseTimes = firstSecondsByRoute(baseWeekday)
-  // 編集後の平日便の、系統 × 始発の時間帯(3時間ごと。START_BANDS)の便数
-  const editedBands = new Map<string, number>()
-  for (const t of editedWeekday) {
-    const band = startBandOf(t.firstSeconds)
-    if (band === START_BAND_NO_TIME) continue
-    const key = `${t.routeId}\t${band}`
-    editedBands.set(key, (editedBands.get(key) ?? 0) + 1)
-  }
+  // 基準・編集後の平日便の、系統 × 始発の時間帯(3時間ごと。START_BANDS)の便数と、系統ごとの便数(A03)
+  const baseBands = countByRouteBand(baseWeekday)
+  const editedBands = countByRouteBand(editedWeekday)
+  const baseRouteTrips = countByRoute(baseWeekday)
+  const editedRouteTrips = countByRoute(editedWeekday)
 
   // 到達圏を使う手がかりの索引(ctx を渡されたときだけ作る)
   let groups: Map<string, GtfsRow[]> | null = null
@@ -672,8 +745,14 @@ export function createRestoreHinter(
       if (trip.firstSeconds === Math.min(...times)) hints.add('firstTripOfRoute')
       if (trip.firstSeconds === Math.max(...times)) hints.add('lastTripOfRoute')
     }
-    const band = startBandOf(trip.firstSeconds)
-    if (band !== START_BAND_NO_TIME && (editedBands.get(`${trip.routeId}\t${band}`) ?? 0) === 0) hints.add('onlyTripInBand')
+    const bandLabel = startBandOf(trip.firstSeconds)
+    const bandKey = `${trip.routeId}\t${bandLabel}`
+    let band: RestoreHintDetail['band'] = null
+    if (bandLabel !== START_BAND_NO_TIME && (editedBands.get(bandKey) ?? 0) === 0) {
+      hints.add('onlyTripInBand')
+      band = { label: bandLabel, before: baseBands.get(bandKey) ?? 0, after: 0 }
+    }
+    const routeTrips = { before: baseRouteTrips.get(trip.routeId) ?? 0, after: editedRouteTrips.get(trip.routeId) ?? 0 }
     if (trip.firstSeconds !== null) {
       const h = trip.firstSeconds / 3600
       if (h >= MORNING.from && h < MORNING.to) hints.add('morning')
@@ -691,7 +770,13 @@ export function createRestoreHinter(
     // 学校・病院は比較の日付によらない(便が施設の近くを窓の時刻に通るか)ので、比較の日付に走るかは問わない
     const near = ctx?.facilities ? nearFacilitiesOf(trip, ctx.facilities) : []
     if (near.some((n) => n.matches.length > 0)) hints.add('nearFacility')
-    return { hints: HINT_ORDER.filter((h) => hints.has(h)), lostCells, ...(near.length > 0 ? { facilities: near } : {}) }
+    return {
+      hints: HINT_ORDER.filter((h) => hints.has(h)),
+      lostCells,
+      ...(near.length > 0 ? { facilities: near } : {}),
+      band,
+      routeTrips,
+    }
   }
 }
 

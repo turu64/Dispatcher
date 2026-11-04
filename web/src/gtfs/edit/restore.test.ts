@@ -15,13 +15,18 @@ import {
   bestFacilityRank,
   compareByHints,
   createRestoreHinter,
+  hintSentence,
   nearFacilityText,
+  RESTORE_HINT_LABELS,
   restoreHints,
   type HintFacility,
   type RestoreHint,
   type RestoreHintContext,
 } from './restore'
 import { cellAt, centerAt, DATE, REACH_PARAMS, reachBaseFeed, reachPlan, reachRef, reachSetup, STATION_CELL, STOP_CELLS } from './restore.fixture'
+
+/** compareByHints に渡す手がかりの、並びに使わない項目(時間帯と系統の便数) */
+const NO_COUNTS = { band: null, routeTrips: { before: 0, after: 0 } }
 
 // 小さなフィード(form2.fixture.ts)を「平日を土曜ダイヤに」した版で、消える平日便は R1_0800_WK・R2_0900_WK・R3_0730_WK
 function setup(feed: GtfsFeed = smallFeed()) {
@@ -49,6 +54,8 @@ describe('足し戻しの手がかり(restoreHints)', () => {
     expect(hinter(byId.get('R3_0730_WK')!)).toEqual({
       hints: ['weekdayOnlyRoute', 'routeWouldVanish', 'firstTripOfRoute', 'lastTripOfRoute', 'onlyTripInBand', 'morning'],
       lostCells: null,
+      band: { label: '6〜9時', before: 1, after: 0 },
+      routeTrips: { before: 1, after: 0 },
     })
   })
 
@@ -105,9 +112,150 @@ describe('足し戻しの手がかり(restoreHints)', () => {
 
   it('手がかりの数が同じなら始発の時刻順にする', () => {
     const { byId } = setup()
-    const a = { trip: byId.get('R1_0800_WK')!, detail: { hints: ['morning' as const], lostCells: null } }
-    const b = { trip: byId.get('R3_0730_WK')!, detail: { hints: ['morning' as const], lostCells: null } }
+    const a = { trip: byId.get('R1_0800_WK')!, detail: { hints: ['morning' as const], lostCells: null, ...NO_COUNTS } }
+    const b = { trip: byId.get('R3_0730_WK')!, detail: { hints: ['morning' as const], lostCells: null, ...NO_COUNTS } }
     expect([a, b].sort(compareByHints).map((c) => c.trip.tripId)).toEqual(['R3_0730_WK', 'R1_0800_WK'])
+  })
+})
+
+// ---- 時間帯と系統の便数(A03、指摘15.3)----
+
+/** 学校線(R3)の便を足したフィード。便は A(駅前)→ S9(学校前)→ B(市役所)を 10 分ずつで走る。hhmm は始発の時刻 */
+function withR3Trips(feed: GtfsFeed, trips: { service: string; hhmm: string }[]): GtfsFeed {
+  const time = (hhmm: string, plus: number) => {
+    const m = Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(2)) + plus
+    return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}:00`
+  }
+  const tripRows = trips.map(({ service, hhmm }) => ({ route_id: 'R3', service_id: service, trip_id: `R3_${hhmm}_${service}`, trip_headsign: '市役所', block_id: '' }))
+  const stopRows = trips.flatMap(({ service, hhmm }) =>
+    (
+      [
+        ['A', 0, '0', '1'],
+        ['S9', 10, '0', '0'],
+        ['B', 20, '1', '0'],
+      ] as const
+    ).map(([stop, plus, pickup, dropOff], i) => ({
+      trip_id: `R3_${hhmm}_${service}`,
+      arrival_time: time(hhmm, plus),
+      departure_time: time(hhmm, plus),
+      stop_id: stop,
+      stop_sequence: String(i + 1),
+      pickup_type: pickup,
+      drop_off_type: dropOff,
+    })),
+  )
+  const withTrips = withRows(feed, 'trips', [...feed.tables.get('trips')!.rows, ...tripRows])
+  return withRows(withTrips, 'stop_times', [...feed.tables.get('stop_times')!.rows, ...stopRows])
+}
+
+/** 学校線の平日を 07:00・07:30・08:45 の3便(どれも 6〜9時)にしたフィード */
+function threeMorningR3(): GtfsFeed {
+  return withR3Trips(smallFeed(), [
+    { service: 'WK', hhmm: '0700' },
+    { service: 'WK', hhmm: '0845' },
+  ])
+}
+
+const R3_MORNING = ['R3_0700_WK', 'R3_0730_WK', 'R3_0845_WK']
+
+describe('足し戻しの手がかり:時間帯と系統の便数(band・routeTrips)', () => {
+  it('同じ系統・同じ時間帯の 3 便がすべてなくなるとき、3 便とも onlyTripInBand で、band は減便前 3 便・減便後 0 便', () => {
+    const { hinter, byId } = setup(threeMorningR3())
+    for (const id of R3_MORNING) {
+      const d = hinter(byId.get(id)!)
+      expect(d.hints).toContain('onlyTripInBand')
+      expect(d.band).toEqual({ label: '6〜9時', before: 3, after: 0 })
+      expect(d.routeTrips).toEqual({ before: 3, after: 0 })
+    }
+    // 始発・終発は系統の全体(方向を分けない)で1便ずつ
+    expect(hinter(byId.get('R3_0700_WK')!).hints).toContain('firstTripOfRoute')
+    expect(hinter(byId.get('R3_0730_WK')!).hints).not.toContain('firstTripOfRoute')
+    expect(hinter(byId.get('R3_0845_WK')!).hints).toContain('lastTripOfRoute')
+  })
+
+  it('同じ時間帯に1便でも残れば(入れ替えに使うダイヤの便・平日に戻した便)、どの便にも onlyTripInBand は付かず、band は null', () => {
+    // 土曜の学校線が 08:30 にあれば、6〜9時の減便後の平日の便は 1
+    const sat = setup(withR3Trips(threeMorningR3(), [{ service: 'SA', hhmm: '0830' }]))
+    for (const id of R3_MORNING) {
+      const d = sat.hinter(sat.byId.get(id)!)
+      expect(d.hints).not.toContain('onlyTripInBand')
+      expect(d.band).toBeNull()
+      expect(d.routeTrips).toEqual({ before: 3, after: 1 })
+    }
+
+    // 07:00 を平日に戻すと、残りの2便には付かない
+    const base = threeMorningR3()
+    const plan = basePlan({ addBackTripIds: ['R3_0700_WK'] })
+    const outcome = applyForm2(base, plan, { generatedAt: '202611041200' })
+    if (!outcome.ok) throw new Error(outcome.message)
+    const edited = outcome.result.feed
+    const diff = diffWeekdayTrips(base, edited, plan.weekdayService)
+    const hinter = createRestoreHinter(base, edited, plan, [...diff.removed, ...diff.same], [...diff.same, ...diff.added])
+    const removed = new Map(diff.removed.map((t) => [t.tripId, t]))
+    expect([...removed.keys()].filter((id) => id.startsWith('R3_')).sort()).toEqual(['R3_0730_WK', 'R3_0845_WK'])
+    for (const id of ['R3_0730_WK', 'R3_0845_WK']) {
+      const d = hinter(removed.get(id)!)
+      expect(d.hints).not.toContain('onlyTripInBand')
+      expect(d.band).toBeNull()
+      expect(d.routeTrips).toEqual({ before: 3, after: 1 })
+    }
+  })
+
+  it('別の時間帯の便は数えない(6〜9時の便がなくなっても、9〜12時の便が残る系統の 6〜9時の便には付く)', () => {
+    // 土曜の学校線が 09:00(9〜12時)にだけある
+    const { hinter, byId } = setup(withR3Trips(threeMorningR3(), [{ service: 'SA', hhmm: '0900' }]))
+    expect(hinter(byId.get('R3_0730_WK')!).band).toEqual({ label: '6〜9時', before: 3, after: 0 })
+    expect(hinter(byId.get('R3_0730_WK')!).routeTrips).toEqual({ before: 3, after: 1 })
+  })
+
+  it('routeTrips は、系統ごとの減便前・減便後の平日(WK)の便数と合う', () => {
+    for (const feed of [smallFeed(), threeMorningR3()]) {
+      const { base, edited, hinter, byId } = setup(feed)
+      const weekdayCount = (f: GtfsFeed, route: string) =>
+        f.tables.get('trips')!.rows.filter((t) => t.route_id === route && t.service_id === 'WK').length
+      for (const trip of byId.values()) {
+        expect(hinter(trip).routeTrips).toEqual({ before: weekdayCount(base, trip.routeId), after: weekdayCount(edited, trip.routeId) })
+      }
+    }
+    // 小さなフィードでは、R1 は 2 → 3 便(土曜の3便が入る)、R2 は 1 → 1 便、R3 は 1 → 0 便
+    const { hinter, byId } = setup()
+    expect(hinter(byId.get('R1_0800_WK')!).routeTrips).toEqual({ before: 2, after: 3 })
+    expect(hinter(byId.get('R2_0900_WK')!).routeTrips).toEqual({ before: 1, after: 1 })
+    expect(hinter(byId.get('R3_0730_WK')!).routeTrips).toEqual({ before: 1, after: 0 })
+  })
+})
+
+describe('判断材料の文(hintSentence)', () => {
+  it('時間帯の便の数と、系統の平日の便数を detail から入れる', () => {
+    const detail = { hints: [], lostCells: null, band: { label: '6〜9時', before: 3, after: 0 }, routeTrips: { before: 11, after: 4 } }
+    expect(hintSentence('onlyTripInBand', detail)).toBe('6〜9時に、この系統の便が減便後 0 便になります(減便前 3 便)')
+    expect(hintSentence('firstTripOfRoute', detail)).toBe('系統の平日の始発です(系統の平日 11 便。方向は分けていません)')
+    expect(hintSentence('lastTripOfRoute', detail)).toBe('系統の平日の終発です(系統の平日 11 便。方向は分けていません)')
+    expect(hintSentence('evening', detail)).toBe('始発が夕方・夜(15〜21時)の便です')
+    expect(hintSentence('restoresLostCells', { ...detail, lostCells: { cells: 1234, population: 5678.4 } })).toBe(
+      '平日に戻すと、到達圏から外れる区画のうち 1,234 区画(推計人口 約 5,678 人)が戻ります(この便だけを平日に戻したときの値)',
+    )
+  })
+
+  it('3 便がすべてなくなる時間帯の文は、どの便でも同じ数で、「唯一」とは書かない', () => {
+    const { hinter, byId } = setup(threeMorningR3())
+    for (const id of R3_MORNING) {
+      const d = hinter(byId.get(id)!)
+      expect(hintSentence('onlyTripInBand', d)).toBe('6〜9時に、この系統の便が減便後 0 便になります(減便前 3 便)')
+    }
+    const first = hinter(byId.get('R3_0700_WK')!)
+    expect(hintSentence('firstTripOfRoute', first)).toBe('系統の平日の始発です(系統の平日 3 便。方向は分けていません)')
+    // どの判断材料の文にも「唯一」は無い
+    for (const h of Object.keys(RESTORE_HINT_LABELS) as RestoreHint[]) {
+      expect(hintSentence(h, first)).not.toContain('唯一')
+      expect(hintSentence(h, first).length).toBeGreaterThan(0)
+    }
+  })
+
+  it('画面の名前に「唯一」を使わない(onlyTripInBand は「時間帯の便がなくなる」、onlyServiceAtStop は「停留所の発車がなくなる」)', () => {
+    expect(RESTORE_HINT_LABELS.onlyTripInBand).toBe('時間帯の便がなくなる')
+    expect(RESTORE_HINT_LABELS.onlyServiceAtStop).toBe('停留所の発車がなくなる')
+    for (const label of Object.values(RESTORE_HINT_LABELS)) expect(label).not.toContain('唯一')
   })
 })
 
@@ -511,8 +659,15 @@ describe('足し戻しの手がかり:学校・病院(nearFacility)', () => {
       matches: [{ timing: 'arrive', stopId: 'S9', stopName: '学校前', time: '07:40', distanceM: dist }],
     })
     expect(nearFacilityText(n)).toBe(`学校前高校(高校・特別支援学校)の始業前(7〜9時着)に学校前 07:40着(施設まで約 ${dist}m)`)
+    // 判断材料の文(A03)は、窓に当たる施設の文をそのまま入れる
+    expect(hintSentence('nearFacility', d)).toBe(`停留所の徒歩圏にある学校・病院の時間帯に当たります(${nearFacilityText(n)})`)
     // 学校の近くを通らない便には付けない(項目ごと無い)
-    expect(hinter(byId.get('R1_0800_WK')!, facilityCtx([HIGH]))).toEqual({ hints: ['lastTripOfRoute', 'morning'], lostCells: null })
+    expect(hinter(byId.get('R1_0800_WK')!, facilityCtx([HIGH]))).toEqual({
+      hints: ['lastTripOfRoute', 'morning'],
+      lostCells: null,
+      band: null,
+      routeTrips: { before: 2, after: 3 },
+    })
   })
 
   it('病院の徒歩圏の終点(乗れない停留所)に 8〜11時に着く便にも付ける', () => {
@@ -633,8 +788,8 @@ describe('足し戻しの手がかり:学校・病院(nearFacility)', () => {
   it('手がかりの数が同じなら、窓に当たる施設の優先順位の高い便を先にする', () => {
     const { byId } = facilitySetup()
     const near = (rank: number) => [{ facility: { ...HIGH, rank }, stopId: 'S9', stopName: '学校前', distanceM: 100, matches: [{ timing: 'arrive' as const, stopId: 'S9', stopName: '学校前', time: '07:40', distanceM: 100 }] }]
-    const a = { trip: byId.get('R3_0730_WK')!, detail: { hints: ['nearFacility' as const], lostCells: null, facilities: near(8) } }
-    const b = { trip: byId.get('R1_0800_WK')!, detail: { hints: ['nearFacility' as const], lostCells: null, facilities: near(1) } }
+    const a = { trip: byId.get('R3_0730_WK')!, detail: { hints: ['nearFacility' as const], lostCells: null, ...NO_COUNTS, facilities: near(8) } }
+    const b = { trip: byId.get('R1_0800_WK')!, detail: { hints: ['nearFacility' as const], lostCells: null, ...NO_COUNTS, facilities: near(1) } }
     expect([a, b].sort(compareByHints).map((c) => c.trip.tripId)).toEqual(['R1_0800_WK', 'R3_0730_WK'])
   })
 

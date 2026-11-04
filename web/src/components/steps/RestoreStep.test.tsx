@@ -37,7 +37,9 @@ vi.mock('@/gtfs/edit/restore', async (importOriginal) => {
         const detail = hinter(trip)
         const extra = FAKE_EXTRA.current[trip.tripId]
         if ((ctx !== FAKE_CTX && ctx !== FAKE_CTX_1H) || !extra) return detail
-        return { hints: [...detail.hints, ...extra.hints], lostCells: extra.lostCells, ...(extra.facilities ? { facilities: extra.facilities } : {}) }
+        // 時間帯と系統の便数(band・routeTrips。A03)は、元の計算の値をそのまま渡す
+        const { facilities: _f, ...rest } = detail
+        return { ...rest, hints: [...detail.hints, ...extra.hints], lostCells: extra.lostCells, ...(extra.facilities ? { facilities: extra.facilities } : {}) }
       }
     },
   }
@@ -197,6 +199,24 @@ describe('RestoreStep', () => {
     fireEvent.click(within(r1()).getByRole('button', { name: 'ほかの便を見る(残り 1 便)' }))
     expect(within(r1()).getAllByRole('checkbox').map(idOf)).toEqual(['R1_0800_WK', 'R1_1130_WK', 'R1_1200_WK', 'R1_1900_WK'])
     expect(within(r1()).queryByRole('button', { name: /ほかの便を見る/ })).toBeNull()
+  })
+
+  it('「時間帯の便がなくなる」には始発の時間帯(3時間ごと)を添え、「唯一の便」とは出さない(A03、指摘15.3)', () => {
+    loadFeed(feedWithMore())
+    render(<RestoreStep />)
+    expandAll()
+    const row = (id: string) => within(candidates()).getByRole('checkbox', { name: new RegExp(id) }).closest('li')!
+    // R1_1200_WK は 12〜15時、R1_1900_WK は 18〜21時の R1 の便が減便後に 0 になる。R3_0730_WK は 6〜9時
+    expect(row('R1_1200_WK').textContent).toContain('時間帯の便がなくなる(12〜15時)')
+    expect(row('R1_1900_WK').textContent).toContain('時間帯の便がなくなる(18〜21時)')
+    expect(row('R3_0730_WK').textContent).toContain('時間帯の便がなくなる(6〜9時)')
+    // R1_1130_WK は土曜の 11:00 が同じ 9〜12時にあるので付かない
+    expect(row('R1_1130_WK').textContent).not.toContain('時間帯の便がなくなる')
+    expect(candidates().textContent).not.toContain('唯一')
+    // 判断材料の絞り込みの名前と、説明の注記も同じ名前
+    expect(within(screen.getByLabelText('判断材料')).getByRole('option', { name: '時間帯の便がなくなる' })).toBeTruthy()
+    expect(screen.getByText(/「時間帯の便がなくなる」は、始発の時間帯\(到達圏と同じ3時間ごと。.*同じ時間帯のなくなる便すべてに付き、方向は分けていません。/)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('唯一')
   })
 
   it('系統の並びは、手がかりの数、次に外れたセルの人口、次に始発の時刻', () => {
@@ -409,14 +429,14 @@ describe('RestoreStep', () => {
     expect(screen.getByRole('region', { name: '平日に戻した便' }).textContent).toContain('理由:通学(AI(承認済み)')
   })
 
-  it('到達圏の比較ができていれば、停留所で唯一の便と、外れたセルが戻る(セル数と人口)を手がかりに出す。できていなければ出さない', () => {
+  it('到達圏の比較ができていれば、停留所の発車がなくなると、到達圏が戻る(区画の数と人口)を判断材料に出す。できていなければ出さない', () => {
     const { unmount } = render(<RestoreStep />)
     const list = () => {
       expandAll()
       return candidates()
     }
     expect(list().textContent).not.toContain('到達圏が戻る')
-    expect(list().textContent).not.toContain('停留所で唯一の便')
+    expect(list().textContent).not.toContain('停留所の発車がなくなる')
     expect(screen.queryByText(/この便だけを平日に戻したときの値/)).toBeNull()
     unmount()
 
@@ -424,7 +444,7 @@ describe('RestoreStep', () => {
     render(<RestoreStep />)
     // 承認済みの編集後のフィードを渡して、手がかりの ctx を作っている
     expect(vi.mocked(buildRestoreHintContext).mock.calls.at(-1)?.[1]).toBe(useEditStore.getState().versions.at(-1)?.feed)
-    expect(list().textContent).toContain('停留所で唯一の便')
+    expect(list().textContent).toContain('停留所の発車がなくなる')
     expect(list().textContent).toContain('到達圏が戻る(1,234 区画、約 5,678 人)')
     expect(screen.getByText(/この便だけを平日に戻したときの値です/)).toBeTruthy()
     // 手がかりが付いた便が先頭に来る。手がかりでの絞り込みにも出る

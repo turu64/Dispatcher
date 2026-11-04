@@ -41,7 +41,7 @@ import { compareByTime, compareCandidates, groupCandidates, tripEndpoints, type 
 import { AiPicks, FacilityEvidence, SelectedTrips } from './restore/PickLists'
 import { TripLine } from './restore/TripLine'
 
-/** 到達圏を使う2つの手がかりの名前(「停留所で唯一の便」と「到達圏が戻る」) */
+/** 到達圏を使う2つの手がかりの名前(「停留所の発車がなくなる」と「到達圏が戻る」) */
 const REACH_PAIR = `「${RESTORE_HINT_LABELS.onlyServiceAtStop}」と「${RESTORE_HINT_LABELS.restoresLostCells}」`
 
 /** 到達圏の比較の時間帯の幅(時間)。地図の時間帯の幅(3時間ごとか1時間ごと)に従う */
@@ -63,7 +63,7 @@ function reachHintNote(ctx: RestoreHintContext): string {
  * 時刻で決まる判断材料の時間帯の説明(U05)。始発の時間帯は到達圏と同じ3時間ごと(始発の時間帯の絞り込みと同じ区切り)で、
  * 公示第47号の区分(6〜9時台、10〜14時台…)は使わない
  */
-const BAND_HINT_NOTE = `「${RESTORE_HINT_LABELS.onlyTripInBand}」は、始発の時間帯(到達圏と同じ3時間ごと。6〜9時、9〜12時…。上の「始発の時間帯」の絞り込みと同じ区切り)で、その系統の減便後の平日の便が 0 になる便です。「${RESTORE_HINT_LABELS.morning}」と「${RESTORE_HINT_LABELS.evening}」も始発の時刻で見ます。`
+const BAND_HINT_NOTE = `「${RESTORE_HINT_LABELS.onlyTripInBand}」は、始発の時間帯(到達圏と同じ3時間ごと。6〜9時、9〜12時…。上の「始発の時間帯」の絞り込みと同じ区切り)で、その系統の減便後の平日の便が 0 になる便です。同じ時間帯のなくなる便すべてに付き、方向は分けていません。「${RESTORE_HINT_LABELS.morning}」と「${RESTORE_HINT_LABELS.evening}」も始発の時刻で見ます。`
 
 /** 到達圏を使う2つの手がかりを出していない理由 */
 const REACH_HINTS_ABSENT = {
@@ -165,7 +165,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   const history = useEditStore((s) => s.history)
   const diff = useMemo(() => diffOf(base.feed, version), [base.feed, version])
   // 到達圏の前後の比較(基準と、承認済みの編集後の結果。同じ起点・同じセル・同じ時間帯)から、到達圏を使う2つの手がかり
-  // (停留所で唯一の便・外れた場所が戻る)の ctx を作る。比較ができていなければ null で、2つは出さない
+  // (停留所の発車がなくなる・到達圏が戻る)の ctx を作る。比較ができていなければ null で、2つは出さない
   // (承認前の下書きの結果を地図に出している間や、計算中も null。docs/interfaces-1105.md §7)
   const reachEdited = useReachStore((s) => s.edited)
   const reachOrigins = useReachStore((s) => s.origins)

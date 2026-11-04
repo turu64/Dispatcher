@@ -13,15 +13,20 @@ export function ExcludedRoutes({
   excluded,
   onChange,
   replacementLabel,
+  open,
+  onOpenChange,
 }: {
   stats: RouteStat[]
   excluded: string[]
   onChange: (v: string[]) => void
   replacementLabel: string
+  /** 開いているか(渡せば呼ぶ側が開け閉めを持つ。減便の方針の確認の結果の「詳しい設定を開く」から開くため) */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
   const weekdayOnly = stats.filter((s) => s.replacement === 0).length
   return (
-    <details className="text-sm">
+    <details className="text-sm" open={open} onToggle={onOpenChange ? (e) => onOpenChange(e.currentTarget.open) : undefined}>
       <summary className="cursor-pointer">
         入れ替えから外す系統{excluded.length > 0 ? `(${excluded.length} 系統を外す)` : '(既定はどれも外さない)'}
       </summary>

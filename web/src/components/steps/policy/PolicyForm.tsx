@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   checkPolicy,
-  type Form2Plan,
   type PolicyKind,
   type PolicyReason,
   type PolicySettings,
@@ -20,6 +21,7 @@ import {
 import type { HolidayList } from '@/gtfs/holidays'
 import type { ValidationIssue } from '@/gtfs/validate/edit'
 import { todayInJapan } from '@/lib/dates'
+import { cn } from '@/lib/utils'
 import { setChatToolProviders } from '@/store/chat'
 import { useEditStore, type BaseGtfs } from '@/store/edit'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
@@ -27,7 +29,7 @@ import { draftActor, proposeAsUser, replaceClaudeDraftMessage } from '../editAct
 import { InlineConfirm, IssueList, NoteList } from '../editParts'
 import { invalidCalendarNote, REASON_LABELS, REPLACEMENT_LABELS } from '../editText'
 import { ExcludedRoutes } from './DiffTables'
-import { PERIOD_PROBLEM_CODES, PeriodFields, PolicyKindField } from './PeriodFields'
+import { EMPTY_HOLE_CLASS, PERIOD_PROBLEM_CODES, PeriodChecks, PeriodHoles, PolicyKindField } from './PeriodFields'
 import { ServiceDetails, ServiceSelect } from './ServiceFields'
 import { routeTripCounts } from './stats'
 import type { ChoiceRole, Override } from './types'
@@ -45,8 +47,8 @@ export function PolicyForm({
   onCancel,
 }: {
   base: BaseGtfs
-  /** 「方針を変える」のときの今の方針 */
-  initial: Form2Plan | null
+  /** 「方針を変える」のときの今の方針、または AI の方針の下書きの値 */
+  initial: PolicySettings | null
   initialReason: PolicyReason | null
   onCancel?: () => void
 }) {
@@ -69,14 +71,21 @@ export function PolicyForm({
   const [overrides, setOverrides] = useState<Partial<Record<ChoiceRole, Override>>>(() => {
     if (!initial) return {}
     const replacementRole: ChoiceRole = initial.kind === 'weekdayToSaturday' ? 'saturday' : 'sundayHoliday'
+    // 「選んだときの推定」は、渡された方針の期間で推定した値にする。service の値そのものにすると、推定と違う service を
+    // 選んだ方針(承認済みの方針・AI の下書き)を開いただけで「期間を変えたため、推定が変わった」と扱ってしまう
+    const v = input ? policyValidity(input, initial.period) : null
+    const g = v ? guessServiceChoice(feed, services, v) : null
     return {
-      weekday: { value: initial.weekdayService, guessAtPick: initial.weekdayService },
-      [replacementRole]: { value: initial.replacementService, guessAtPick: initial.replacementService },
+      weekday: { value: initial.weekdayService, guessAtPick: g?.weekday ?? null },
+      [replacementRole]: { value: initial.replacementService, guessAtPick: g?.[replacementRole] ?? null },
     }
   })
   const [excluded, setExcluded] = useState<string[]>(initial?.excludedRoutes ?? [])
-  const [category, setCategory] = useState<PolicyReason['category']>(initialReason?.category ?? null)
-  const [note, setNote] = useState(initialReason?.note ?? '')
+  const [reasonChoice, setReasonChoice] = useState<ReasonChoice | null>(() => reasonChoiceOf(initialReason))
+  // 「その他」の文と、区分を選んだときの補足は、意味が違うので別に持つ(区分を切り替えても、片方の文をもう片方に持ち越さない)
+  const [otherText, setOtherText] = useState(() => (reasonChoiceOf(initialReason) === 'other' ? (initialReason?.note ?? '') : ''))
+  const [note, setNote] = useState(() => (reasonChoiceOf(initialReason) === 'other' ? '' : (initialReason?.note ?? '')))
+  const noteId = useId()
   const [message, setMessage] = useState<string | null>(null)
   // Claude の下書きを捨ててよいかを確かめている間の、その下書きの番号
   const [confirmDraftId, setConfirmDraftId] = useState<string | null>(null)
@@ -152,16 +161,39 @@ export function PolicyForm({
     return sat && sun && sat !== sun ? sameTimetable(feed, sat, sun) : false
   }, [feed, overrides.saturday, overrides.sundayHoliday, inputGuess])
   const routeStats = useMemo(() => routeTripCounts(feed, weekday, replacement), [feed, weekday, replacement])
+  // 入れ替えに使うダイヤの便が無い系統のうち、除外していないもの(入れ替えると全曜日で便がなくなる)
+  const vanishingRoutes = replacement === null ? 0 : routeStats.filter((r) => r.replacement === 0 && !excluded.includes(r.routeId)).length
+  const [routesOpen, setRoutesOpen] = useState(false)
 
   const pick = (role: ChoiceRole, value: string) => {
     setOverrides((o) => ({ ...o, [role]: { value, guessAtPick: guess?.[role] ?? null } }))
   }
   const hasError = allProblems.some((p) => p.severity === 'error')
 
+  // service の推定に問題があるとき(推定できない・選んだあとに推定が変わった)は、詳しい設定を開いて選び直してもらう。
+  // 期間が決まるまでは推定しないので、問題としない
+  const serviceProblem =
+    validity !== null &&
+    (weekday === null ||
+      replacement === null ||
+      (['weekday', replacementRole] as const).some((role) => {
+        const o = overrides[role]
+        const g = guess?.[role] ?? null
+        return o !== undefined && g !== null && g !== o.guessAtPick && g !== o.value
+      }))
+  const [detailsOpen, setDetailsOpen] = useState(serviceProblem)
+  const needsDetails = serviceProblem || vanishingRoutes > 0
+  // 問題が出たときに一度だけ開く(利用者が閉じたら、問題が消えて出直すまで閉じたままにする)
+  const [hadServiceProblem, setHadServiceProblem] = useState(serviceProblem)
+  if (serviceProblem !== hadServiceProblem) {
+    setHadServiceProblem(serviceProblem)
+    if (serviceProblem) setDetailsOpen(true)
+  }
+
   function submit(replaceClaudeDraft = false) {
     if (!settings) return
     setMessage(null)
-    const r = proposeAsUser({ type: 'applyPolicy', settings, reason: { category, note: note.trim() } }, { replaceClaudeDraft })
+    const r = proposeAsUser({ type: 'applyPolicy', settings, reason: reasonOf(reasonChoice, otherText, note) }, { replaceClaudeDraft })
     if (r.status === 'needsConfirm') {
       // Claude の下書きを捨てることになる。画面の中で確かめてから進める
       setConfirmDraftId(r.draft.id)
@@ -183,77 +215,150 @@ export function PolicyForm({
 
   return (
     <form
-      className="flex flex-col gap-3"
+      className="flex min-w-0 flex-col gap-3"
       aria-label="減便の方針"
-      // ブラウザ標準の範囲検証(日付の min・max)で送信を止めない。範囲の外の日付は、checkPolicy の警告
-      // (periodStartClamped・periodEndClamped。入力の端にそろえる)でアプリ側が知らせる。min・max はカレンダーの案内として残す
+      // ブラウザ標準の範囲検証で送信を止めない。範囲の外の日付は、checkPolicy の警告
+      // (periodStartClamped・periodEndClamped。入力の端にそろえる)でアプリ側が知らせる
       noValidate
       onSubmit={(e) => {
         e.preventDefault()
         submit()
       }}
     >
-      <PolicyKindField kind={kind} onChange={setKind} sameSatSun={sameSatSun} />
-
-      <PeriodFields
-        input={input}
-        start={startDate}
-        onStartChange={setStartDate}
-        end={endDate}
-        onEndChange={setEndDate}
-        indefinite={indefinite}
-        onIndefiniteChange={setIndefinite}
-        validity={validity}
-        periodProblems={periodProblems}
-        holidayState={holidayState}
-      />
-
-      <fieldset className="flex flex-col gap-2">
-        <legend className="mb-1 text-sm font-medium">入れ替える service</legend>
-        <ServiceSelect
-          id="policy-weekday"
-          label="入れ替え元のダイヤ(平日)"
-          services={services}
-          value={weekday}
-          guess={guess?.weekday ?? null}
-          override={overrides.weekday}
-          onChange={(v) => pick('weekday', v)}
-        />
-        <ServiceSelect
-          id="policy-replacement"
-          label={`入れ替えに使うダイヤ(${REPLACEMENT_LABELS[kind]})`}
-          services={services}
-          value={replacement}
-          guess={guess?.[replacementRole] ?? null}
-          override={overrides[replacementRole]}
-          onChange={(v) => pick(replacementRole, v)}
-        />
-        {guess && guess.notes.length > 0 && <NoteList items={guess.notes} label="推定できなかった理由" />}
-        <ServiceDetails feed={feed} services={services} validity={validity} />
+      {/* 入力の中心は1つの文。「[理由] のため、[開始日] から [終了日] までの間、[平日] を [土曜] ダイヤに変更する。」の穴を埋める */}
+      <fieldset className="flex min-w-0 flex-col gap-2">
+        <legend className="sr-only">減便の内容</legend>
+        <p className="text-xs text-muted-foreground">文の枠を押して選びます。減便の理由は任意です。</p>
+        <div data-testid="policy-sentence" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-2 text-sm">
+          <ReasonHole choice={reasonChoice} onChoiceChange={setReasonChoice} otherText={otherText} onOtherTextChange={setOtherText} />
+          <span>のため、</span>
+          <PeriodHoles
+            input={input}
+            start={startDate}
+            onStartChange={setStartDate}
+            end={endDate}
+            onEndChange={setEndDate}
+            indefinite={indefinite}
+            onIndefiniteChange={setIndefinite}
+            holidayState={holidayState}
+          />
+          <PolicyKindField kind={kind} onChange={setKind} />
+        </div>
+        {reasonChoice !== null && reasonChoice !== 'other' && (
+          <div className="flex flex-col gap-1">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <Label htmlFor={noteId} className="text-xs">
+                補足
+              </Label>
+              <span id={`${noteId}-hint`} className="text-xs text-muted-foreground">
+                任意。変更指示書に載せます。
+              </span>
+            </div>
+            <Input
+              id={noteId}
+              aria-describedby={`${noteId}-hint`}
+              className="h-7 max-w-md text-xs md:text-xs"
+              placeholder="例:運転士 2 名の欠員"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </div>
+        )}
       </fieldset>
 
-      <ExcludedRoutes stats={routeStats} excluded={excluded} onChange={setExcluded} replacementLabel={REPLACEMENT_LABELS[kind]} />
+      <section aria-label="確認の結果" className="flex flex-col gap-1.5 rounded-md bg-muted/50 px-2.5 py-2">
+        {period === null && (
+          <p className="text-xs text-muted-foreground">
+            {!startDate ? (indefinite ? '開始日を選んでください。' : '開始日と終了日を選ぶか、当面の間にしてください。') : '終了日を選ぶか、当面の間にしてください。'}
+          </p>
+        )}
+        <PeriodChecks validity={validity} periodProblems={periodProblems} holidayState={holidayState} />
+        {reasonChoice === 'other' && otherText.trim() === '' && (
+          <p className="text-xs text-muted-foreground">その他の理由が空のため、理由は記録しません。</p>
+        )}
+        {sameSatSun && (
+          <p className="text-xs text-muted-foreground">この GTFS では土曜と日祝が同じ時刻表のため、どちらに変更しても同じ結果になります。</p>
+        )}
+        {needsDetails && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-amber-900 dark:text-amber-300">
+            {serviceProblem && (
+              <p>
+                <span aria-hidden="true">! </span>
+                {weekday === null || replacement === null ? '入れ替える service を推定できませんでした。' : '入れ替える service の推定を確かめてください。'}
+                詳しい設定で service を選んでください。
+              </p>
+            )}
+            {vanishingRoutes > 0 && (
+              <p>
+                <span aria-hidden="true">! </span>
+                {REPLACEMENT_LABELS[kind]}の便がない系統が {vanishingRoutes} 系統あり、このままでは全曜日で便がなくなります。詳しい設定で入れ替えから除外できます。
+              </p>
+            )}
+            {(!detailsOpen || (vanishingRoutes > 0 && !routesOpen)) && (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  setDetailsOpen(true)
+                  if (vanishingRoutes > 0) setRoutesOpen(true)
+                }}
+              >
+                詳しい設定を開く
+              </Button>
+            )}
+          </div>
+        )}
+        <IssueList issues={problems.map((p) => problemIssue(p, weekdayCalendarNote))} title="減便内容の確認" />
+      </section>
 
-      <fieldset className="flex flex-col gap-1.5">
-        <legend className="mb-1 text-sm font-medium">減便の理由</legend>
-        <p className="text-xs text-muted-foreground">変更指示書に載せます。入力は任意です。</p>
-        <select
-          aria-label="理由の区分"
-          className="h-8 rounded-md border bg-background px-2 text-sm"
-          value={category ?? ''}
-          onChange={(e) => setCategory(e.target.value === '' ? null : (e.target.value as NonNullable<PolicyReason['category']>))}
-        >
-          <option value="">選ばない</option>
-          {(Object.keys(REASON_LABELS) as NonNullable<PolicyReason['category']>[]).map((c) => (
-            <option key={c} value={c}>
-              {REASON_LABELS[c]}
-            </option>
-          ))}
-        </select>
-        <Input aria-label="理由のメモ" placeholder="メモ(例:運転士 2 名の欠員)" value={note} onChange={(e) => setNote(e.target.value)} />
-      </fieldset>
+      <details
+        className="text-sm"
+        open={detailsOpen}
+        onToggle={(e) => setDetailsOpen(e.currentTarget.open)}
+        data-testid="policy-details"
+      >
+        <summary className="cursor-pointer">
+          詳しい設定(service:{serviceSummary(validity !== null, weekday, replacement, REPLACEMENT_LABELS[kind])}、除外する系統:
+          {excluded.length > 0 ? `${excluded.length} 系統` : 'なし'})
+        </summary>
+        {/* 開いた中身は、文や確認の結果と同じ高さに見えないよう、左の線で1つのまとまりにする */}
+        <div className="mt-2 flex min-w-0 flex-col gap-3 border-l pl-3">
+          <fieldset className="flex min-w-0 flex-col gap-2">
+            <legend className="mb-1 text-sm font-medium">入れ替える service</legend>
+            <ServiceSelect
+              id="policy-weekday"
+              label="入れ替え元のダイヤ(平日)"
+              services={services}
+              value={weekday}
+              guess={guess?.weekday ?? null}
+              override={overrides.weekday}
+              onChange={(v) => pick('weekday', v)}
+            />
+            <ServiceSelect
+              id="policy-replacement"
+              label={`入れ替えに使うダイヤ(${REPLACEMENT_LABELS[kind]})`}
+              services={services}
+              value={replacement}
+              guess={guess?.[replacementRole] ?? null}
+              override={overrides[replacementRole]}
+              onChange={(v) => pick(replacementRole, v)}
+            />
+            {guess && guess.notes.length > 0 && <NoteList items={guess.notes} label="推定できなかった理由" />}
+            <ServiceDetails feed={feed} services={services} validity={validity} />
+          </fieldset>
 
-      <IssueList issues={problems.map((p) => problemIssue(p, weekdayCalendarNote))} title="減便内容の確認" />
+          <ExcludedRoutes
+            stats={routeStats}
+            excluded={excluded}
+            onChange={setExcluded}
+            replacementLabel={REPLACEMENT_LABELS[kind]}
+            open={routesOpen}
+            onOpenChange={setRoutesOpen}
+          />
+        </div>
+      </details>
+
       {message && (
         <Alert variant="destructive">
           <AlertDescription>{message}</AlertDescription>
@@ -280,6 +385,92 @@ export function PolicyForm({
         </div>
       )}
     </form>
+  )
+}
+
+/** 減便の理由の穴の選択肢。'other' は「その他」(文の中の入力欄に書いた文が理由になる。区分は null)、'none' は選ばない */
+type ReasonChoice = NonNullable<PolicyReason['category']> | 'other'
+const NO_REASON = 'none'
+
+/** 理由の値 → 穴の選択。区分が無くて文があれば「その他」(Claude の下書きや前の方針で、区分を選ばずにメモだけを書いたもの) */
+function reasonChoiceOf(reason: PolicyReason | null): ReasonChoice | null {
+  if (!reason) return null
+  if (reason.category) return reason.category
+  return reason.note.trim() !== '' ? 'other' : null
+}
+
+/** 穴の選択と文 → 減便の理由。選んでいなければ区分もメモも空、「その他」なら区分は null でメモにその文、区分なら補足がメモ */
+function reasonOf(choice: ReasonChoice | null, otherText: string, note: string): PolicyReason {
+  if (choice === null) return { category: null, note: '' }
+  if (choice === 'other') return { category: null, note: otherText.trim() }
+  return { category: choice, note: note.trim() }
+}
+
+/** 詳しい設定の summary の service の部分。「平日 WK を土曜 SA に」。期間が決まるまでは推定しないので、その旨を出す */
+function serviceSummary(hasPeriod: boolean, weekday: string | null, replacement: string | null, replacementLabel: string): string {
+  if (!hasPeriod && (weekday === null || replacement === null)) return '期間を選ぶと推定します'
+  return `平日 ${weekday ?? '未選択'} を${replacementLabel} ${replacement ?? '未選択'} に`
+}
+
+/**
+ * 減便の文の「[減便の理由] のため、」の穴。選択肢は区分3つと「その他」。「その他」を選ぶと、その場に文字の入力欄が出る。
+ * 選んでいない間は、破線の枠に薄く「理由」と出す
+ */
+function ReasonHole({
+  choice,
+  onChoiceChange,
+  otherText,
+  onOtherTextChange,
+}: {
+  choice: ReasonChoice | null
+  onChoiceChange: (c: ReasonChoice | null) => void
+  otherText: string
+  onOtherTextChange: (v: string) => void
+}) {
+  const otherRef = useRef<HTMLInputElement>(null)
+  // 「その他」を選んだら、閉じたときに焦点をセレクトに戻さず、文の中に出た入力欄に移す
+  const focusOther = useRef(false)
+  return (
+    <>
+      <Select
+        value={choice ?? ''}
+        onValueChange={(v) => {
+          focusOther.current = v === 'other'
+          onChoiceChange(v === NO_REASON ? null : (v as ReasonChoice))
+        }}
+      >
+        <SelectTrigger size="sm" aria-label="減便の理由" className={cn('max-w-full font-normal', choice === null && EMPTY_HOLE_CLASS)}>
+          <SelectValue placeholder="理由" />
+        </SelectTrigger>
+        <SelectContent
+          onCloseAutoFocus={(e) => {
+            if (!focusOther.current) return
+            focusOther.current = false
+            e.preventDefault()
+            otherRef.current?.focus()
+          }}
+        >
+          {(Object.keys(REASON_LABELS) as NonNullable<PolicyReason['category']>[]).map((c) => (
+            <SelectItem key={c} value={c}>
+              {REASON_LABELS[c]}
+            </SelectItem>
+          ))}
+          <SelectItem value="other">その他</SelectItem>
+          {choice !== null && <SelectItem value={NO_REASON}>選ばない</SelectItem>}
+        </SelectContent>
+      </Select>
+      {choice === 'other' && (
+        <Input
+          ref={otherRef}
+          aria-label="減便の理由(その他)"
+          // 書いた文の長さに合わせて広げる(field-sizing は Chrome・Edge で効く)。欄より長ければ欄の幅で止める
+          className="h-7 w-auto min-w-32 max-w-full text-sm field-sizing-content md:text-sm"
+          placeholder="例:道路工事による迂回"
+          value={otherText}
+          onChange={(e) => onOtherTextChange(e.target.value)}
+        />
+      )}
+    </>
   )
 }
 

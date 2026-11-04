@@ -118,6 +118,15 @@ describe('ChangeOrder', () => {
     expect(within(section('1. 減便の理由')).getByText('未選択')).toBeTruthy()
   })
 
+  it('理由の区分が無くてメモがあれば(減便の文の理由で「その他」を選んだもの)、区分は「その他」と出す(承認の要約と同じ規則)', () => {
+    commit(policy({ category: null, note: '道路工事による迂回' }), 'claude')
+    render(<ChangeOrder />)
+    const reason = within(section('1. 減便の理由'))
+    expect(reason.getByText('区分:').nextElementSibling?.textContent).toBe('その他')
+    expect(reason.getByText('道路工事による迂回')).toBeTruthy()
+    expect(reason.queryByText('未選択')).toBeNull()
+  })
+
   it('保護する便を理由と(学)の印つきで出し、足し戻した便の集計と勤務の確認欄を出す', () => {
     commit(policy({ category: 'temporaryShortage', note: '' }))
     commit({

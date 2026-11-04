@@ -26,6 +26,15 @@ export const REASON_LABELS: Record<NonNullable<PolicyReason['category']>, string
   demandDecline: '需要の減少',
 }
 
+/**
+ * 減便の理由の区分の表示。区分があればその名前、区分が無くてメモがあれば「その他」(減便の文の理由で「その他」を選び、
+ * 文の中の入力欄に書いたもの)、どちらも無ければ null(呼ぶ側が「選んでいません」「未選択」などを出す)
+ */
+export function reasonCategoryLabel(reason: PolicyReason | null | undefined): string | null {
+  if (reason?.category) return REASON_LABELS[reason.category]
+  return reason?.note.trim() ? 'その他' : null
+}
+
 export const ROLE_LABELS: Record<ServiceRole, string> = {
   weekday: '平日(月〜金)',
   saturday: '土曜',

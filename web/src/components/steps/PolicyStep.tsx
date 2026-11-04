@@ -23,14 +23,27 @@ export default function PolicyStep() {
   const [editing, setEditing] = useState(false)
   // GTFS を削除・読み込み直したら(基準が変わったら)、「方針を変える」の途中の状態を捨てる
   const [editingBase, setEditingBase] = useState(base)
+  // AI の方針の下書き(apply_policy)が出たら、その値(理由・期間・種類・除外)を文の穴に入れる。
+  // 確かめている間は入力を隠しているので、「やめる」で戻ったときに AI の値のまま直せる
+  const [aiSeed, setAiSeed] = useState<OpDraft | null>(null)
+  // 下書きを入れたときの履歴。どこかで承認・元に戻すなどして履歴が変わったら、AI の値は使わない(承認済みの方針か既定に戻す)
+  const [seedHistory, setSeedHistory] = useState(history)
   if (base !== editingBase) {
     setEditingBase(base)
     setEditing(false)
+    setAiSeed(null)
   }
   const plan = useMemo(() => planOf(history), [history])
   const reason = useMemo(() => policyReasonOf(history), [history])
   const version = lastVersion({ versions })
   const reviewing: OpDraft | null = draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' ? draft : null
+  if (reviewing && reviewing.record.by === 'claude' && aiSeed?.id !== reviewing.id) {
+    setAiSeed(reviewing)
+    setSeedHistory(history)
+  } else if (aiSeed && history !== seedHistory) {
+    setAiSeed(null)
+  }
+  const seedOp = aiSeed?.record.op.type === 'applyPolicy' ? aiSeed.record.op : null
   const showForm = base !== null && (plan === null || editing)
 
   return (
@@ -43,17 +56,34 @@ export default function PolicyStep() {
             // 確かめている間も入力は残す(「やめる」で戻ったときに、入れた値のまま直せるように)
             <div hidden={reviewing !== null}>
               <PolicyForm
-                key={`${baseKeyOf(base)}-${editing ? history.length : 0}`}
+                key={`${baseKeyOf(base)}-${editing ? history.length : 0}-${aiSeed?.id ?? ''}`}
                 base={base}
-                initial={editing ? plan : null}
-                initialReason={editing ? reason : null}
+                initial={seedOp ? seedOp.settings : editing ? plan : null}
+                initialReason={seedOp ? seedOp.reason : editing ? reason : null}
                 onCancel={plan && editing ? () => setEditing(false) : undefined}
               />
             </div>
           )}
-          {reviewing && <PolicyReview draft={reviewing} onCommitted={() => setEditing(false)} />}
+          {reviewing && (
+            <PolicyReview
+              draft={reviewing}
+              onCommitted={() => {
+                setEditing(false)
+                setAiSeed(null)
+              }}
+            />
+          )}
           {plan && version && !editing && !reviewing && (
-            <PolicySummary base={base} plan={plan} reason={reason} version={version} onChange={() => setEditing(true)} />
+            <PolicySummary
+              base={base}
+              plan={plan}
+              reason={reason}
+              version={version}
+              onChange={() => {
+                setEditing(true)
+                setAiSeed(null)
+              }}
+            />
           )}
           <EditHistoryPanel />
         </>

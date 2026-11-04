@@ -17,7 +17,7 @@ import { PRINT_COLS, splitParts } from './printColumns'
 import {
   periodText,
   POLICY_KIND_LABELS,
-  REASON_LABELS,
+  reasonCategoryLabel,
   REPLACEMENT_LABELS,
   restoreTotalsText,
   RESTORE_DUTY_NOTE,
@@ -256,7 +256,7 @@ function Sheet({
 
       <Section title="1. 減便の理由">
         <dl className="flex flex-wrap gap-x-4 gap-y-0.5">
-          <Field label="区分">{reason?.category ? REASON_LABELS[reason.category] : '未選択'}</Field>
+          <Field label="区分">{reasonCategoryLabel(reason) ?? '未選択'}</Field>
           <Field label="メモ">{reason?.note.trim() ? reason.note : '(なし)'}</Field>
         </dl>
         <p className="print-hide text-muted-foreground">

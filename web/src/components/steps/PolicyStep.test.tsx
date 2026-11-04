@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { basePlan, smallFeed, withRows } from '@/gtfs/edit/form2.fixture'
@@ -32,9 +32,43 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-/** 減便の期間のカレンダー(1つ。2か月を並べる) */
-function periodCalendar(): HTMLElement {
+// Radix の Select は jsdom に無い scrollIntoView・ポインターの捕捉を使う
+Element.prototype.scrollIntoView ??= () => {}
+Element.prototype.hasPointerCapture ??= () => false
+Element.prototype.releasePointerCapture ??= () => {}
+
+/** 減便の文(穴埋めの形)の部品の並び */
+function sentence(): HTMLElement {
+  return screen.getByTestId('policy-sentence')
+}
+
+/**
+ * 減便の文の読める文字。Radix の Select はフォームの中では隠れた標準の select(選択肢の文字を持つ)を横に置くので、それを除く
+ */
+function sentenceText(): string {
+  const copy = sentence().cloneNode(true) as HTMLElement
+  for (const el of copy.querySelectorAll('select[aria-hidden="true"]')) el.remove()
+  return copy.textContent ?? ''
+}
+
+/** 減便の文の日付の穴(開始日・終了日)のボタン */
+function hole(target: '開始日' | '終了日'): HTMLElement {
+  return within(sentence()).getByRole('button', { name: new RegExp(`^${target}`) })
+}
+
+/**
+ * 減便の期間のカレンダー(1つ。2か月を並べる)。文の日付の穴から Popover で開く。開いていなければ、target の穴を押して開く
+ */
+function periodCalendar(target: '開始日' | '終了日' = '開始日'): HTMLElement {
+  const open = screen.queryByRole('group', { name: '減便の期間' })
+  if (open) return open
+  fireEvent.click(hole(target))
   return screen.getByRole('group', { name: '減便の期間' })
+}
+
+/** 「当面の間」のチェック(カレンダーの Popover の中。開いていなければ開く) */
+function indefiniteBox(): HTMLElement {
+  return within(periodCalendar()).getByLabelText('当面の間(終わりを決めない)')
 }
 
 /** 減便の期間のカレンダーで 'YYYYMMDD' の日のボタン。見えていなければ null */
@@ -59,9 +93,27 @@ function pickDate(date: string) {
   throw new Error(`減便の期間のカレンダーに ${date} が見つかりません`)
 }
 
-/** カレンダーの下の、選んだ期間の文 */
+/** カレンダーの下の、選んだ期間の文(Popover の中。開いていなければ開く) */
 function periodSummary(): string {
+  periodCalendar()
   return screen.getByTestId('period-summary').textContent ?? ''
+}
+
+/** 文の下の確認の結果 */
+function checks(): HTMLElement {
+  return screen.getByRole('region', { name: '確認の結果' })
+}
+
+/** 「詳しい設定」(畳んである欄) */
+function details(): HTMLDetailsElement {
+  return screen.getByTestId('policy-details') as HTMLDetailsElement
+}
+
+/** shadcn/ui(Radix)の Select をキーボードで開いて、選択肢を選ぶ */
+function chooseOption(selectName: string, optionName: string) {
+  const trigger = screen.getByRole('combobox', { name: selectName })
+  fireEvent.keyDown(trigger, { key: 'Enter' })
+  fireEvent.click(screen.getByRole('option', { name: optionName }))
 }
 
 describe('PolicyStep', () => {
@@ -71,16 +123,378 @@ describe('PolicyStep', () => {
     expect(screen.getByText('手順「読み込み」で GTFS を読み込むと、減便の方針を選べます。')).toBeTruthy()
   })
 
-  it('入力の欄の名前:ダイヤの入れ替え方と、減便の理由(補足は欄外)', () => {
+  it('減便の方針は1つの文の穴を埋める形で、部品は文の順に並ぶ(読み上げの名前つき)', () => {
     render(<PolicyStep />)
-    const kind = screen.getByRole('group', { name: 'ダイヤの入れ替え方' })
-    // 「[平日] を [土曜] ダイヤに変更する」の文の形の2つのセレクト(ラジオボタンは使わない)
-    expect(within(kind).queryAllByRole('radio')).toHaveLength(0)
-    expect(within(kind).getByRole('combobox', { name: '変更するダイヤ' }).textContent).toBe('平日')
-    expect(within(kind).getByRole('combobox', { name: '変更後のダイヤ' }).textContent).toBe('土曜')
-    expect(kind.textContent).toContain('ダイヤに変更する')
-    const reason = screen.getByRole('group', { name: '減便の理由' })
-    expect(reason.textContent).toContain('変更指示書に載せます。入力は任意です。')
+    // 文全体は fieldset(名前は見出しと重ならない「減便の内容」)
+    const group = screen.getByRole('group', { name: '減便の内容' })
+    expect(group.tagName).toBe('FIELDSET')
+    expect(group.contains(sentence())).toBe(true)
+    // 部品(穴)と文字の並び。理由は選んでいないので穴に薄く「理由」、期間は今日(10/20)から当面の間
+    const parts = [...sentence().children]
+      .filter((el) => !(el.tagName === 'SELECT' && el.getAttribute('aria-hidden') === 'true'))
+      .map((el) => el.getAttribute('aria-label') ?? el.textContent)
+    expect(parts).toEqual([
+      '減便の理由',
+      'のため、',
+      '開始日:10月20日(火)',
+      'から',
+      '終了日:当面の間',
+      '、',
+      '変更するダイヤ',
+      'を',
+      '変更後のダイヤ',
+      'ダイヤに',
+      '変更する。',
+    ])
+    // 穴の中の文字。文として「理由 のため、10月20日(火) から 当面の間、平日 を 土曜 ダイヤに変更する。」と読める
+    const reason = within(sentence()).getByRole('combobox', { name: '減便の理由' })
+    expect(reason.textContent).toBe('理由')
+    // 選んでいない理由の穴は破線の枠
+    expect(reason.className).toContain('border-dashed')
+    expect(within(sentence()).getByRole('combobox', { name: '変更するダイヤ' }).textContent).toBe('平日')
+    expect(within(sentence()).getByRole('combobox', { name: '変更後のダイヤ' }).textContent).toBe('土曜')
+    expect(sentenceText()).toBe('理由のため、10月20日(火)から当面の間、平日を土曜ダイヤに変更する。')
+    // ラジオボタンは使わない
+    expect(within(group).queryAllByRole('radio')).toHaveLength(0)
+    // Tab の順は文の順(どの部品も tabindex で順を変えない)
+    const focusables = [...sentence().querySelectorAll<HTMLElement>('button, input, [role="combobox"]')].filter(
+      (el) => el.closest('[aria-hidden="true"]') === null,
+    )
+    expect(focusables.map((el) => el.getAttribute('aria-label'))).toEqual([
+      '減便の理由',
+      '開始日:10月20日(火)',
+      '終了日:当面の間',
+      '変更するダイヤ',
+      '変更後のダイヤ',
+    ])
+    expect(focusables.every((el) => !el.hasAttribute('tabindex') || el.getAttribute('tabindex') === '0')).toBe(true)
+    // 補足の欄は、区分を選ぶまで出さない
+    expect(screen.queryByLabelText('補足')).toBeNull()
+  })
+
+  it('終了日を決めると「までの間」を出し、当面の間に戻すと消す', () => {
+    render(<PolicyStep />)
+    fireEvent.click(indefiniteBox())
+    // 終了日がまだなら、終了日の穴は破線の枠に薄く「終了日」
+    expect(hole('終了日').getAttribute('aria-label')).toBe('終了日(未選択)')
+    expect(hole('終了日').textContent).toBe('終了日')
+    expect(hole('終了日').className).toContain('border-dashed')
+    pickDate('20261113')
+    expect(hole('終了日').getAttribute('aria-label')).toBe('終了日:11月13日(金)')
+    expect(sentenceText()).toBe('理由のため、10月20日(火)から11月13日(金)までの間、平日を土曜ダイヤに変更する。')
+    fireEvent.click(indefiniteBox())
+    expect(sentenceText()).toBe('理由のため、10月20日(火)から当面の間、平日を土曜ダイヤに変更する。')
+    expect(sentenceText()).not.toContain('までの間')
+  })
+
+  it('理由の「その他」を選ぶと文の中に入力欄が出て(焦点も移る)、書いた文が理由のメモになる(区分は null)', async () => {
+    render(<PolicyStep />)
+    expect(screen.queryByRole('textbox', { name: '減便の理由(その他)' })).toBeNull()
+    chooseOption('減便の理由', 'その他')
+    const other = within(sentence()).getByRole('textbox', { name: '減便の理由(その他)' })
+    await waitFor(() => expect(document.activeElement).toBe(other))
+    // 入力欄は理由の穴のすぐ後ろ(「のため、」の前)
+    expect(other.nextElementSibling?.textContent).toBe('のため、')
+    fireEvent.change(other, { target: { value: ' 道路工事による迂回 ' } })
+    // 「その他」では補足の欄を出さない(書いた文がそのまま理由)
+    expect(screen.queryByLabelText('補足')).toBeNull()
+    fireEvent.click(screen.getByRole('checkbox', { name: '3(R3)を入れ替えから外す' }))
+    fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
+    const op = useEditStore.getState().draft?.kind === 'op' ? useEditStore.getState().draft : null
+    expect(op?.kind === 'op' && op.record.op.type === 'applyPolicy' && op.record.op.reason).toEqual({ category: null, note: '道路工事による迂回' })
+  })
+
+  it('区分を選ぶと文の下に補足の欄が出て、区分と補足が理由になる。「選ばない」に戻すと理由は空になる', () => {
+    render(<PolicyStep />)
+    chooseOption('減便の理由', '運転士の一時的な欠員')
+    expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('運転士の一時的な欠員')
+    expect(sentenceText()).toContain('運転士の一時的な欠員のため、')
+    const note = screen.getByLabelText('補足')
+    // 補足は文の外(文の下)
+    expect(sentence().contains(note)).toBe(false)
+    fireEvent.change(note, { target: { value: '欠員 2 名' } })
+    fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
+    let draft = useEditStore.getState().draft
+    expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({
+      category: 'temporaryShortage',
+      note: '欠員 2 名',
+    })
+    act(() => useEditStore.getState().discard())
+    // 「選ばない」に戻すと、書いた補足が残っていても理由は空(区分もメモも無い)
+    chooseOption('減便の理由', '選ばない')
+    expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('理由')
+    fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
+    draft = useEditStore.getState().draft
+    expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({ category: null, note: '' })
+  })
+
+  it('日付の穴を押すと期間のカレンダーを Popover で開き、選んだ日が穴に入る。Escape で閉じて焦点は穴に戻る', async () => {
+    render(<PolicyStep />)
+    expect(screen.queryByRole('group', { name: '減便の期間' })).toBeNull()
+    const startHole = hole('開始日')
+    expect(startHole.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(startHole.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(startHole)
+    expect(startHole.getAttribute('aria-expanded')).toBe('true')
+    const calendar = screen.getByRole('group', { name: '減便の期間' })
+    // 最初の焦点はカレンダーの日(選んでいる開始日)
+    expect(document.activeElement).toBe(dayIn(calendar, '20261020'))
+    // 当面の間を外し、終了日を選ぶ
+    fireEvent.click(within(calendar).getByLabelText('当面の間(終わりを決めない)'))
+    fireEvent.click(dayIn(calendar, '20261110')!)
+    expect(hole('終了日').getAttribute('aria-label')).toBe('終了日:11月10日(火)')
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    expect(screen.queryByRole('group', { name: '減便の期間' })).toBeNull()
+    // 焦点は Radix が閉じたあとに(次の処理で)押した穴に戻す
+    await waitFor(() => expect(document.activeElement).toBe(hole('開始日')))
+    expect(sentenceText()).toContain('10月20日(火)から11月10日(火)までの間、')
+  })
+
+  it('終了日の穴から開くと、終了日を押すよう案内し、開始日より後の日を押すと終了日だけを変える。「閉じる」で閉じる', async () => {
+    render(<PolicyStep />)
+    fireEvent.click(indefiniteBox())
+    pickDate('20261110')
+    fireEvent.click(screen.getByRole('button', { name: '閉じる' }))
+    expect(screen.queryByRole('group', { name: '減便の期間' })).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(hole('開始日')))
+
+    const calendar = periodCalendar('終了日')
+    expect(calendar.textContent).toContain('カレンダーで終了日を押してください。')
+    // 期間が決まったあとでも、開始日から選び直さず終了日だけを変える
+    fireEvent.click(dayIn(calendar, '20261120')!)
+    expect(periodSummary()).toBe('期間:2026年10月20日(火)〜11月20日(金)(32日間)')
+    fireEvent.click(within(calendar).getByRole('button', { name: '閉じる' }))
+    await waitFor(() => expect(document.activeElement).toBe(hole('終了日')))
+    expect(hole('開始日').getAttribute('aria-label')).toBe('開始日:10月20日(火)')
+    expect(hole('終了日').getAttribute('aria-label')).toBe('終了日:11月20日(金)')
+  })
+
+  it('「詳しい設定」は畳んで出し、開くと service の選び直しと系統の除外がある。summary に今の service と外す系統の数を出す', () => {
+    render(<PolicyStep />)
+    const d = details()
+    expect(d.open).toBe(false)
+    const summary = d.querySelector('summary')!
+    expect(summary.textContent).toBe('詳しい設定(service:平日 WK を土曜 SA に、除外する系統:なし)')
+    fireEvent.click(within(d).getByRole('checkbox', { name: '3(R3)を入れ替えから外す' }))
+    expect(summary.textContent).toBe('詳しい設定(service:平日 WK を土曜 SA に、除外する系統:1 系統)')
+    expect(d.contains(screen.getByLabelText('入れ替え元のダイヤ(平日)'))).toBe(true)
+    expect(d.contains(screen.getByLabelText('入れ替えに使うダイヤ(土曜)'))).toBe(true)
+    d.open = true
+    fireEvent(d, new Event('toggle'))
+    expect(details().open).toBe(true)
+    // 推定に問題がなければ、確認の結果に service の案内は出さない
+    expect(checks().textContent).not.toContain('詳しい設定で service を選んでください')
+  })
+
+  it('service を推定できないときは、確認の結果に案内を出し、詳しい設定を開いておく。閉じても「詳しい設定を開く」で開ける', () => {
+    // 平日の service の曜日の列を全部 0 にして、平日のダイヤを推定できないようにする
+    const feed = smallFeed()
+    const wk = feed.tables.get('calendar')!.rows.find((r) => r.service_id === 'WK')!
+    for (const d of ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']) wk[d] = '0'
+    act(() => useEditStore.getState().setBase({ feed, zip: new ArrayBuffer(0), label: 'test.zip', sample: null }))
+    render(<PolicyStep />)
+    expect(checks().textContent).toContain('入れ替える service を推定できませんでした。詳しい設定で service を選んでください。')
+    expect(details().open).toBe(true)
+    expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', true)
+    // 利用者が閉じたら、案内のボタンで開ける
+    details().open = false
+    fireEvent(details(), new Event('toggle'))
+    expect(details().open).toBe(false)
+    fireEvent.click(within(checks()).getByRole('button', { name: '詳しい設定を開く' }))
+    expect(details().open).toBe(true)
+    expect(within(checks()).queryByRole('button', { name: '詳しい設定を開く' })).toBeNull()
+  })
+
+  it('承認した方針の理由が区分なし・メモありなら、「その他」とメモを出す', () => {
+    act(() => {
+      const { addBackTripIds: _a, ...settings } = basePlan()
+      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: null, note: '道路工事' } }, 'user')
+      useEditStore.getState().commit()
+    })
+    render(<PolicyStep />)
+    expect(screen.getByRole('region', { name: '承認した減便の方針' }).textContent).toContain('理由:その他(道路工事)')
+  })
+
+  it('AI の方針の下書きが別の場所で承認されて履歴が変わったら、AI の値は使わない(すべて戻すと既定の文に戻る)', () => {
+    act(() => {
+      const { addBackTripIds: _a, ...settings } = basePlan({ period: { start: '20261109', end: '20261127' } })
+      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: null, note: '道路工事' } }, 'claude')
+    })
+    render(<PolicyStep />)
+    act(() => {
+      useEditStore.getState().commit()
+    })
+    expect(useEditStore.getState().history).toHaveLength(1)
+    act(() => useEditStore.getState().undoAll())
+    expect(useEditStore.getState().history).toEqual([])
+    expect(sentenceText()).toBe('理由のため、10月20日(火)から当面の間、平日を土曜ダイヤに変更する。')
+  })
+
+  it('AI の方針の下書きの値(理由・期間・種類・除外)は文の穴に入り、「やめる」で戻ると AI の値のまま直せる', () => {
+    act(() => {
+      const { addBackTripIds: _a, ...settings } = basePlan({
+        kind: 'weekdayToSundayHoliday',
+        replacementService: 'SU',
+        period: { start: '20261109', end: '20261127' },
+        excludedRoutes: ['R3'],
+      })
+      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: null, note: '道路工事' } }, 'claude')
+    })
+    render(<PolicyStep />)
+    expect(screen.getByRole('region', { name: '対象便の確認' })).toBeTruthy()
+    fireEvent.click(within(screen.getByRole('region', { name: '対象便の確認' })).getByRole('button', { name: 'やめる' }))
+    expect(useEditStore.getState().draft).toBeNull()
+    // 区分の無いメモは「その他」と、その文
+    expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('その他')
+    expect(within(sentence()).getByRole('textbox', { name: '減便の理由(その他)' })).toHaveProperty('value', '道路工事')
+    expect(hole('開始日').getAttribute('aria-label')).toBe('開始日:11月9日(月)')
+    expect(hole('終了日').getAttribute('aria-label')).toBe('終了日:11月27日(金)')
+    expect(within(sentence()).getByRole('combobox', { name: '変更後のダイヤ' }).textContent).toBe('日祝')
+    expect(sentenceText()).toBe('その他のため、11月9日(月)から11月27日(金)までの間、平日を日祝ダイヤに変更する。')
+    expect(details().querySelector('summary')!.textContent).toBe('詳しい設定(service:平日 WK を日祝 SU に、除外する系統:1 系統)')
+    expect(screen.getByRole('checkbox', { name: '3(R3)を入れ替えから外す' })).toHaveProperty('checked', true)
+  })
+
+  it('「その他」の文と区分の補足は別に持ち、理由を切り替えても片方の文をもう片方に持ち越さない', () => {
+    render(<PolicyStep />)
+    chooseOption('減便の理由', 'その他')
+    fireEvent.change(within(sentence()).getByRole('textbox', { name: '減便の理由(その他)' }), { target: { value: '道路工事による迂回' } })
+    // その他 → 区分:補足の欄は空
+    chooseOption('減便の理由', '需要の減少')
+    expect(screen.getByLabelText('補足')).toHaveProperty('value', '')
+    fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
+    let draft = useEditStore.getState().draft
+    expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({ category: 'demandDecline', note: '' })
+    act(() => useEditStore.getState().discard())
+    // 区分の補足 → その他:その他の欄に補足の文を入れない(前に書いたその他の文に戻る)
+    fireEvent.change(screen.getByLabelText('補足'), { target: { value: '利用者 3 割減' } })
+    chooseOption('減便の理由', 'その他')
+    expect(within(sentence()).getByRole('textbox', { name: '減便の理由(その他)' })).toHaveProperty('value', '道路工事による迂回')
+    fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
+    draft = useEditStore.getState().draft
+    expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({ category: null, note: '道路工事による迂回' })
+  })
+
+  it('「その他」を選んで文が空なら、理由を記録しないと確認の結果に出す', () => {
+    render(<PolicyStep />)
+    chooseOption('減便の理由', 'その他')
+    expect(checks().textContent).toContain('その他の理由が空のため、理由は記録しません。')
+    fireEvent.change(within(sentence()).getByRole('textbox', { name: '減便の理由(その他)' }), { target: { value: '道路工事' } })
+    expect(checks().textContent).not.toContain('その他の理由が空のため')
+  })
+
+  it('期間がそろわない間は、確認の結果に足りないものを出し、詳しい設定の summary は「期間を選ぶと推定します」と出す', () => {
+    render(<PolicyStep />)
+    expect(checks().textContent).not.toContain('当面の間にしてください')
+    fireEvent.click(indefiniteBox())
+    expect(checks().textContent).toContain('終了日を選ぶか、当面の間にしてください。')
+    expect(details().querySelector('summary')!.textContent).toBe('詳しい設定(service:期間を選ぶと推定します、除外する系統:なし)')
+    expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', true)
+    pickDate('20261113')
+    expect(checks().textContent).not.toContain('当面の間にしてください')
+    expect(details().querySelector('summary')!.textContent).toBe('詳しい設定(service:平日 WK を土曜 SA に、除外する系統:なし)')
+  })
+
+  it('入れ替えに使うダイヤの便がない系統は、確認の結果に数を出し、「詳しい設定を開く」で系統の除外の表まで開く。除外すると消える', () => {
+    render(<PolicyStep />)
+    // R3 は土曜の便がない
+    expect(checks().textContent).toContain('土曜の便がない系統が 1 系統あり、このままでは全曜日で便がなくなります。詳しい設定で入れ替えから除外できます。')
+    expect(details().open).toBe(false)
+    const routes = screen.getByRole('checkbox', { name: '3(R3)を入れ替えから外す' }).closest('details') as HTMLDetailsElement
+    expect(routes).not.toBe(details())
+    expect(routes.open).toBe(false)
+    fireEvent.click(within(checks()).getByRole('button', { name: '詳しい設定を開く' }))
+    expect(details().open).toBe(true)
+    expect(routes.open).toBe(true)
+    expect(within(checks()).queryByRole('button', { name: '詳しい設定を開く' })).toBeNull()
+    fireEvent.click(screen.getByRole('checkbox', { name: '3(R3)を入れ替えから外す' }))
+    expect(checks().textContent).not.toContain('土曜の便がない系統が')
+  })
+
+  it('service を選び直したあとに期間を変えて推定が変わったら、確認の結果に案内を出し、閉じていた詳しい設定をまた開く', () => {
+    // 平日のダイヤを 11/15 までの WK と 11/16 からの WK2 に分けたフィード。両方が走る期間では平日を推定できない
+    const feed0 = smallFeed()
+    const calendar = feed0.tables.get('calendar')!.rows.map((r) => (r.service_id === 'WK' ? { ...r, end_date: '20261115' } : r))
+    calendar.push({ ...calendar.find((r) => r.service_id === 'WK')!, service_id: 'WK2', start_date: '20261116', end_date: '20261130' })
+    const trips = [...feed0.tables.get('trips')!.rows, { route_id: 'R1', service_id: 'WK2', trip_id: 'R1_0700_WK2', trip_headsign: '市役所', block_id: '' }]
+    const stopTimes = [
+      ...feed0.tables.get('stop_times')!.rows,
+      ...feed0.tables
+        .get('stop_times')!
+        .rows.filter((r) => r.trip_id === 'R1_0700_WK')
+        .map((r) => ({ ...r, trip_id: 'R1_0700_WK2' })),
+    ]
+    const feed = withRows(withRows(withRows(feed0, 'calendar', calendar), 'trips', trips), 'stop_times', stopTimes)
+    act(() => useEditStore.getState().setBase({ feed, zip: new ArrayBuffer(0), label: 'test.zip', sample: null }))
+    render(<PolicyStep />)
+    // 10/20 から当面の間では WK と WK2 の両方が走り、推定できない(詳しい設定は開いている)
+    expect(checks().textContent).toContain('入れ替える service を推定できませんでした。')
+    expect(details().open).toBe(true)
+    // 平日の service を WK に選び直すと、案内は消える。利用者が詳しい設定を閉じる
+    fireEvent.change(screen.getByLabelText('入れ替え元のダイヤ(平日)'), { target: { value: 'WK' } })
+    expect(checks().textContent).not.toContain('詳しい設定で service を選んでください')
+    details().open = false
+    fireEvent(details(), new Event('toggle'))
+    expect(details().open).toBe(false)
+    // 開始日を 11/16 にすると推定は WK2 になり、選んだ WK と違う
+    pickDate('20261116')
+    fireEvent.click(screen.getByRole('button', { name: '閉じる' }))
+    expect(checks().textContent).toContain('入れ替える service の推定を確かめてください。詳しい設定で service を選んでください。')
+    expect(details().open).toBe(true)
+    expect(details().textContent).toContain('期間を変えたため、推定は WK2 になりました。')
+    // 閉じても「詳しい設定を開く」で開ける
+    details().open = false
+    fireEvent(details(), new Event('toggle'))
+    fireEvent.click(within(checks()).getByRole('button', { name: '詳しい設定を開く' }))
+    expect(details().open).toBe(true)
+  })
+
+  it('推定と違う service を使った承認済みの方針で「減便の方針を変える」を押しても、推定が変わったとは扱わない(詳しい設定は畳んだまま)', () => {
+    act(() => {
+      const { addBackTripIds: _a, ...settings } = basePlan({ replacementService: 'SU' })
+      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: null, note: '' } }, 'user')
+      useEditStore.getState().commit()
+    })
+    render(<PolicyStep />)
+    fireEvent.click(screen.getByRole('button', { name: '減便の方針を変える' }))
+    expect(details().querySelector('summary')!.textContent).toBe('詳しい設定(service:平日 WK を土曜 SU に、除外する系統:なし)')
+    expect(details().open).toBe(false)
+    expect(checks().textContent).not.toContain('詳しい設定で service を選んでください')
+    expect(details().textContent).not.toContain('期間を変えたため')
+  })
+
+  it('「減便の方針を変える」の途中で AI の方針の下書きが出たら、「やめる」で戻ると AI の値が文の穴に入っている', () => {
+    act(() => {
+      useEditStore.getState().propose(policy(), 'user')
+      useEditStore.getState().commit()
+    })
+    render(<PolicyStep />)
+    fireEvent.click(screen.getByRole('button', { name: '減便の方針を変える' }))
+    act(() => {
+      const { addBackTripIds: _a, ...settings } = basePlan({ period: { start: '20261109', end: '20261127' } })
+      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: 'chronicShortage', note: '退職 2 名' } }, 'claude')
+    })
+    fireEvent.click(within(screen.getByRole('region', { name: '対象便の確認' })).getByRole('button', { name: 'やめる' }))
+    // 区分と補足の両方を持つ理由は、区分が穴に、補足が文の下の欄に入る
+    expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('運転士の慢性的な不足')
+    expect(screen.getByLabelText('補足')).toHaveProperty('value', '退職 2 名')
+    expect(sentenceText()).toBe('運転士の慢性的な不足のため、11月9日(月)から11月27日(金)までの間、平日を土曜ダイヤに変更する。')
+    expect(screen.getByRole('button', { name: '変えずに戻る' })).toBeTruthy()
+  })
+
+  it('AI の2つ目の方針の下書きが出たら、文の穴を2つ目の値に入れ替える', () => {
+    const claudePolicy = (period: { start: string; end: string | null }, note: string) => {
+      const { addBackTripIds: _a, ...settings } = basePlan({ period })
+      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: null, note } }, 'claude')
+    }
+    act(() => claudePolicy({ start: '20261109', end: '20261127' }, '道路工事'))
+    render(<PolicyStep />)
+    fireEvent.click(within(screen.getByRole('region', { name: '対象便の確認' })).getByRole('button', { name: 'やめる' }))
+    expect(sentenceText()).toBe('その他のため、11月9日(月)から11月27日(金)までの間、平日を土曜ダイヤに変更する。')
+    act(() => claudePolicy({ start: '20261116', end: null }, '冬期の除雪'))
+    fireEvent.click(within(screen.getByRole('region', { name: '対象便の確認' })).getByRole('button', { name: 'やめる' }))
+    expect(within(sentence()).getByRole('textbox', { name: '減便の理由(その他)' })).toHaveProperty('value', '冬期の除雪')
+    expect(sentenceText()).toBe('その他のため、11月16日(月)から当面の間、平日を土曜ダイヤに変更する。')
   })
 
   it('祝日一覧が無ければ、祝日の確認をしていないと出し、読み込み直すボタンで読み直す', () => {
@@ -135,7 +549,7 @@ describe('PolicyStep', () => {
     // 2026-11-07(土)〜11-08(日)。平日 WK の calendar とは重なるが、月〜金の日が1日も無い。
     // 当面の間のまま開始日を押し、チェックを外して終了日を押す
     pickDate('20261107')
-    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    fireEvent.click(indefiniteBox())
     pickDate('20261108')
     expect(periodSummary()).toBe('期間:2026年11月7日(土)〜11月8日(日)(2日間)')
     const check = screen.getByRole('region', { name: '減便内容の確認' })
@@ -213,7 +627,8 @@ describe('PolicyStep', () => {
     expect(summary.textContent).toContain('承認した減便の方針:平日を土曜ダイヤに')
     fireEvent.click(within(summary).getByRole('button', { name: '減便の方針を変える' }))
     expect(periodSummary()).toBe('期間:2026年11月1日(日)から当面の間')
-    expect(screen.getByLabelText('理由のメモ')).toHaveProperty('value', '欠員 2 名')
+    expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('運転士の一時的な欠員')
+    expect(screen.getByLabelText('補足')).toHaveProperty('value', '欠員 2 名')
     fireEvent.click(screen.getByRole('button', { name: '変えずに戻る' }))
     expect(screen.getByRole('region', { name: '承認した減便の方針' })).toBeTruthy()
   })
@@ -266,7 +681,7 @@ describe('PolicyStep', () => {
     render(<PolicyStep />)
     // 既定は今日(10/20)から当面の間。チェックを外すと終了日を空にして、次に押す日を終了日にする
     expect(periodSummary()).toBe('期間:2026年10月20日(火)から当面の間')
-    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    fireEvent.click(indefiniteBox())
     expect(periodSummary()).toBe('開始日:2026年10月20日(火)。終了日をカレンダーで選んでください。')
     pickDate('20261113')
     expect(periodSummary()).toBe('期間:2026年10月20日(火)〜11月13日(金)(25日間)')
@@ -291,6 +706,7 @@ describe('PolicyStep', () => {
 
   it('減便の期間の欄は、名前を legend から取り、案内と期間の文を説明として指す。同じ名前のグループは1つだけ', () => {
     render(<PolicyStep />)
+    periodCalendar()
     const groups = screen.getAllByRole('group', { name: '減便の期間' })
     expect(groups).toHaveLength(1)
     expect(groups[0].tagName).toBe('FIELDSET')
@@ -300,7 +716,7 @@ describe('PolicyStep', () => {
     expect(summary).toBe(screen.getByTestId('period-summary'))
     expect(hint?.textContent).toContain('開始日から入力の末日までを薄い帯で示します')
     // 当面の間を外すと、決めたあとに押せば選び直すことも案内する
-    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    fireEvent.click(indefiniteBox())
     expect(hint?.textContent).toBe(
       'カレンダーで開始日、終了日の順に押してください。開始日と同じ日を押すと1日だけの期間になります。期間を決めたあとに押すと、その日から選び直します。',
     )
@@ -314,7 +730,7 @@ describe('PolicyStep', () => {
     const resetButton = screen.getByRole('button', { name: '期間を選び直す' })
     expect(resetButton).toHaveProperty('disabled', true)
     // 当面の間を外すと終了日も空にするので、押せないまま
-    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    fireEvent.click(indefiniteBox())
     expect(resetButton).toHaveProperty('disabled', true)
     // 開始日を押すと押せる
     pickDate('20261105')
@@ -366,7 +782,7 @@ describe('PolicyStep', () => {
     render(<PolicyStep />)
     const note = () => screen.queryByText(/土曜と日祝が同じ時刻表のため/)
     expect(note()).not.toBeNull()
-    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    fireEvent.click(indefiniteBox())
     // 開始日だけの間(期間がそろっていない)も、案内は出たまま
     expect(periodSummary()).toContain('終了日をカレンダーで選んでください')
     expect(note()).not.toBeNull()
@@ -398,7 +814,7 @@ describe('PolicyStep', () => {
 
   it('「期間を選び直す」で開始日・終了日を空にし、案内を出し、焦点をカレンダーの日に移す', () => {
     render(<PolicyStep />)
-    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    fireEvent.click(indefiniteBox())
     pickDate('20261110')
     expect(periodSummary()).toContain('〜11月10日(火)')
     const resetButton = screen.getByRole('button', { name: '期間を選び直す' })
@@ -430,8 +846,8 @@ describe('PolicyStep', () => {
     // カレンダーは開始日だけを示し、帯は描かない
     expect(periodSummary()).toBe('開始日:2026年11月7日(土)、終了日:2026年11月3日(火)')
     expect(periodCalendar().querySelector('[data-range-middle="true"]')).toBeNull()
-    // 理由は期間の欄の下だけに出し、「方針の確かめ」には重ねない
-    expect(screen.getByText('減便の期間', { selector: 'legend' }).closest('fieldset')!.contains(reason)).toBe(true)
+    // 理由は文の下の確認の結果だけに出し、「減便内容の確認」には重ねない
+    expect(checks().contains(reason)).toBe(true)
     expect(screen.queryByRole('region', { name: '減便内容の確認' })?.querySelector('[data-code="badPeriod"]') ?? null).toBeNull()
     expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', true)
     // 選び直すと理由が消える(押した日から選び直し、次に押した日が終了日)
@@ -474,7 +890,7 @@ describe('PolicyStep', () => {
     render(<PolicyStep />)
     fireEvent.change(screen.getByLabelText('入れ替え元のダイヤ(平日)'), { target: { value: 'WK' } })
     pickDate('20261107')
-    fireEvent.click(screen.getByLabelText('当面の間(終わりを決めない)'))
+    fireEvent.click(indefiniteBox())
     pickDate('20261108')
     const issue = screen.getByRole('region', { name: '減便内容の確認' }).querySelector('[data-code="weekdayNotActive"]')
     expect(issue?.textContent).toContain('1日も走りません')

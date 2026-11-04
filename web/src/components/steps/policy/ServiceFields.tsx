@@ -47,7 +47,7 @@ export function ServiceSelect({
         ))}
       </select>
       {!override && guess !== null && <p className="text-xs text-muted-foreground">曜日の列から推定しました。</p>}
-      {changedGuess && <p className="text-xs text-amber-900">期間を変えたため、推定は {guess} になりました。</p>}
+      {changedGuess && <p className="text-xs text-amber-900 dark:text-amber-300">期間を変えたため、推定は {guess} になりました。</p>}
     </div>
   )
 }

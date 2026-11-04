@@ -22,3 +22,22 @@ export function periodDays(start: string, end: string): number {
   const utc = (s: string) => Date.UTC(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)))
   return Math.round((utc(end) - utc(start)) / 86_400_000) + 1
 }
+
+/** 減便の文のどちらの穴(開始日・終了日)からカレンダーを開いたか */
+export type PeriodTarget = 'start' | 'end'
+
+/**
+ * 文の穴から開いたカレンダーで日を押したときの、開始日・終了日。開始日の穴から開いたときは nextPeriod と同じ。
+ * 終了日の穴から開いたときは、当面の間でなく開始日が決まっていて、押した日が開始日と同じ日か後なら、終了日だけを変える
+ * (期間が決まったあとでも、開始日から選び直さない)。それ以外は nextPeriod と同じ
+ */
+export function nextPeriodFor(
+  current: { start: string; end: string; indefinite: boolean },
+  clicked: string,
+  target: PeriodTarget,
+): { start: string; end: string } {
+  if (target === 'end' && !current.indefinite && current.start && clicked >= current.start) {
+    return { start: current.start, end: clicked }
+  }
+  return nextPeriod(current, clicked)
+}

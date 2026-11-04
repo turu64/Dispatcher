@@ -137,8 +137,9 @@ describe('編集の画面の流れ', () => {
     const policy = openStep('policy', POLICY)
     expect(within(policy).getByLabelText('入れ替え元のダイヤ(平日)')).toHaveProperty('value', 'WK')
     expect(within(policy).getByLabelText('入れ替えに使うダイヤ(土曜)')).toHaveProperty('value', 'SA')
-    // 期間は1つのカレンダーで選ぶ。選んでいる期間は、カレンダーの下の文で確かめる
-    expect(within(policy).getByTestId('period-summary').textContent).toBe('期間:2026年10月20日(火)から当面の間')
+    // 方針は1つの文の穴を埋める形。期間は文の日付の穴に出る(カレンダーは穴から Popover で開く)
+    expect(within(policy).getByRole('button', { name: '開始日:10月20日(火)' })).toBeTruthy()
+    expect(within(policy).getByRole('button', { name: '終了日:当面の間' })).toBeTruthy()
     expect(within(policy).getByText(/期間の中の祝日:/).textContent).toContain('勤労感謝の日')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
 
@@ -254,12 +255,16 @@ describe('編集の画面の流れ', () => {
     load()
     renderSteps()
     const policy = openStep('policy', POLICY)
-    // 減便の期間のカレンダー(10月・11月を並べる)で、当面の間のまま11月24日を押す
-    const calendar = within(policy).getByRole('group', { name: '減便の期間' })
+    // 文の開始日の穴から減便の期間のカレンダー(10月・11月を並べる。Popover なので手順の外に出る)を開き、当面の間のまま11月24日を押す
+    fireEvent.click(within(policy).getByRole('button', { name: '開始日:10月20日(火)' }))
+    const calendar = screen.getByRole('group', { name: '減便の期間' })
     const day24 = calendar.querySelector<HTMLButtonElement>('td[data-day="2026-11-24"] button')
     if (!day24) throw new Error('11月24日のボタンがありません')
     fireEvent.click(day24)
-    expect(within(policy).getByTestId('period-summary').textContent).toBe('期間:2026年11月24日(火)から当面の間')
+    expect(within(calendar).getByTestId('period-summary').textContent).toBe('期間:2026年11月24日(火)から当面の間')
+    fireEvent.click(within(calendar).getByRole('button', { name: '閉じる' }))
+    expect(screen.queryByRole('group', { name: '減便の期間' })).toBeNull()
+    expect(within(policy).getByRole('button', { name: '開始日:11月24日(火)' })).toBeTruthy()
     expect(within(policy).getByRole('region', { name: '減便内容の確認' }).textContent).toContain('このままでは出力できません')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
     const review = within(policy).getByRole('region', { name: '対象便の確認' })

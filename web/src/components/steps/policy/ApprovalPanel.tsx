@@ -13,7 +13,7 @@ import {
   describeRecord,
   periodText,
   POLICY_KIND_LABELS,
-  REASON_LABELS,
+  reasonCategoryLabel,
   REPLACEMENT_LABELS,
   shortDateTime,
   UNDO_NOTE,
@@ -161,7 +161,7 @@ export function PolicySummary({
         <div>
           <dt className="inline">理由:</dt>
           <dd className="inline">
-            {reason?.category ? REASON_LABELS[reason.category] : '選んでいません'}
+            {reasonCategoryLabel(reason) ?? '選んでいません'}
             {reason?.note && `(${reason.note})`}
           </dd>
         </div>

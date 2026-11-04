@@ -2,12 +2,14 @@ import { useCallback, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import HolidayCalendar from '@/components/HolidayCalendar'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { PolicyKind } from '@/gtfs/edit/ops'
 import { holidaysBetween, uncoveredRanges } from '@/gtfs/holidays'
-import { formatDateJa } from '@/lib/dates'
+import { formatDateJa, todayInJapan } from '@/lib/dates'
+import { cn } from '@/lib/utils'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
-import { nextPeriod, periodDays } from './periodRange'
+import { nextPeriodFor, periodDays, type PeriodTarget } from './periodRange'
 
 /** 入れ替えに使うダイヤの選択肢(値は方針の種類) */
 const TARGET_OPTIONS: ReadonlyArray<{ kind: PolicyKind; label: string }> = [
@@ -16,50 +18,38 @@ const TARGET_OPTIONS: ReadonlyArray<{ kind: PolicyKind; label: string }> = [
 ]
 
 /**
- * 方針の種類(平日を土曜に・平日を日祝に)。「[平日] を [土曜] ダイヤに変更する」の文の形で、2つのセレクトで選ぶ。
- * 変更するダイヤは今は平日だけ(方針の種類が平日の入れ替えだけのため)。セレクトの形は、変更後のダイヤとそろえて文として読めるようにする
+ * 方針の種類(平日を土曜に・平日を日祝に)。減便の文の「[平日] を [土曜] ダイヤに変更する。」の部分で、2つのセレクトで選ぶ。
+ * 変更するダイヤは今は平日だけ(方針の種類が平日の入れ替えだけのため)。セレクトの形は、変更後のダイヤとそろえて文として読めるようにする。
+ * 文の中に置くので、枠(fieldset)は持たない。土曜と日祝が同じ時刻表の案内は、文の下の確認の結果に出す
  */
-export function PolicyKindField({
-  kind,
-  onChange,
-  sameSatSun,
-}: {
-  kind: PolicyKind
-  onChange: (k: PolicyKind) => void
-  /** 土曜と日祝が同じ時刻表か */
-  sameSatSun: boolean
-}) {
+export function PolicyKindField({ kind, onChange }: { kind: PolicyKind; onChange: (k: PolicyKind) => void }) {
   return (
-    <fieldset className="flex flex-col gap-1.5">
-      <legend className="mb-1 text-sm font-medium">ダイヤの入れ替え方</legend>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
-        <Select value="weekday">
-          <SelectTrigger size="sm" aria-label="変更するダイヤ" className="min-w-20">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="weekday">平日</SelectItem>
-          </SelectContent>
-        </Select>
-        <span>を</span>
-        <Select value={kind} onValueChange={(v) => onChange(v as PolicyKind)}>
-          <SelectTrigger size="sm" aria-label="変更後のダイヤ" className="min-w-20">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TARGET_OPTIONS.map((o) => (
-              <SelectItem key={o.kind} value={o.kind}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span>ダイヤに変更する</span>
-      </div>
-      {sameSatSun && (
-        <p className="text-xs text-muted-foreground">この GTFS では土曜と日祝が同じ時刻表のため、どちらに変更しても同じ結果になります。</p>
-      )}
-    </fieldset>
+    <>
+      <Select value="weekday">
+        <SelectTrigger size="sm" aria-label="変更するダイヤ" className="min-w-18">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="weekday">平日</SelectItem>
+        </SelectContent>
+      </Select>
+      <span>を</span>
+      <Select value={kind} onValueChange={(v) => onChange(v as PolicyKind)}>
+        <SelectTrigger size="sm" aria-label="変更後のダイヤ" className="min-w-18">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {TARGET_OPTIONS.map((o) => (
+            <SelectItem key={o.kind} value={o.kind}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {/* 狭い欄で「ダイヤに変更する。」がまとめて次の行に送られて前の行の右が大きく空かないよう、折り返せる所で分ける */}
+      <span>ダイヤに</span>
+      <span>変更する。</span>
+    </>
   )
 }
 
@@ -70,7 +60,10 @@ export interface PeriodProblem {
   message: string
 }
 
-/** 期間の欄の下に出す確かめの code(checkPolicy が出す、期間が成り立たない誤り。入力の端にそろえる警告は「方針の確かめ」に出す) */
+/**
+ * 期間の欄の下に出す確かめの code(checkPolicy が出す、期間が成り立たない誤り)。service が決まらなくても出す。
+ * 入力の端にそろえる警告・有効期間の日数の警告は、同じ確認の結果の箱の中の「減便内容の確認」に出す
+ */
 export const PERIOD_PROBLEM_CODES: ReadonlySet<string> = new Set(['badPeriod', 'emptyValidity'])
 
 /**
@@ -122,7 +115,7 @@ function describePeriod(start: string, end: string, indefinite: boolean): string
   const from = formatDateJa(start)
   if (indefinite) return `期間:${from}から当面の間`
   if (!end) return `開始日:${from}。終了日をカレンダーで選んでください。`
-  // 終了日が開始日より前(既存の方針など)。理由は期間の欄の下(badPeriod)に出す
+  // 終了日が開始日より前(既存の方針など)。理由は文の下の確認の結果(badPeriod)に出す
   if (end < start) return `開始日:${from}、終了日:${formatDateJa(end)}`
   if (end === start) return `期間:${from}の1日間`
   // 同じ年なら終了日の年を省く
@@ -130,11 +123,34 @@ function describePeriod(start: string, end: string, indefinite: boolean): string
   return `期間:${from}〜${to}(${periodDays(start, end)}日間)`
 }
 
+/** カレンダーの上の案内。終了日の穴から開いたときは、終了日を押すよう案内する */
+function periodHint(target: PeriodTarget, start: string, indefinite: boolean): string {
+  if (indefinite) {
+    const base = 'カレンダーで開始日を押してください。開始日から入力の末日までを薄い帯で示します。'
+    return target === 'end' ? `${base}終了日を決めるときは「当面の間」を外してください。` : base
+  }
+  if (target === 'end' && start) return 'カレンダーで終了日を押してください。開始日より前の日を押すと、その日が新しい開始日になります。'
+  return 'カレンダーで開始日、終了日の順に押してください。開始日と同じ日を押すと1日だけの期間になります。期間を決めたあとに押すと、その日から選び直します。'
+}
+
+interface PeriodValue {
+  /** 入力の GTFS の有効期間 */
+  input: { start: string; end: string }
+  start: string
+  onStartChange: (v: string) => void
+  end: string
+  onEndChange: (v: string) => void
+  indefinite: boolean
+  onIndefiniteChange: (v: boolean) => void
+  holidayState: HolidayState
+}
+
 /**
- * 減便の期間(開始日・終了日・当面の間)と、出力の有効期間、期間の中の祝日。
+ * 減便の期間(開始日・終了日・当面の間)を選ぶ欄。減便の文の開始日・終了日の穴から開く Popover の中身。
  * 期間は祝日の色つきカレンダー1つで選ぶ。1回目に押した日が開始日、2回目に押した日が終了日(開始日より前の日なら新しい開始日)。
+ * 終了日の穴から開いたときは、開始日と同じ日か後を押すと終了日だけを変える(nextPeriodFor)。
  * 当面の間なら押した日が開始日になる。選べるのは入力の GTFS の有効期間の中だけ。
- * 日付は GTFS と同じ 'YYYYMMDD'(まだ決まっていなければ '')
+ * 日付は GTFS と同じ 'YYYYMMDD'(まだ決まっていなければ '')。出力の有効期間・期間の誤り・期間の中の祝日は、文の下(PeriodChecks)に出す
  */
 export function PeriodFields({
   input,
@@ -144,28 +160,31 @@ export function PeriodFields({
   onEndChange,
   indefinite,
   onIndefiniteChange,
-  validity,
-  periodProblems,
   holidayState,
-}: {
-  /** 入力の GTFS の有効期間 */
-  input: { start: string; end: string }
-  start: string
-  onStartChange: (v: string) => void
-  end: string
-  onEndChange: (v: string) => void
-  indefinite: boolean
-  onIndefiniteChange: (v: boolean) => void
-  validity: { start: string; end: string; days: number } | null
-  periodProblems: PeriodProblem[]
-  holidayState: HolidayState
+  target = 'start',
+  onClose,
+  boxRef: outerBoxRef,
+}: PeriodValue & {
+  /** どちらの穴から開いたか */
+  target?: PeriodTarget
+  /** 「閉じる」を押したとき(無ければボタンを出さない) */
+  onClose?: () => void
+  /** カレンダーの箱(開いたときに焦点を日に移すため) */
+  boxRef?: React.RefObject<HTMLElement | null>
 }) {
   const holidays = holidayState.status === 'ready' ? holidayState.list : null
-  const [boxRef, wide, boxEl] = useWideEnough(TWO_MONTHS_MIN_WIDTH_REM)
+  const [measureRef, wide, boxEl] = useWideEnough(TWO_MONTHS_MIN_WIDTH_REM)
+  const boxRef = useCallback(
+    (el: HTMLElement | null) => {
+      measureRef(el)
+      if (outerBoxRef) outerBoxRef.current = el
+    },
+    [measureRef, outerBoxRef],
+  )
   const hintId = useId()
   const summaryId = useId()
   const pick = (date: string) => {
-    const next = nextPeriod({ start, end, indefinite }, date)
+    const next = nextPeriodFor({ start, end, indefinite }, date, target)
     if (next.start !== start) onStartChange(next.start)
     if (next.end !== end) onEndChange(next.end)
   }
@@ -196,9 +215,7 @@ export function PeriodFields({
         当面の間(終わりを決めない)
       </label>
       <p id={hintId} className="text-xs text-muted-foreground">
-        {indefinite
-          ? 'カレンダーで開始日を押してください。開始日から入力の末日までを薄い帯で示します。'
-          : 'カレンダーで開始日、終了日の順に押してください。開始日と同じ日を押すと1日だけの期間になります。期間を決めたあとに押すと、その日から選び直します。'}
+        {periodHint(target, start, indefinite)}
       </p>
       <div ref={boxRef} className="w-full">
         <HolidayCalendar
@@ -213,10 +230,13 @@ export function PeriodFields({
           numberOfMonths={wide ? 2 : 1}
         />
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <p id={summaryId} data-testid="period-summary" aria-live="polite" className={complete ? 'text-sm font-medium' : 'text-sm'}>
-          {describePeriod(start, end, indefinite)}
-        </p>
+      <p id={summaryId} data-testid="period-summary" aria-live="polite" className={complete ? 'text-sm font-medium' : 'text-sm'}>
+        {describePeriod(start, end, indefinite)}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        選べる範囲は入力の GTFS の有効期間({formatDateJa(input.start)}〜{formatDateJa(input.end)})です。
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           variant="outline"
@@ -227,11 +247,105 @@ export function PeriodFields({
         >
           期間を選び直す
         </Button>
+        {onClose && (
+          <Button type="button" size="sm" onClick={onClose}>
+            閉じる
+          </Button>
+        )}
       </div>
-      <p className="text-xs text-muted-foreground">
-        選べる範囲は入力の GTFS の有効期間({formatDateJa(input.start)}〜{formatDateJa(input.end)})です。
-        {validity && <>出力の有効期間は {formatDateJa(validity.start)}〜{formatDateJa(validity.end)}({validity.days}日)になります。</>}
-      </p>
+    </fieldset>
+  )
+}
+
+/** 文の穴に出す日付。今年なら年を省く。'20261109' → '11月9日(月)' */
+function holeDate(date: string, thisYear: string): string {
+  const text = formatDateJa(date)
+  return date.slice(0, 4) === thisYear ? text.replace(/^\d+年/, '') : text
+}
+
+/** 文の中の穴(ボタン・セレクト)の見た目。まだ決まっていない穴は破線の枠と薄い文字にする */
+export const HOLE_CLASS = 'h-7 px-2 text-sm font-normal'
+export const EMPTY_HOLE_CLASS = 'border-dashed border-muted-foreground/60 text-muted-foreground'
+
+/**
+ * 減便の文の「[開始日] から [終了日] までの間、」の部分。どちらの穴を押しても、同じ期間のカレンダーを Popover で開く
+ * (開いた穴によって案内と押した日の扱いが変わる)。当面の間なら終了日の穴に「当面の間」と出し、「までの間」を出さない。
+ * Popover は Escape・欄の外の押下で閉じ、焦点は押した穴に戻る
+ */
+export function PeriodHoles(props: PeriodValue) {
+  const { start, end, indefinite } = props
+  const [open, setOpen] = useState<PeriodTarget | null>(null)
+  const [thisYear] = useState(() => todayInJapan(new Date()).slice(0, 4))
+  const boxRef = useRef<HTMLElement | null>(null)
+
+  const hole = (target: PeriodTarget) => {
+    const name = target === 'start' ? '開始日' : '終了日'
+    const value = target === 'start' ? start : end
+    const text = target === 'end' && indefinite ? '当面の間' : value ? holeDate(value, thisYear) : null
+    return (
+      <Popover open={open === target} onOpenChange={(o) => setOpen(o ? target : null)}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={text ? `${name}:${text}` : `${name}(未選択)`}
+            className={cn(HOLE_CLASS, !text && EMPTY_HOLE_CLASS)}
+          >
+            {text ?? name}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          // 画面の端に貼りつかないよう余白を取り、低い画面では高さを画面に収めて中を送る(「閉じる」が画面の外に出ないように)
+          collisionPadding={8}
+          // 2か月を並べられる幅にする(狭い画面では画面の幅に収める)。左の欄より広くてよい(地図の上に重なる)
+          className="max-h-(--radix-popover-content-available-height) w-[min(36rem,calc(100vw-2rem))] max-w-(--radix-popover-content-available-width) overflow-y-auto"
+          onOpenAutoFocus={(e) => {
+            // 最初の焦点は、当面の間のチェックではなく、カレンダーの Tab で入る日(選んでいる日など)に置く
+            const day = boxRef.current?.querySelector<HTMLButtonElement>('td[data-day] button[tabindex="0"]')
+            if (day) {
+              e.preventDefault()
+              day.focus()
+            }
+          }}
+        >
+          <PeriodFields {...props} target={target} onClose={() => setOpen(null)} boxRef={boxRef} />
+        </PopoverContent>
+      </Popover>
+    )
+  }
+
+  return (
+    <>
+      {hole('start')}
+      <span>から</span>
+      {hole('end')}
+      {/* 読点だけのときは、穴との間の空きを詰める(「当面の間 、」と離れて見えないように) */}
+      <span className={indefinite ? '-ml-1.5' : undefined}>{indefinite ? '、' : 'までの間、'}</span>
+    </>
+  )
+}
+
+/**
+ * 減便の文の下に出す、期間の確認の結果:出力の有効期間、期間の誤り(badPeriod・emptyValidity)、期間の中の祝日
+ */
+export function PeriodChecks({
+  validity,
+  periodProblems,
+  holidayState,
+}: {
+  validity: { start: string; end: string; days: number } | null
+  periodProblems: PeriodProblem[]
+  holidayState: HolidayState
+}) {
+  return (
+    <>
+      {validity && (
+        <p className="text-xs">
+          出力の有効期間は {formatDateJa(validity.start)}〜{formatDateJa(validity.end)}({validity.days}日)になります。
+        </p>
+      )}
       {periodProblems.length > 0 && (
         <div role="group" aria-label="期間の確認" className="flex flex-col gap-1">
           {periodProblems.map((p, i) => (
@@ -239,7 +353,7 @@ export function PeriodFields({
               key={`${p.code}-${i}`}
               data-code={p.code}
               data-severity={p.severity}
-              className={p.severity === 'error' ? 'text-sm text-destructive' : 'text-xs text-amber-900'}
+              className={p.severity === 'error' ? 'text-sm text-destructive' : 'text-xs text-amber-900 dark:text-amber-300'}
             >
               <span aria-hidden="true">{p.severity === 'error' ? '× ' : '! '}</span>
               {p.message}
@@ -248,7 +362,7 @@ export function PeriodFields({
         </div>
       )}
       <HolidaysInPeriod state={holidayState} validity={validity} />
-    </fieldset>
+    </>
   )
 }
 
@@ -279,7 +393,7 @@ function HolidaysInPeriod({ state, validity }: { state: HolidayState; validity: 
         {list.length === 0 ? 'ありません' : list.map((h) => `${formatDateJa(h.date)} ${h.name}`).join('、')}
       </p>
       {uncovered.map((r) => (
-        <p key={r.start} className="text-amber-900">
+        <p key={r.start} className="text-amber-900 dark:text-amber-300">
           <span aria-hidden="true">! </span>
           {formatDateJa(r.start)}〜{formatDateJa(r.end)} の祝日は内閣府の一覧にまだないため、確かめていません。
         </p>

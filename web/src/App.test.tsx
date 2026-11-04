@@ -113,6 +113,8 @@ describe('画面の骨組み', () => {
     const next = screen.getByRole('button', { name: /^次へ/ }) as HTMLButtonElement
     expect(next.disabled).toBe(true)
     expect(screen.getByText('GTFS を読み込むと先へ進めます')).toBeTruthy()
+    // 地図の中央に読み込みの案内を出す
+    expect(within(screen.getByRole('main', { name: '地図' })).getByText('左の欄から GTFS を読み込んでください')).toBeTruthy()
     // 最初の手順では「戻る」を出さない
     expect(screen.queryByRole('button', { name: /^戻る/ })).toBeNull()
     expect(screen.getByRole('heading', { name: '1. GTFS を読み込む' })).toBeTruthy()
@@ -136,6 +138,8 @@ describe('画面の骨組み', () => {
   it('読み込んだあとは見出しからどの手順へも移れ、見出しの番号は一覧の並びになる。次へ・戻るでも移る', () => {
     load()
     render(<App />)
+    // 読み込んだあとは、地図の中央の読み込みの案内を出さない
+    expect(screen.queryByText('左の欄から GTFS を読み込んでください')).toBeNull()
     fireEvent.click(stepButton('5. 平日便を戻す'))
     expect(useStepStore.getState().current).toBe('restore')
     expect(screen.getByRole('heading', { name: '5. 平日便を戻す' })).toBeTruthy()

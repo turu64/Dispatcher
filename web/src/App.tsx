@@ -4,6 +4,7 @@ import SplitPane from '@/components/layout/SplitPane'
 import { stepOf, STEPS } from '@/components/steps/registry'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import BaseMap from '@/map/BaseMap'
+import MapEmptyNotice from '@/map/MapEmptyNotice'
 import AboutPage, { ABOUT_HASH } from '@/pages/AboutPage'
 import { useHolidayStore } from '@/store/holidays'
 import { useStepStore } from '@/store/steps'
@@ -66,6 +67,8 @@ export default function App() {
                 <BaseMap visible={showMap && !about} />
                 {/* 手順ごとの重ね(到達圏のセル・停留所・駅と凡例など)。地図の準備ができてから重ねる */}
                 {Overlay && <Overlay />}
+                {/* GTFS を読み込む前は、地図の中央に読み込みの案内を出す */}
+                <MapEmptyNotice />
               </main>
             }
           />

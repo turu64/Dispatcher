@@ -99,10 +99,11 @@ describe('画面の骨組み', () => {
   it('手順は 読み込み → 前提情報 → 減便の方針 → 影響(到達圏。日付と時間帯を含む)→ 足し戻し → 出力 の順に並ぶ', () => {
     render(<App />)
     const nav = screen.getByRole('navigation', { name: '手順の切り替え' })
-    const names = within(nav)
-      .getAllByRole('button')
-      .map((b) => b.textContent)
-    expect(names).toEqual(['11. 読み込み', '22. 前提情報', '33. 減便の方針', '44. 影響(到達圏)', '55. 平日便を戻す', '66. 出力'])
+    // ボタンの名前(読み上げ)で並びを見る。見える名前には折り返しの区切り(<wbr>)が入るため、textContent では見ない
+    const names = ['1. 読み込み', '2. 前提情報', '3. 減便の方針', '4. 影響(到達圏)', '5. 平日便を戻す', '6. 出力']
+    const buttons = within(nav).getAllByRole('button')
+    expect(buttons).toHaveLength(names.length)
+    names.forEach((n, i) => expect(buttons[i]).toBe(stepButton(n)))
     expect(useStepStore.getState().order).toEqual(STEP_KEYS)
   })
 

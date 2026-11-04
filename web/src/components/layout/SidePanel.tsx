@@ -167,7 +167,7 @@ export default function SidePanel({ wide, chatStore = useChatStore }: { wide: bo
         </div>
 
         <TabsContent value="edit" forceMount hidden={tab !== 'edit'} className="flex min-h-0 flex-1 flex-col" {...panelProps}>
-          <Stepper />
+          <Stepper wide={wide} />
           <div
             ref={scrollRef}
             className="min-h-0 flex-1 overflow-y-auto"

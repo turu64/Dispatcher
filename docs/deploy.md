@@ -228,7 +228,7 @@ ${EDITOR:-nano} .env
 - 送り先:TypeSafe AI Jev(TypeSafe AI)。Vercel AI Gateway(`ai-gateway.vercel.sh`)を経由します。キーは Vercel にだけ送ります
 - 送る時:GTFS を読み込んだあと、ブラウザが自動で1回送ります。service_id の分け方が単純な GTFS(道北バスなど)では送りません。利用者は、手順「読み込み」のファイルを選ぶ欄の上のスイッチで止められ、送っている間も中断でき、得た答えを捨てられます
 - 送る中身:service ごとの集計(service_id、運行日の数と走る日の割合、便数、系統名と系統ごとの便数、行き先、始発と終着の時刻、運行日が 10 日以下の service の日付、事業者名、有効期間)。GTFS のファイル・停留所の位置・時刻表そのものは送りません
-- Vercel は、TypeSafe AI が答えないときに別の会社(試しの応答では DigitalOcean)に回すことがあります(2026-11-04 時点。転送先を TypeSafe AI だけにする指定は確かめていません。`docs/design-service-groups.md` §6.2)。データの保持は Vercel と TypeSafe AI の規約によります
+- TypeSafe AI に限って送ります。中継は Vercel に転送先を TypeSafe AI だけに限る指定(`providerOptions.gateway.only`)を送り、ほかの会社(指定なしの試しの応答では DigitalOcean が予備にあった)には回させません。TypeSafe AI が答えないときは、確かめが失敗になります(2026-11-04 に確かめた。`docs/design-service-groups.md` §6.2-1)。データの保持は Vercel と TypeSafe AI の規約によります
 
 次の変数は書きません。
 
@@ -517,7 +517,7 @@ docker compose logs web | tail                  # web の nginx のエラー(起
 | `agent エラー where=… type=… status=…` | Anthropic API の呼び出しの失敗 |
 | `agent session.error type=…` | セッションの中のエラー |
 | `research ツールの失敗` | 調査の保存などの失敗 |
-| `jev 判定しました targets=… answered=… failures=… statuses=… providers=…` | Jev に問うた(1行が1回の読み込み)。`failures` は失敗の種類ごとの数、`providers` は転送先(`typesafe-ai` 以外が出たら Vercel が別の会社に回した。試しの応答では予備の転送先に DigitalOcean があった) |
+| `jev 判定しました targets=… answered=… failures=… statuses=… providers=…` | Jev に問うた(1行が1回の読み込み)。`failures` は失敗の種類ごとの数、`providers` は転送先(転送先を TypeSafe AI に限っているので `typesafe-ai` だけのはず。ほかが出たら Vercel が指定を守らなかったので、`docs/design-service-groups.md` §6.2-1 を見直す) |
 | `jev 要求を断りました status=… reason=…` | Jev の中継が断った(`noKey`・`badUrl`・`jev_day_total`・`rate_jev_ip_hour`・`rate_jev_ip_day`・`shape`・`reference`・`body_size` など) |
 
 ```bash

@@ -237,7 +237,7 @@ export function shortDates(dates: readonly string[], limit = 5): string {
  * - 組ごとの noWeekdayTrips・noReplacementTrips(主の組に入れ替えに使う service が無いときは見ない)
  * - 主の組の平日の service:weekdayCalendarOutside・weekdayNotActive(今のまま)
  * - 入れ替えに使う service の期間は、主の組と主でない組で同じ規則(checkPairPeriods):pairWeekdayNotActive・
- *   replacementNotActiveAdded・replacementPartial(warning)。主の組の入れ替えに使う service がすべて走らないときだけ
+ *   replacementNotActiveSkipped・replacementPartial(warning)。主の組の入れ替えに使う service がすべて走らないときだけ
  *   replacementNotActive(error)
  * - tripReferences・excludedRouteWithoutWeekdayTrips は、すべての組の平日の service の便で見る
  */
@@ -406,6 +406,36 @@ export function checkPolicy(base: GtfsFeed, settings: PolicySettings): PolicyPro
   return problems
 }
 
+/**
+ * 期間に走らないため加えない入れ替えに使う service か(docs/design-service-groups.md §4.2。2026-11-04 に利用者が決定)。
+ * 便があり、新しい有効期間(validity)の中で1日も走らない(calendar と calendar_dates で判定)。checkPolicy と applyForm2 と
+ * 画面(skippedReplacements)で同じ規則を使う
+ */
+export function isReplacementNotActive(
+  serviceId: string,
+  index: ReadonlyMap<string, ServiceDays>,
+  validity: { start: string; end: string },
+  tripCount: (sid: string) => number,
+): boolean {
+  return serviceId !== '' && tripCount(serviceId) > 0 && !runsAnyDay(index.get(serviceId), validity.start, validity.end)
+}
+
+/**
+ * 組の表のうち、期間に走らないため加えない入れ替えに使う service(isReplacementNotActive)。pairs が無ければ空
+ * (1組の処理では replacementNotActive のエラーで止まるため)
+ */
+export function skippedReplacementsOf(
+  settings: Pick<PolicySettings, 'weekdayService' | 'replacementService' | 'pairs'>,
+  index: ReadonlyMap<string, ServiceDays>,
+  validity: { start: string; end: string },
+  tripCount: (sid: string) => number,
+): Set<string> {
+  const out = new Set<string>()
+  if (settings.pairs === undefined) return out
+  for (const p of pairsOf(settings)) for (const r of p.replacements) if (isReplacementNotActive(r, index, validity, tripCount)) out.add(r)
+  return out
+}
+
 /** 年末年始(12/29〜1/3)。入力の calendar_dates の扱いをそのまま残すので、入れ替えに使う service が走らなくても数えない(§4.7) */
 function isYearEnd(date: string): boolean {
   const md = date.slice(4)
@@ -416,9 +446,11 @@ function isYearEnd(date: string): boolean {
  * pairs があるときの、組ごとの期間の確かめ(docs/design-service-groups.md §4.2)。主の組と主でない組で同じ規則を使う。
  * - 主でない組の平日の service が新しい有効期間に走らない:pairWeekdayNotActive(warning。組ごと出力から除く)。
  *   主の組は呼ぶ側の weekdayNotActive(error)が止める
- * - 入れ替えに使う service が新しい有効期間に1日も走らない:replacementNotActiveAdded(warning。便は平日の service の走る日に加える。S4)。
- *   ただし主の組で、便のある入れ替えに使う service がすべて走らないなら replacementNotActive(error。走らない時刻表だけで
- *   主の平日の便を入れ替えないため)
+ * - 入れ替えに使う service が新しい有効期間に1日も走らない:replacementNotActiveSkipped(warning。その service の便は加えない。
+ *   季節ダイヤや迂回の版の便が平日に混ざらないようにするため。2026-11-04 に利用者が決定)。組の入れ替えに使う service が
+ *   すべて走らないなら、その組の平日の便は代わりの便なしでなくなることを文に添える。
+ *   ただし主の組で、便のある入れ替えに使う service がすべて走らないなら replacementNotActive(error。主の平日の便を
+ *   代わりの便なしでなくさないため)
  * - 入れ替えに使う service が、新しい有効期間の X の日(土曜に:土曜、日祝に:日曜。祝日一覧は受け取らないので数えない。
  *   年末年始 12/29〜1/3 は除く)のうち走らない日がある:replacementPartial(warning。組ごとに1つ、service ごとの日数つき)
  */
@@ -457,7 +489,7 @@ function checkPairPeriods(
       return
     }
     const withTrips = pair.replacements.filter((r) => r !== '' && tripCount(r) > 0)
-    const inactive = withTrips.filter((r) => !runsAnyDay(index.get(r), validity.start, validity.end))
+    const inactive = withTrips.filter((r) => isReplacementNotActive(r, index, validity, tripCount))
     if (i === 0 && inactive.length > 0 && inactive.length === withTrips.length) {
       error(
         'replacementNotActive',
@@ -465,10 +497,13 @@ function checkPairPeriods(
       )
       return
     }
+    const allInactive = inactive.length > 0 && inactive.length === withTrips.length
     for (const r of inactive) {
       warning(
-        'replacementNotActiveAdded',
-        `入れ替えに使う service(${r})は新しい有効期間(${validityText})の中で1日も走りませんが、その便を ${w} の走る日(${shortDates(wDays)})に加えます。`,
+        'replacementNotActiveSkipped',
+        `入れ替えに使う service(${r})は新しい有効期間(${validityText})の中で1日も走らないため、その便を ${w} に加えません(季節ダイヤや迂回の版の便が平日に混ざらないようにするため)。${
+          allInactive ? `${w} には加わる便がなく、${w} の便は走る日(${shortDates(wDays)})に代わりの便なしでなくなります。` : ''
+        }`,
       )
     }
     const missing: string[] = []

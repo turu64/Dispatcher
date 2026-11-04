@@ -271,6 +271,7 @@ const FORM2_FILES: Record<string, string> = {
   unknownExcludedRoute: 'routes.txt',
   blockIdCopied: 'trips.txt',
   orphanStopTimesDropped: 'stop_times.txt',
+  replacementNotActiveSkipped: 'trips.txt',
 }
 
 // ---- 祝日・平日・年末年始(§5.8) ----

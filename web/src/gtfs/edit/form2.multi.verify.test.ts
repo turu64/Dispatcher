@@ -26,8 +26,9 @@ import { compareStrings, stopTimesByTrip, tripSignature } from './signature'
 // GTFS の一覧は、末尾の表のテストで確かめる(制限を外したときの回帰にもなる)。
 //
 // checkEveryDay は、新しい有効期間の毎日について、出力のその日の便の署名の多重集合が
-// 「平日の組でない service の入力の便 + 走る平日の組の入れ替えに使う便(除外した系統を除く)+ 除外した系統の便 + 平日に戻した便」
-// と同じことを確かめる(組ごと除く組・季節の service・年末の扱いの誤りを、1日の照合では見落とすため)。
+// 「平日の組でない service の入力の便 + 走る平日の組の入れ替えに使う便(除外した系統を除き、新しい有効期間に1日も走らない
+// 入れ替えに使う service の便も除く)+ 除外した系統の便 + 平日に戻した便」と同じことを確かめる(組ごと除く組・季節の service・
+// 年末の扱いの誤りを、1日の照合では見落とすため)。
 
 const GENERATED_AT = '202611041200'
 const KYOTO = 'Kyoto_City_Bus_GTFS-20260930.zip'
@@ -112,6 +113,11 @@ function checkEveryDay(base: GtfsFeed, result: Form2Result): string[] {
     base,
     (t) => pairOf.has(trimmed(t.service_id)) && (excluded.has(trimmed(t.route_id)) || accepted.has(trimmed(t.trip_id))),
   )
+  // 新しい有効期間のどこかで走る service(期間に1日も走らない入れ替えに使う service の便は加えない。2026-11-04 の決定)
+  const running = new Set<string>()
+  forEachDay(result.report.validity.start, result.report.validity.end, (d) => {
+    for (const sid of activeServiceIds(base, d)) running.add(sid)
+  })
   const expectedOf = new Map<string, Counts>()
   for (const sid of all.keys()) {
     const pair = pairOf.get(sid)
@@ -120,7 +126,7 @@ function checkEveryDay(base: GtfsFeed, result: Form2Result): string[] {
       continue
     }
     const c: Counts = new Map()
-    for (const r of pair.replacements) add(c, notExcluded.get(r) ?? new Map())
+    for (const r of pair.replacements) if (running.has(r)) add(c, notExcluded.get(r) ?? new Map())
     add(c, keptOfWeekday.get(sid) ?? new Map())
     expectedOf.set(sid, c)
   }
@@ -253,22 +259,30 @@ describe.skipIf(!hasData(KYOTO))('京都市営バス:形2の複数 service', () 
     expect(checkEveryDay(feed, result)).toEqual([])
   })
 
-  it('土曜に、期間 11/1〜:エラー 0、03001_C は replacementNotActiveAdded、11/2 に走る便が 5,377', () => {
+  it('土曜に、期間 11/1〜:エラー 0、03001_C は期間に走らないため加えない(replacementNotActiveSkipped)、11/2 に走る便が 5,063', () => {
     const settings = settingsOf(services, '20261101')
     const problems = checkPolicy(feed, settings)
     expect(problems.filter((p) => p.severity === 'error')).toEqual([])
-    const added = problems.filter((p) => p.code === 'replacementNotActiveAdded')
-    expect(added).toHaveLength(1)
-    expect(added[0].message).toContain('03001_C')
-    expect(added[0].message).toContain('01001_C')
+    expect(problems.map((p) => p.code)).not.toContain('replacementNotActiveAdded')
+    const skipped = problems.filter((p) => p.code === 'replacementNotActiveSkipped')
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].message).toContain('03001_C')
+    expect(skipped[0].message).toContain('01001_C に加えません')
+    expect(skipped[0].message).toContain('代わりの便なしでなくなります')
     const result = apply(feed, { ...settings, addBackTripIds: [] })
     expect(errorsOf(feed, result, holidays)).toEqual([])
     expect(result.report.tripIds.collisions).toEqual([])
-    expect(tripsOn(result.feed, '20261102')).toHaveLength(5377)
-    // 03001_C の便は 01001_C の便として加わる(03001_C 自身は期間に走らないので除かれる)
+    // 加えていたときの 5,377 便から、03001_C の便(10/31 だけ走る迂回の版。314 便)を引いた数
+    const cTrips = (feed.tables.get('trips')?.rows ?? []).filter((t) => trimmed(t.service_id) === '03001_C').length
+    expect(cTrips).toBe(314)
+    expect(tripsOn(result.feed, '20261102')).toHaveLength(5377 - cTrips)
+    // 01001_C の組は残る(11/2 に走る)が、加わる便は無く、01001_C の便は代わりの便なしでなくなる
     const pairC = result.report.pairs?.find((p) => p.weekday === '01001_C')
     expect(pairC?.dropped).toBe(false)
-    expect(pairC?.replacements[0].added).toBeGreaterThan(0)
+    expect(pairC?.replacements).toEqual([expect.objectContaining({ serviceId: '03001_C', added: 0, notActive: true })])
+    expect(pairC?.removed).toBe(310)
+    expect(result.report.warnings.find((w) => w.code === 'replacementNotActiveSkipped')?.message).toContain('(03001_C:314 便 → 01001_C)')
+    expect(tripsOn(result.feed, '20261102').filter((t) => trimmed(t.service_id) === '01001_C')).toEqual([])
     expect(activeWeekdayServicesOf(result).has('01001_C')).toBe(true)
     expect(checkEveryDay(feed, result)).toEqual([])
   })
@@ -331,15 +345,30 @@ describe.skipIf(!hasData(CHUO))('北海道中央バス:形2の複数 service', (
     expect(partial[0].message).not.toContain('S000002')
   })
 
-  it('土曜に、期間 10/5〜10/31:冬ダイヤの S000041・S000042 は止めずに replacementNotActiveAdded(主の組でも主でない組と同じ扱い)', () => {
+  it('土曜に、期間 10/5〜10/31:冬ダイヤの S000041・S000042 は止めずに、期間に走らないため加えない(主の組でも主でない組と同じ扱い)', () => {
     const services = servicesFor(feed, holidays, 'weekdayToSaturday', ['S000039', 'S000044'])
     const settings: PolicySettings = { ...settingsOf(services, '20261005'), period: { start: '20261005', end: '20261031' } }
-    const problems = checkPolicy(withoutTranslations(feed), settings)
+    const base = withoutTranslations(feed)
+    const problems = checkPolicy(base, settings)
     expect(problems.filter((p) => p.severity === 'error')).toEqual([])
-    const added = problems.filter((p) => p.code === 'replacementNotActiveAdded').map((p) => p.message)
-    expect(added).toHaveLength(2)
-    expect(added.join()).toContain('S000041')
-    expect(added.join()).toContain('S000042')
+    expect(problems.map((p) => p.code)).not.toContain('replacementNotActiveAdded')
+    const skipped = problems.filter((p) => p.code === 'replacementNotActiveSkipped').map((p) => p.message)
+    expect(skipped).toHaveLength(2)
+    expect(skipped.join()).toContain('S000041')
+    expect(skipped.join()).toContain('S000042')
+    // 主の組にはほかの入れ替えに使う service の便が加わるので、代わりの便なしでなくなるとは書かない
+    expect(skipped.join()).not.toContain('代わりの便なし')
+    const result = apply(base, { ...settings, addBackTripIds: [] })
+    expect(errorsOf(base, result, holidays)).toEqual([])
+    const main = result.report.pairs?.[0]
+    const notActive = (main?.replacements ?? []).filter((r) => r.notActive)
+    expect(notActive.map((r) => r.serviceId).sort(compareStrings)).toEqual(['S000041', 'S000042'])
+    expect(notActive.every((r) => r.added === 0)).toBe(true)
+    // 冬ダイヤの便は 10 月の平日に加わらない(加わる便の元に S000041・S000042 の便が無い)
+    const serviceOf = new Map((base.tables.get('trips')?.rows ?? []).map((t) => [trimmed(t.trip_id), trimmed(t.service_id)]))
+    const fromWinter = result.report.tripIds.derived.filter((d) => ['S000041', 'S000042'].includes(serviceOf.get(d.from) ?? ''))
+    expect(fromWinter).toEqual([])
+    expect(checkEveryDay(base, result)).toEqual([])
   })
 
   it('日祝に(S000040 を残す):11/11 に走る便が 3,636', () => {
@@ -395,7 +424,7 @@ describe.skipIf(!hasData(DOHOKU))('道北バス:1組の pairs は pairs 無し�
     expect(alreadyKept).toEqual([])
     expect(notActive).toEqual([])
     expect(pairs).toEqual([
-      { weekday: '01', dropped: false, removed: a.report.tripIds.removed.length, replacements: [{ serviceId: '03', rule: 'replace-service-part', servicePartIndex: 3, added: a.report.tripIds.derived.length }] },
+      { weekday: '01', dropped: false, removed: a.report.tripIds.removed.length, replacements: [{ serviceId: '03', rule: 'replace-service-part', servicePartIndex: 3, added: a.report.tripIds.derived.length, notActive: false }] },
     ])
   })
 })

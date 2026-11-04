@@ -6,6 +6,7 @@ import {
   keptServicesOf,
   pairsOf,
   shortDates,
+  skippedReplacementsOf,
   weekdayServicesOf,
   type Form2Plan,
   type PolicySettings,
@@ -113,7 +114,11 @@ export interface Form2PairReport {
   dropped: boolean
   /** なくなる平日の便の数 */
   removed: number
-  replacements: { serviceId: string; rule: TripIdRule; servicePartIndex: number | null; added: number }[]
+  /**
+   * notActive:新しい有効期間に1日も走らないため、この service の便は加えない(added は 0。
+   * checkPolicy の replacementNotActiveSkipped。2026-11-04 に利用者が決定)
+   */
+  replacements: { serviceId: string; rule: TripIdRule; servicePartIndex: number | null; added: number; notActive: boolean }[]
 }
 
 /**
@@ -276,7 +281,8 @@ function sortedIds(ids: Iterable<string>): string[] {
  * feed_info(§5.7)の規則は取り決めのとおり。
  *
  * plan に pairs があるときは、組ごとに平日の service の便をなくし、入れ替えに使う service の便を加える
- * (docs/design-service-groups.md §4.3〜§4.5)。pairs が無いときは pairsOf の1組で同じ処理を通り、出力と report は今と同じ
+ * (docs/design-service-groups.md §4.3〜§4.5)。新しい有効期間に1日も走らない入れ替えに使う service(skippedReplacementsOf)の
+ * 便は加えない(replacementNotActiveSkipped)。pairs が無いときは pairsOf の1組で同じ処理を通り、出力と report は今と同じ
  */
 export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options): Form2Outcome {
   if (!GENERATED_AT.test(opts.generatedAt)) {
@@ -333,6 +339,19 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   /** 平日の service が新しい有効期間に走らないため、組ごと除く(主の組は checkPolicy が weekdayNotActive で止める) */
   const droppedPair = (weekday: string) => droppedServiceIds.has(weekday)
 
+  // 新しい有効期間に1日も走らないため加えない入れ替えに使う service(pairs があるときだけ。checkPolicy と同じ規則)
+  let dayIndex: Map<string, ServiceDays> | null = null
+  let skipped = new Set<string>()
+  if (multi) {
+    dayIndex = indexFeedServiceDays(base)
+    const counts = new Map<string, number>()
+    for (const t of tripsTable.rows) {
+      const sid = trimmed(t.service_id)
+      counts.set(sid, (counts.get(sid) ?? 0) + 1)
+    }
+    skipped = skippedReplacementsOf(plan, dayIndex, validity, (sid) => counts.get(sid) ?? 0)
+  }
+
   const stopTimesTable = base.tables.get('stop_times')
   const stopTimeRows = stopTimesTable?.rows ?? []
   const groups = stopTimesByTrip(stopTimeRows)
@@ -363,7 +382,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
     if (!list) rowsByService.set(sid, (list = []))
     list.push(row)
     if (weekdaySet.has(sid)) weekdayRows.push(row)
-    else if (into !== undefined && !droppedPair(into) && !excluded.has(trimmed(row.route_id))) sources.push(row)
+    else if (into !== undefined && !droppedPair(into) && !skipped.has(sid) && !excluded.has(trimmed(row.route_id))) sources.push(row)
   }
   // 組ごと除く平日の service の便は、除外した系統でも出力に入らないので「残した便」に数えない
   const keptRows = weekdayRows.filter((r) => excluded.has(trimmed(r.route_id)) && !droppedPair(trimmed(r.service_id)))
@@ -371,7 +390,6 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
   // ---- §5.3 平日に戻す便の分類(前から順に、最初に当てはまったもの) ----
   // 走る日の包含(S2):加わる便(または先に受け付けた便)の service が、戻そうとする便の service の走る日(新しい有効期間の中)を
   // すべて含むときだけ「すでにある」。同じ service なら常に含む(1組の処理は今と同じ)
-  let dayIndex: Map<string, ServiceDays> | null = null
   const daysCache = new Map<string, string[]>()
   const daysOf = (sid: string): string[] => {
     let days = daysCache.get(sid)
@@ -496,7 +514,8 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
       const rule = tripIdRuleFor([...weekdayOfPair, ...(rowsByService.get(rp) ?? [])], pair.weekday, rp)
       if (pairIndex === 0 && replacements.length === 0) mainRule = rule
       let added = 0
-      if (!dropped) {
+      const notActive = skipped.has(rp)
+      if (!dropped && !notActive) {
         const ordered = (rowsByService.get(rp) ?? [])
           .filter((row) => !excluded.has(trimmed(row.route_id)))
           .map((row) => ({ row, from: trimmed(row.trip_id) }))
@@ -517,7 +536,7 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
           added++
         }
       }
-      replacements.push({ serviceId: rp, rule: rule.rule, servicePartIndex: rule.index, added })
+      replacements.push({ serviceId: rp, rule: rule.rule, servicePartIndex: rule.index, added, notActive })
     }
     const removed = removedRows.filter((r) => trimmed(r.service_id) === pair.weekday).length
     pairReports.push({ weekday: pair.weekday, dropped, removed, replacements })
@@ -665,6 +684,8 @@ export function applyForm2(base: GtfsFeed, plan: Form2Plan, opts: Form2Options):
  * pairs があるときだけの警告(docs/design-service-groups.md §4.3)。
  * - weekdayServicesKept:残す平日の service のうち、便があり期間に走るもの(走る日の数。10 日以下なら日付)
  * - weekdayServicesErased:入れ替えに使う service の無い組(なくす service)と、なくなる便の数
+ * - replacementNotActiveSkipped:新しい有効期間に走らないため加えなかった入れ替えに使う service と便の数。組の入れ替えに使う
+ *   service がすべて加わらないときは、その組の平日の便が代わりの便なしでなくなることを添える
  * - replacementRunsWithWeekday:入れ替えに使う service と、その組の平日の service が、新しい有効期間の同じ日に走る日(5 つまで)
  */
 function multiPairWarnings(
@@ -697,6 +718,23 @@ function multiPairWarnings(
   const erased = pairReports.filter((p) => !p.dropped && p.replacements.length === 0).map((p) => `${p.weekday} ${p.removed} 便`)
   if (erased.length > 0) {
     warn('weekdayServicesErased', `入れ替えに使うダイヤがないため、期間の間なくす service があります(${erased.join('、')})。`)
+  }
+  const skipped: string[] = []
+  const unreplaced: string[] = []
+  for (const p of pairReports) {
+    if (p.dropped) continue
+    const notActive = p.replacements.filter((r) => r.notActive)
+    if (notActive.length === 0) continue
+    for (const r of notActive) skipped.push(`${r.serviceId}:${(rowsByService.get(r.serviceId) ?? []).length} 便 → ${p.weekday}`)
+    if (p.replacements.every((r) => r.notActive)) unreplaced.push(`${p.weekday} ${p.removed} 便`)
+  }
+  if (skipped.length > 0) {
+    warn(
+      'replacementNotActiveSkipped',
+      `新しい有効期間に1日も走らない入れ替えに使う service の便は、期間に走らないため加えませんでした(${skipped.join('、')})。${
+        unreplaced.length > 0 ? `加わる便がないため、代わりの便なしでなくなる平日の便があります(${unreplaced.join('、')})。` : ''
+      }`,
+    )
   }
   const overlaps: string[] = []
   pairs.forEach((pair, i) => {

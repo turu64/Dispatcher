@@ -51,8 +51,9 @@ export const JEV_SENT_ITEMS =
 /** 送る中身と、送らないもの。スイッチの下と、運営情報のページで使う */
 export const JEV_SENT_SCOPE = `service ごとの集計(${JEV_SENT_ITEMS})を送ります。GTFS のファイル・停留所の位置・時刻表そのものは送りません。`
 
-/** Vercel が別の提供元に回すことがある点(2026-11-04 時点。利用者に確かめ中。変わるなら直す) */
-export const JEV_FALLBACK_NOTE = 'Vercel は、TypeSafe AI が答えないときに別の会社(DigitalOcean)に回すことがあります。'
+/** 転送先を TypeSafe AI に限っている点(サーバーが providerOptions.gateway.only を送る。2026-11-04 に確かめた。変わるなら直す) */
+export const JEV_ROUTING_NOTE =
+  'TypeSafe AI に限って送ります(Vercel がほかの会社に回さないよう指定しています。TypeSafe AI が答えないときは、確かめを失敗として扱います)。'
 
 /** 答えを得たあとに表の上に出す1行(§3.6) */
 export const JEV_SENT_TEXT = `service ごとの集計(${JEV_SENT_ITEMS})を、${JEV_DESTINATION}に送り、分け方を確かめました。GTFS のファイル・停留所の位置・時刻表そのものは送っていません。`

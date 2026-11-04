@@ -1,7 +1,7 @@
 import { ArrowLeft } from 'lucide-react'
 import type { ReactNode } from 'react'
 import DataSources from '@/components/DataSources'
-import { JEV_FALLBACK_NOTE, JEV_SENT_SCOPE } from '@/components/steps/load/serviceGroupsText'
+import { JEV_ROUTING_NOTE, JEV_SENT_SCOPE } from '@/components/steps/load/serviceGroupsText'
 
 /** 運営情報のページの場所(ハッシュ)。ルーターの依存は入れず、App.tsx が location.hash を見て出し分ける */
 export const ABOUT_HASH = '#/about'
@@ -67,7 +67,7 @@ export default function AboutPage() {
               送る時:GTFS を読み込んだあと、自動で送ります。service_id の分け方が単純な GTFS(道北バスなど)では送りません。手順「読み込み」のファイルを選ぶ欄の上のスイッチで止められます。送っている間も中断でき、得た答えを捨てられます。
             </li>
             <li>送るもの:{JEV_SENT_SCOPE}</li>
-            <li>送り先の扱い:{JEV_FALLBACK_NOTE}データの保持は、Vercel と TypeSafe AI の規約によります。</li>
+            <li>送り先の扱い:{JEV_ROUTING_NOTE}データの保持は、Vercel と TypeSafe AI の規約によります。</li>
           </ul>
         </Section>
 

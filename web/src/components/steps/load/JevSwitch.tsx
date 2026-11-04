@@ -1,7 +1,7 @@
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useServiceGroupsStore } from '@/store/serviceGroups'
-import { JEV_DESTINATION, JEV_FALLBACK_NOTE, JEV_SENT_SCOPE } from './serviceGroupsText'
+import { JEV_DESTINATION, JEV_ROUTING_NOTE, JEV_SENT_SCOPE } from './serviceGroupsText'
 
 /**
  * Jev に送るかのスイッチ(docs/design-service-groups.md §3.6)。読み込みの手順の、ファイルを選ぶ欄の上に置く。
@@ -27,7 +27,7 @@ export default function JevSwitch({ disabled = false }: { disabled?: boolean }) 
         <p id="jev-switch-note" className="text-xs text-muted-foreground">
           分け方が単純な GTFS(道北バスなど)では送りません。
           {JEV_SENT_SCOPE}
-          {JEV_FALLBACK_NOTE}
+          {JEV_ROUTING_NOTE}
         </p>
       </div>
     </div>

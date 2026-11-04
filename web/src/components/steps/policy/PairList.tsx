@@ -1,12 +1,12 @@
 import type { Form2Report } from '@/gtfs/edit/form2'
 import type { PolicySettings } from '@/gtfs/edit/ops'
 import { splitPairs } from '@/gtfs/groups/view'
-import { REPLACEMENT_LABELS } from '../editText'
+import { REPLACEMENT_LABELS, SKIPPED_REPLACEMENT_NOTE, skippedOfReport } from '../editText'
 
 /**
  * 組の内訳(docs/design-service-groups.md §5.2・§5.3)。入れ替える組(平日の service ← 入れ替えに使う service)、なくす service、
- * 残す service、期間に走らないため組ごと除いた service を並べる。減便の方針の手順(入力・対象便の確認・承認したあと)と
- * 変更指示書で同じ形にする。
+ * 残す service、期間に走らないため組ごと除いた service を並べる。期間に1日も走らないため加えない入れ替えに使う service には
+ * 「期間に走らないため加えません」と添える。減便の方針の手順(入力・対象便の確認・承認したあと)と変更指示書で同じ形にする。
  * 数は、版の report があればその数(なくなる便・加わる便)、無ければ tripCounts(service ごとの便数)
  */
 export function PairList({
@@ -14,6 +14,7 @@ export function PairList({
   report,
   tripCounts,
   dropped: droppedBefore,
+  skipped: skippedBefore,
   className,
 }: {
   settings: Pick<PolicySettings, 'kind' | 'weekdayService' | 'replacementService' | 'pairs' | 'keptWeekdayServices'>
@@ -21,12 +22,15 @@ export function PairList({
   tripCounts?: ReadonlyMap<string, number>
   /** 承認の前に、期間に走らないため組ごと除くと分かっている平日の service(droppedPairWeekdays)。report の除いた組に足す */
   dropped?: ReadonlySet<string>
+  /** 承認の前に、期間に走らないため加えないと分かっている入れ替えに使う service(skippedReplacements)。report の分に足す */
+  skipped?: ReadonlySet<string>
   className?: string
 }) {
   const label = REPLACEMENT_LABELS[settings.kind]
   const { replaced, erased, kept } = splitPairs(settings)
   const pairReports = new Map((report?.pairs ?? []).map((p) => [p.weekday, p]))
   const dropped = new Set([...(droppedBefore ?? []), ...(report?.pairs ?? []).filter((p) => p.dropped).map((p) => p.weekday)])
+  const skipped = new Set([...(skippedBefore ?? []), ...skippedOfReport(report)])
   const trips = (id: string) => tripCounts?.get(id)
   const n = (v: number) => v.toLocaleString('ja-JP')
 
@@ -53,7 +57,8 @@ export function PairList({
               {p.replacements.map((r, i) => (
                 <span key={r}>
                   {i > 0 && '・'}
-                  <span className="font-mono">{r}</span>
+                  <span className={skipped.has(r) ? 'font-mono line-through' : 'font-mono'}>{r}</span>
+                  {skipped.has(r) && <span className="text-amber-900 dark:text-amber-300 print:text-black">({SKIPPED_REPLACEMENT_NOTE})</span>}
                 </span>
               ))}
               {counts && `(${counts})`}

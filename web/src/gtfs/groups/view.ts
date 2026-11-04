@@ -5,7 +5,7 @@
  *   (今の service の選び方のまま)。単純でない GTFS で確定していなければ unconfirmed
  * - groupSettings:policyServicesFor の値から PolicySettings を作る(notApplied は入れない)
  */
-import type { Period, PolicyKind, PolicySettings, ServicePair } from '../edit/ops'
+import { skippedReplacementsOf, type Period, type PolicyKind, type PolicySettings, type ServicePair } from '../edit/ops'
 import { indexFeedServiceDays, runsAnyDay } from '../edit/services'
 import type { GtfsFeed } from '../load'
 import { policyServicesFor } from './policy'
@@ -108,16 +108,40 @@ export function droppedPairWeekdays(
 }
 
 /**
+ * 減便の期間に1日も走らないため加えない入れ替えに使う service(承認の前に、組の内訳と文の数をそろえるため)。
+ * checkPolicy の replacementNotActiveSkipped と同じ規則(isReplacementNotActive):便があり、新しい有効期間(validity)に
+ * 1日も走らないもの。主の組も主でない組も同じ。pairs が無い・期間が決まらなければ空
+ */
+export function skippedReplacements(
+  feed: GtfsFeed,
+  settings: Pick<PolicySettings, 'weekdayService' | 'replacementService' | 'pairs'>,
+  validity: { start: string; end: string } | null,
+): Set<string> {
+  if (!validity || settings.pairs === undefined) return new Set()
+  const counts = new Map<string, number>()
+  for (const t of feed.tables.get('trips')?.rows ?? []) {
+    const sid = (t.service_id ?? '').trim()
+    counts.set(sid, (counts.get(sid) ?? 0) + 1)
+  }
+  return skippedReplacementsOf(settings, indexFeedServiceDays(feed), validity, (sid) => counts.get(sid) ?? 0)
+}
+
+/**
  * 減便の文と選択肢に出す service(groupSentence と同じ数え方)。期間に走らないため除く組(dropped)を引き、
- * 入れ替える組があればその平日の service と入れ替えに使う service、無ければなくす平日の service だけ
+ * 期間に走らないため加えない入れ替えに使う service(skipped)を引く(入れ替えに使う service がすべて加わらない組は、
+ * なくす service に数える)。入れ替える組があればその平日の service と入れ替えに使う service、無ければなくす平日の service だけ
  */
 export function sentenceServices(
   settings: Pick<PolicySettings, 'weekdayService' | 'replacementService' | 'pairs' | 'keptWeekdayServices'>,
   dropped: ReadonlySet<string> = new Set(),
+  skipped: ReadonlySet<string> = new Set(),
 ): { weekdays: string[]; replacements: string[]; erased: string[]; replaced: ServicePair[] } {
   const split = splitPairs(settings)
-  const replaced = split.replaced.filter((p) => !dropped.has(p.weekday))
-  const erased = split.erased.filter((w) => !dropped.has(w))
+  const live = split.replaced
+    .filter((p) => !dropped.has(p.weekday))
+    .map((p) => ({ weekday: p.weekday, replacements: p.replacements.filter((r) => !skipped.has(r)) }))
+  const replaced = live.filter((p) => p.replacements.length > 0)
+  const erased = [...split.erased.filter((w) => !dropped.has(w)), ...live.filter((p) => p.replacements.length === 0).map((p) => p.weekday)]
   if (replaced.length === 0) return { weekdays: erased, replacements: [], erased, replaced }
   return { weekdays: replaced.map((p) => p.weekday), replacements: replaced.flatMap((p) => p.replacements), erased, replaced }
 }

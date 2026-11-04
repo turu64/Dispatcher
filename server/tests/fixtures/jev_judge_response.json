@@ -8,7 +8,7 @@
       "sent": {
         "state": {
           "feed": {
-            "agency": "北海道中央バス",
+            "agency": "さくら野交通",
             "period": "2026-10-01 to 2027-03-31",
             "days_in_period": {
               "weekday": "122",
@@ -35,16 +35,16 @@
             "first_departure": "05:52",
             "last_arrival": "23:13",
             "routes_with_trip_counts": {
-              "５５白石本線": "18",
-              "北７３新琴似２条線": "18",
-              "北７２新川線": "17"
+              "５５若葉本線": "18",
+              "緑７３みどり台２条線": "18",
+              "緑７２桜川線": "17"
             },
             "headsigns": [
-              "地下鉄麻生駅",
-              "福住駅",
-              "小樽駅前",
-              "北２４条駅前",
-              "白石営業所"
+              "地下鉄みどり台駅",
+              "桜川駅",
+              "港町駅前",
+              "緑２４条駅前",
+              "若葉営業所"
             ]
           },
           "candidates": [
@@ -66,16 +66,16 @@
               "first_departure": "05:30",
               "last_arrival": "23:38",
               "routes_with_trip_counts": {
-                "北７３新琴似２条線": "130",
-                "北７２新川線": "100",
-                "麻２４あいの里教育大線": "91"
+                "緑７３みどり台２条線": "130",
+                "緑７２桜川線": "100",
+                "光２４ひかり野学園線": "91"
               },
               "headsigns": [
-                "地下鉄麻生駅",
-                "福住駅",
-                "小樽駅前",
-                "北２４条駅前",
-                "大谷地駅"
+                "地下鉄みどり台駅",
+                "桜川駅",
+                "港町駅前",
+                "緑２４条駅前",
+                "ひかり野駅"
               ],
               "route_overlap_with_target": "0.72"
             },
@@ -97,10 +97,10 @@
               "first_departure": "09:30",
               "last_arrival": "10:00",
               "routes_with_trip_counts": {
-                "真１０６滝野線": "1"
+                "港１０６森の里線": "1"
               },
               "headsigns": [
-                "真駒内駅"
+                "森の里駅"
               ],
               "route_overlap_with_target": "0.01"
             }
@@ -115,6 +115,13 @@
               "S000014": "The weekday service with service_id S000014.",
               "none": "No candidate runs most of the routes of the target, so none of them is its weekday counterpart."
             }
+          }
+        },
+        "providerOptions": {
+          "gateway": {
+            "only": [
+              "typesafe-ai"
+            ]
           }
         }
       },
@@ -135,7 +142,7 @@
       "sent": {
         "state": {
           "feed": {
-            "agency": "北海道中央バス",
+            "agency": "さくら野交通",
             "period": "2026-10-01 to 2027-03-31",
             "days_in_period": {
               "weekday": "122",
@@ -162,10 +169,10 @@
             "first_departure": "09:30",
             "last_arrival": "10:00",
             "routes_with_trip_counts": {
-              "真１０６滝野線": "1"
+              "港１０６森の里線": "1"
             },
             "headsigns": [
-              "真駒内駅"
+              "森の里駅"
             ]
           }
         },
@@ -182,6 +189,13 @@
           "is_school_service": {
             "type": "boolean",
             "instructions": "Is the service in `target` mainly for students going to a university or school, running only on class days? Judge from the route names, the headsigns and the running days."
+          }
+        },
+        "providerOptions": {
+          "gateway": {
+            "only": [
+              "typesafe-ai"
+            ]
           }
         }
       },

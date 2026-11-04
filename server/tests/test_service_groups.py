@@ -3,9 +3,10 @@
 本物の Jev(Vercel AI Gateway)は呼ばない。上流は httpx2.MockTransport の偽物に差し替える
 (tests/conftest.py は、差し替えないテストのために、送ろうとすると失敗する偽物を既定で入れる)。
 
-固定のデータ tests/fixtures/jev_judge_request.json の数・系統名・行き先は、北海道中央バスの GTFS
+固定のデータ tests/fixtures/jev_judge_request.json の数と service_id は、北海道中央バスの GTFS
 (北海道オープンデータプラットフォーム、CC BY 4.0。2026-11-03 に利用者がフォームに記入してダウンロードしたもの)から
-集計した値(S000001・S000014・S000027。系統名と行き先は上位の数件だけ)。
+集計した値(S000001・S000014・S000027)。事業者名・系統名・行き先は架空の名前に差し替えた(形と数は同じ)。
+出典と差し替えの決まりは tests/fixtures/README.md。
 jev_judge_response.json の答え(確率・確信度・トークン・額)は、テスト用に作った値で、本物の Jev の答えではない。
 """
 
@@ -78,7 +79,8 @@ def jev_body(
     cost: str | None = "0.0001",
     provider: Any = "typesafe-ai",
 ) -> dict[str, Any]:
-    gateway: dict[str, Any] = {"routing": {"finalProvider": provider, "fallbacksAvailable": ["digitalocean"]}}
+    # 転送先を TypeSafe AI に限ると、予備の転送先は空になる(2026-11-04 の試しの1回の応答と同じ形)
+    gateway: dict[str, Any] = {"routing": {"finalProvider": provider, "fallbacksAvailable": []}}
     if cost is not None:
         gateway["cost"] = cost
     return {
@@ -259,7 +261,9 @@ def test_judge_matches_fixture_and_sends_fixed_questions(
         assert request.headers["ai-evaluation-model-specification-version"] == "4"
         assert request.headers["ai-model-id"] == "typesafe-ai/jev"
         sent = json.loads(request.content)
-        assert set(sent) == {"state", "questions"}
+        assert set(sent) == {"state", "questions", "providerOptions"}
+        # Vercel が TypeSafe AI 以外の会社に回さないよう、転送先を限る指定を必ず送る
+        assert sent["providerOptions"] == {"gateway": {"only": ["typesafe-ai"]}}
 
     by_target = {sent["state"]["target"]["service_id"]: sent for sent in upstream.bodies()}
     weekday_questions = by_target["S000014"]["questions"]
@@ -347,6 +351,7 @@ def test_fixtures_match_models() -> None:
         target = next(t for t in request.targets if t.serviceId == result.serviceId and t.role == result.role)
         assert result.sent.state == service_groups.build_state(request, target)
         assert result.sent.questions == service_groups.build_questions(target)
+        assert result.sent.providerOptions == service_groups.PROVIDER_OPTIONS
 
 
 @pytest.mark.parametrize(

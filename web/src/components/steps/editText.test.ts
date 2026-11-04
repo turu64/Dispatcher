@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Form2Report } from '@/gtfs/edit/form2'
-import { addBackRejections, diaLabel, groupSentence, serviceIdsText } from './editText'
+import { addBackRejections, diaLabel, groupSentence, serviceIdsText, skippedOfReport } from './editText'
 
 const EMPTY: Form2Report['addBack'] = {
   requested: 0,
@@ -64,5 +64,29 @@ describe('グループの語', () => {
         keptWeekdayServices: [],
       }),
     ).toBe('平日のダイヤ(S2)は、入れ替えに使う日祝のダイヤがないため、期間の間なくします。')
+  })
+
+  it('groupSentence:版の report で期間に走らないため加えなかった入れ替えに使う service は数えない', () => {
+    const settings = {
+      kind: 'weekdayToSaturday' as const,
+      weekdayService: '01001',
+      replacementService: '03001',
+      pairs: [
+        { weekday: '01001', replacements: ['03001', '03001_K'] },
+        { weekday: '01001_C', replacements: ['03001_C'] },
+      ],
+      keptWeekdayServices: [],
+    }
+    const rep = (serviceId: string, notActive: boolean) => ({ serviceId, rule: 'append-service' as const, servicePartIndex: null, added: notActive ? 0 : 1, notActive })
+    const report = {
+      pairs: [
+        { weekday: '01001', dropped: false, removed: 2, replacements: [rep('03001', false), rep('03001_K', true)] },
+        { weekday: '01001_C', dropped: false, removed: 1, replacements: [rep('03001_C', true)] },
+      ],
+    }
+    expect(groupSentence(settings, report)).toBe(
+      '平日のダイヤ(01001)を土曜のダイヤ(03001)の便に入れ替えます。ほかに、期間の間、便をなくす service 1 つがあります。',
+    )
+    expect(skippedOfReport(report)).toEqual(['03001_K', '03001_C'])
   })
 })

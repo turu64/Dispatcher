@@ -8,6 +8,9 @@ docs/design-service-groups.md §3.2・§3.3・§3.5・§7.4・§7.5、docs/inter
   質問の文に入るブラウザの文字列は、候補の service_id だけ
 - キー(TYPESAFE_AI_VERCEL_KEY)は Vercel の口(https の ai-gateway.vercel.sh)にだけ送る。ほかの口が設定されていれば
   使えない扱いにし、401・403 が返っても別の口に送り直さない
+- Vercel が TypeSafe AI 以外の会社に回さないよう、本文に providerOptions.gateway.only = ["typesafe-ai"] を入れる
+  (2026-11-04 に1回送って、routing.fallbacksAvailable が空になることを確かめた)。TypeSafe AI が答えないときは
+  Vercel が失敗を返し、中継も失敗として扱う
 - 返すのは、使う項目だけに絞った答えと、上流に実際に送った本文(画面の「送った情報を見る」)
 - ログには日時・回数・HTTP の状態・失敗の種類・トークンと額の合計・転送先の名前だけを残す。判断材料・State・質問・答え・
   service_id・事業者名・系統名・行き先・キー・IP アドレス・上流のエラーの本文は残さない
@@ -45,6 +48,9 @@ router = APIRouter(prefix="/api/service-groups")
 PROVIDER = "TypeSafe AI Jev"
 VIA = "Vercel AI Gateway"
 JEV_HOST = "ai-gateway.vercel.sh"
+# 転送先を TypeSafe AI だけに限る指定(Vercel AI Gateway の providerOptions.gateway.only)。§3.2・§6.2-1
+TYPESAFE_PROVIDER = "typesafe-ai"
+PROVIDER_OPTIONS: dict[str, Any] = {"gateway": {"only": [TYPESAFE_PROVIDER]}}
 
 MAX_BODY_BYTES = 256 * 1024
 MAX_SERVICES = 60
@@ -213,6 +219,7 @@ class SchoolService(_Out):
 class SentBody(_Out):
     state: dict[str, Any]
     questions: dict[str, Any]
+    providerOptions: dict[str, Any]
 
 
 class JevTargetResult(_Out):
@@ -635,9 +642,11 @@ async def _judge_one(
 ) -> None:
     state = build_state(request, target)
     questions = build_questions(target)
-    content = json.dumps({"state": state, "questions": questions}, ensure_ascii=False, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    content = json.dumps(
+        {"state": state, "questions": questions, "providerOptions": PROVIDER_OPTIONS},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
     key = settings.jev_api_key()
     url = settings.jev_url()
     if key is None or not url_ok(url):  # 送る直前にもう一度確かめる(キーを Vercel の口だけに送る)

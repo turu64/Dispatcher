@@ -439,17 +439,17 @@ CREATE TABLE jev_usage (                                                        
 
 **送り方**
 
-- 口・ヘッダーは設計 §3.2(`Authorization: Bearer <TYPESAFE_AI_VERCEL_KEY>`、`Content-Type: application/json`、`ai-gateway-protocol-version: 0.0.1`、`ai-evaluation-model-specification-version: 4`、`ai-model-id: <DISPATCHER_JEV_MODEL>`)。本文は `{state, questions}` だけ。リダイレクトはたどらない(301・302・307・308 は `upstream`)
+- 口・ヘッダーは設計 §3.2(`Authorization: Bearer <TYPESAFE_AI_VERCEL_KEY>`、`Content-Type: application/json`、`ai-gateway-protocol-version: 0.0.1`、`ai-evaluation-model-specification-version: 4`、`ai-model-id: <DISPATCHER_JEV_MODEL>`)。本文は `{state, questions, providerOptions}` だけ(`providerOptions` は固定の `{"gateway": {"only": ["typesafe-ai"]}}`)。リダイレクトはたどらない(301・302・307・308 は `upstream`)
 - `DISPATCHER_JEV_MODEL` は、英数字と `._/-` の 64 文字までで `typesafe-ai/` で始まるときだけ使う。ほかは既定の `typesafe-ai/jev`(同じキーで別のモデルを呼ばないため)
 - HTTP のクライアントは環境変数を読まない(`trust_env=False`。`HTTPS_PROXY`・`ALL_PROXY`・`SSL_CERT_FILE`・`.netrc` で、キーを付けた要求の通り道と信頼する証明書を変えさせない)
-- 判断材料は Vercel から TypeSafe AI に渡る。試しの応答の `fallbacksAvailable` に `digitalocean` があり、TypeSafe が答えないとき Vercel が DigitalOcean に回すことがある(キーは Vercel にだけ送る)。転送先を TypeSafe だけにする指定(`providerOptions.gateway.only` など)は、口が受け付けるかを確かめていないので送らない(設計 §6.2)
+- 判断材料は Vercel から TypeSafe AI に渡る(キーは Vercel にだけ送る)。指定なしの試しの応答では `fallbacksAvailable` に `digitalocean` があったので、転送先を TypeSafe AI だけに限る `providerOptions.gateway.only: ["typesafe-ai"]` を必ず送る。2026-11-04 に1回試し、HTTP 200・`fallbacksAvailable: []`・`planningReasoning` に「Provider set restricted to: typesafe-ai」を確かめた。TypeSafe AI が答えないときは、Vercel がほかの会社に回さず失敗を返す(設計 §6.2-1)
 - 口は `https` で、ホストが `ai-gateway.vercel.sh`、利用者名とポート(443 を除く)が無いときだけ使う。送る直前にもう一度確かめる
 - 並行は 4 つまで。target の数(`jev_usage.targets`)は送る直前に1つずつ数え、上限(数か額)に達していたら残りを送らず `budget` にする
 - 額(`jev_usage.cost_microusd`)は、送る直前に本文の大きさから見込んだ額(1 target あたり 360 マイクロドル以上。1 バイトあたり 0.02)を足し、`gateway.cost` が届いたら差を直す。`cost` が無い・読めない応答、200 以外、timeout では見込みの額のまま残す(上流が課金していることがあるため)。1 target の `cost` が $1 を超える値は読み違いとみなして使わない(WARNING を残す)。上限は足す前の額で判断するので、並行して送る数の分だけ上限を超えうる
 - 1要求 10 秒で `timeout`。429・503 は 0.5 秒・1 秒を空けて2回まで送り直す(送り直しても数えるのは1つ)。最後も 429 なら `rate_limited`、そのほかの 200 以外(401・403 を含む)と通信の失敗は `upstream`。全体で 30 秒を超えたら残りを打ち切って `timeout` にする
 - 答えの形が合わなければ `invalid_answer`:質問の名前がすべてあり、型が合い、choice が criteria の中にあり、`probabilities` の名前が criteria と同じで、確率が 0〜1、和が 1 ± 0.03。`providerMetadata.typesafe.confidence` の値は、あれば 0〜1(無ければ `confidence: null`)。ドキュメントに無い項目(`stats`・知らない質問の答えなど)は読み飛ばす
 - 額は、答えの形が合わなくても `gateway.cost` で直す
-- 返す `sent` は、上流に送ったバイト列を JSON として読み直したもの。`provider` は `providerMetadata.gateway.routing.finalProvider`(英数字と `._-` の 64 文字までのときだけ。ほかは `null`)。`model` は最初に答えた上流の `model`(無ければ `DISPATCHER_JEV_MODEL`)。`usage.inputTokens` は合計、`costUsd` は額の合計(額が1つも無ければ `null`)
+- 返す `sent` は、上流に送ったバイト列を JSON として読み直したもの(`state`・`questions`・`providerOptions`。画面は `state` と `questions` を出す)。`provider` は `providerMetadata.gateway.routing.finalProvider`(英数字と `._-` の 64 文字までのときだけ。ほかは `null`)。`model` は最初に答えた上流の `model`(無ければ `DISPATCHER_JEV_MODEL`)。`usage.inputTokens` は合計、`costUsd` は額の合計(額が1つも無ければ `null`)
 - `results`・`failures` は target の順
 - `failures` の要素は `{serviceId, role, error}`。上流に送った後の失敗(`timeout`・`rate_limited`・`upstream`・`invalid_answer`)には、送った本文 `sent` も入れる(画面の「送った情報を見る」で、外に出た判断材料を全部見せるため)。送る前の失敗(`budget` と、送る直前の確かめで口が使えなくなったとき)には入れない
 - HTTP のクライアントは `httpx2`(`anthropic` が使うものと同じ。本番の依存に明示した)。設計 §3.3 の「httpx は本番の依存にある」は誤りで、`httpx` は開発の依存だけにある
@@ -458,7 +458,7 @@ CREATE TABLE jev_usage (                                                        
 
 **テスト**:上流は `httpx2.MockTransport` に差し替え、本物の口は呼ばない。`tests/conftest.py` は、差し替えないテストのために、送ろうとすると失敗する偽物を既定で入れ、`TYPESAFE_AI_VERCEL_KEY` と `DISPATCHER_JEV_*` を消す。中継は送る先の例外を target の失敗として飲み込むので、偽物が呼ばれた回数を数え、後片付けで 1 回以上ならそのテストを失敗にする
 
-**固定のデータの出典**:`server/tests/fixtures/jev_judge_request.json` の数・系統名・行き先は北海道中央バスの GTFS(北海道オープンデータプラットフォーム、CC BY 4.0)から集計して加工した値。出典は `server/tests/fixtures/README.md` に書く
+**固定のデータの出典**:`server/tests/fixtures/jev_judge_request.json` の数と service_id は北海道中央バスの GTFS(北海道オープンデータプラットフォーム、CC BY 4.0)から集計して加工した値。事業者名・系統名・行き先は架空の名前に差し替えた(2026-11-04、利用者の決定)。出典は `server/tests/fixtures/README.md` に書く
 
 ## 5. システムプロンプト
 

@@ -3,7 +3,7 @@ import { multiFeed, multiPlan } from '../edit/form2.fixture'
 import { computeServiceFeatures } from './features'
 import { featuresOf, kyotoLike, svc } from './groups.fixture'
 import { proposeGroups } from './rules'
-import { choicePairs, droppedPairWeekdays, groupedPolicyServices, groupSettings, sentenceServices, splitPairs } from './view'
+import { choicePairs, droppedPairWeekdays, groupedPolicyServices, groupSettings, sentenceServices, skippedReplacements, splitPairs } from './view'
 
 const PERIOD = { start: '20261103', end: null }
 
@@ -122,4 +122,22 @@ describe('droppedPairWeekdays・sentenceServices(承認の前の組の内訳と�
       replacements: [],
     })
   })
+  it('期間に走らないため加えない入れ替えに使う service を、承認の前から出す(checkPolicy の replacementNotActiveSkipped と同じ)', () => {
+    const feed = multiFeed()
+    const plan = multiPlan()
+    // 03001_C は 10/31 だけ走る。期間 11/1〜 では走らない
+    expect([...skippedReplacements(feed, plan, { start: '20261101', end: '20261130' })]).toEqual(['03001_C'])
+    expect(skippedReplacements(feed, plan, { start: '20261031', end: '20261130' }).size).toBe(0)
+    expect(skippedReplacements(feed, plan, null).size).toBe(0)
+    expect(skippedReplacements(feed, { ...plan, pairs: undefined }, { start: '20261101', end: '20261130' }).size).toBe(0)
+  })
+
+  it('文の数は、加えない入れ替えに使う service を数えず、入れ替えに使う service がすべて加わらない組はなくす service に数える', () => {
+    expect(sentenceServices(multiPlan(), new Set(), new Set(['03001_C']))).toMatchObject({
+      weekdays: ['01001', '01001_A', 'WB'],
+      replacements: ['03001', '03001_A', 'SB1', 'SB2'],
+      erased: ['01005_MSN', '01001_C'],
+    })
+  })
 })
+

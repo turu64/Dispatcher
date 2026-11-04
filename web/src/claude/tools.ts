@@ -26,7 +26,16 @@ import {
   type PolicyReason,
   type PolicySettings,
 } from '@/gtfs/edit/ops'
-import { choicePairs, groupSettings, POLICY_KINDS, splitPairs, type GroupedPolicyServices } from '@/gtfs/groups/view'
+import {
+  choicePairs,
+  droppedPairWeekdays,
+  groupSettings,
+  POLICY_KINDS,
+  sentenceServices,
+  skippedReplacements,
+  splitPairs,
+  type GroupedPolicyServices,
+} from '@/gtfs/groups/view'
 import {
   compareByHints,
   createRestoreHinter,
@@ -501,7 +510,8 @@ function draftSummary(diff: WeekdayDiff, result: Form2Result, issues: readonly V
     vanishing_routes: diff.byRoute.filter((r) => r.vanishes).map((r) => ({ route_id: r.routeId, name: r.routeName })),
     warnings: issueMessages(issues, 'warning'),
     errors: issueMessages(issues, 'error'),
-    // 組が複数あるとき(グループ分けの組の表)だけ、組ごとのなくなる便・加わる便と、期間に走らないため組ごと除いた組を書く
+    // 組が複数あるとき(グループ分けの組の表)だけ、組ごとのなくなる便・加わる便と、期間に走らないため組ごと除いた組、
+    // 期間に走らないため加えなかった入れ替えに使う service を書く
     ...(result.report.pairs
       ? {
           pairs: result.report.pairs.map((p) => ({
@@ -510,6 +520,8 @@ function draftSummary(diff: WeekdayDiff, result: Form2Result, issues: readonly V
             removed: p.removed,
             added: p.replacements.reduce((n, r) => n + r.added, 0),
             dropped_for_period: p.dropped,
+            // 組ごと除いた組は、組の内訳の「除いた組」に出すだけで、加えない入れ替えに使う service には数えない(editText の skippedOfReport と同じ)
+            replacements_not_added_for_period: p.dropped ? [] : p.replacements.filter((r) => r.notActive).map((r) => r.serviceId),
           })),
         }
       : {}),
@@ -656,7 +668,8 @@ function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
   const settings: PolicySettings = groupChoice
     ? groupSettings(groupChoice, { start, end }, excludedIds)
     : { kind, weekdayService: weekday!, replacementService: replacement!, period: { start, end }, excludedRoutes: excludedIds }
-  const servicesJson = { weekday, replacement, ...(groupChoice ? { groups: groupsJson(settings) } : {}) }
+  const periodValidity = input0 ? policyValidity(input0, { start, end }) : null
+  const servicesJson = { weekday, replacement, ...(groupChoice ? { groups: groupsJson(base.feed, settings, periodValidity) } : {}) }
   // 適用できない方針は下書きにしない(承認できない下書きが残ると、次の編集ができなくなるため)
   const problems = checkPolicy(base.feed, settings)
   const errors = problems.filter((p) => p.severity === 'error')
@@ -678,12 +691,36 @@ function applyPolicy(input: unknown, deps: ToolDeps): ToolOutcome {
 }
 
 /**
- * apply_policy の結果の services.groups(docs/design-service-groups.md §5.3)。pairs は入れ替える組(主の組が先頭)、
- * erased は入れ替えに使うダイヤがないため期間の間便をなくす平日の service、kept は平日のまま残す平日の service
+ * apply_policy の結果の services.groups(docs/design-service-groups.md §5.3)。画面の文と組の内訳(sentenceServices)と同じ数え方:
+ * - pairs:入れ替える組(主の組が先頭)。replacements は期間に走るため加える入れ替えに使う service だけ
+ * - erased:期間の間便をなくす平日の service(入れ替えに使うダイヤが無い組と、入れ替えに使う service がすべて期間に走らない組)
+ * - kept:平日のまま残す平日の service
+ * - dropped_for_period:期間に走らないため組ごと除いた平日の service(主でない組だけ)
+ * - not_added_for_period:期間に走らないため加えない入れ替えに使う service(組ごと除いた組のものは入れない)
  */
-function groupsJson(settings: PolicySettings): { pairs: { weekday: string; replacements: string[] }[]; kept: string[]; erased: string[] } {
-  const { replaced, erased, kept } = splitPairs(settings)
-  return { pairs: replaced.map((p) => ({ weekday: p.weekday, replacements: [...p.replacements] })), kept, erased }
+function groupsJson(
+  feed: GtfsFeed,
+  settings: PolicySettings,
+  validity: { start: string; end: string } | null,
+): {
+  pairs: { weekday: string; replacements: string[] }[]
+  kept: string[]
+  erased: string[]
+  dropped_for_period: string[]
+  not_added_for_period: string[]
+} {
+  const dropped = droppedPairWeekdays(feed, settings, validity)
+  const skipped = skippedReplacements(feed, settings, validity)
+  const { replaced, erased } = sentenceServices(settings, dropped, skipped)
+  const { replaced: all, kept } = splitPairs(settings)
+  const notAdded = all.filter((p) => !dropped.has(p.weekday)).flatMap((p) => p.replacements.filter((r) => skipped.has(r)))
+  return {
+    pairs: replaced.map((p) => ({ weekday: p.weekday, replacements: [...p.replacements] })),
+    kept,
+    erased,
+    dropped_for_period: [...dropped],
+    not_added_for_period: [...new Set(notAdded)],
+  }
 }
 
 function groupsUnconfirmedNote(weekday: string): string {

@@ -34,14 +34,15 @@ describe('DataSourcesView', () => {
 })
 
 describe('データの送り先(Jev)', () => {
-  it('Jev に送ったときだけ、送り先・送る中身・別の会社に回すことがある点を出す', () => {
+  it('Jev に送ったときだけ、送り先・送る中身・TypeSafe AI に限って送る点を出す', () => {
     const sent = renderToStaticMarkup(<DataSourcesView holidays={{ status: 'missing' }} usage={{ jevSent: true }} />)
     expect(sent).toContain('データの送り先')
     expect(sent).toContain('TypeSafe AI Jev')
     expect(sent).toContain('Vercel AI Gateway を経由します')
     expect(sent).toContain('系統名と系統ごとの便数・行き先')
     expect(sent).toContain('service_id')
-    expect(sent).toContain('DigitalOcean')
+    expect(sent).toContain('TypeSafe AI に限って送ります')
+    expect(sent).not.toContain('DigitalOcean')
     const notSent = renderToStaticMarkup(<DataSourcesView holidays={{ status: 'missing' }} usage={{ jevSent: false }} />)
     expect(notSent).not.toContain('データの送り先')
   })

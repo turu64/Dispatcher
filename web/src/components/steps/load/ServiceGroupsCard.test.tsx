@@ -116,7 +116,7 @@ describe('手順「読み込み」の Jev のスイッチ', () => {
     expect(sw.getAttribute('aria-checked')).toBe('true')
     const pick = screen.getByRole('button', { name: 'ファイルを選ぶ' })
     expect(sw.compareDocumentPosition(pick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(document.getElementById('jev-switch-note')!.textContent).toContain('DigitalOcean')
+    expect(document.getElementById('jev-switch-note')!.textContent).toContain('TypeSafe AI に限って送ります')
     fireEvent.click(sw)
     expect(useServiceGroupsStore.getState().jevEnabled).toBe(false)
     expect(sw.getAttribute('aria-checked')).toBe('false')

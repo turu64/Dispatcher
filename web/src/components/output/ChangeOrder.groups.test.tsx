@@ -49,4 +49,20 @@ describe('複数の組', () => {
     expect(list.textContent).toContain('減便の期間に走らないため除いた組:01001_C')
     expect(list.textContent).not.toContain('平日 01001_C')
   })
+  it('期間 11/1〜:期間に走らないため加えない 03001_C に「期間に走らないため加えません」と添え、01001_C は便をなくす service に数える', () => {
+    const { addBackTripIds: _a, ...settings } = multiPlan({ period: { start: '20261101', end: null } })
+    act(() => {
+      const proposed = useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: null, note: '' } }, 'user')
+      if (!proposed.ok) throw new Error(proposed.message)
+      const committed = useEditStore.getState().commit()
+      if (!committed.ok) throw new Error(committed.message)
+    })
+    render(<ChangeOrder />)
+    const sheet = screen.getByTestId('change-order')
+    expect(sheet.textContent).toContain('平日のダイヤ(01001 ほか 2)を土曜のダイヤ(03001 ほか 3)の便に入れ替えます。ほかに、期間の間、便をなくす service 2 つ')
+    const list = within(sheet).getByRole('list', { name: '組の内訳' })
+    expect(list.textContent).toContain('平日 01001_C ←に入れる便: 土曜 03001_C(期間に走らないため加えません)(なくなる便 1・加わる便 0)')
+    expect(list.textContent).not.toContain('減便の期間に走らないため除いた組')
+  })
 })
+

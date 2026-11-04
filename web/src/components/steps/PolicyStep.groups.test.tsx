@@ -106,6 +106,43 @@ describe('確定したグループ分けがあるとき', () => {
     expect(screen.getByRole('button', { name: '対象便を確かめる' })).toHaveProperty('disabled', true)
   })
 
+  it('期間 11/1〜:期間に走らない 03001_C を加えないことを、詳しい設定の数・組の内訳・文の数・全曜日で便がなくなる系統に出す(承認の前)', () => {
+    // 01001_C と 03001_C の便だけを持つ系統 R5 を作る(10/31 だけ走る 03001_C を加えないと、R5 は全曜日で便がなくなる)
+    const feed = multiFeed()
+    const routes = feed.tables.get('routes')!.rows
+    routes.push({ ...routes[0], route_id: 'R5', route_short_name: '5', route_long_name: '迂回線' })
+    for (const t of feed.tables.get('trips')!.rows) if ((t.trip_id ?? '').endsWith('_C')) t.route_id = 'R5'
+    const base = load(feed)
+    const form = (start: string) =>
+      render(
+        <PolicyForm
+          base={base}
+          initial={{ kind: 'weekdayToSaturday', weekdayService: '01001', replacementService: '03001', period: { start, end: null }, excludedRoutes: [] }}
+          initialReason={null}
+        />,
+      )
+
+    // 10/26〜 では 03001_C が 10/31 に走るので加える(比べるため)
+    const before = form('20261026')
+    expect(screen.getByTestId('policy-details').querySelector('summary')!.textContent).toContain('ダイヤ:組 3・なくす 2・残す 1、')
+    expect(sentenceText()).toContain('平日のダイヤ(01001 ほか 2)を土曜のダイヤ(03001 ほか 4)に変更する。')
+    expect(document.body.textContent).toContain('土曜の便がない系統が 1 系統あり')
+    expect(document.body.textContent).not.toContain('期間に走らないため加えません')
+    before.unmount()
+
+    form('20261101')
+    const details = screen.getByTestId('policy-details')
+    // 01001_C の組は入れ替えに使う service がすべて加わらないので「なくす」に数え、加えない service の数を出す
+    expect(details.querySelector('summary')!.textContent).toContain('ダイヤ:組 2・なくす 3・残す 1・期間に走らず加えない 1、')
+    // 文の選択肢も、01001_C と 03001_C を数えない
+    expect(sentenceText()).toContain('平日のダイヤ(01001 ほか 1)を土曜のダイヤ(03001 ほか 3)に変更する。')
+    const list = within(details).getByRole('list', { name: '組の内訳' })
+    expect(list.textContent).toContain('平日 01001_C ←に入れる便: 土曜 03001_C(期間に走らないため加えません)(平日 1 便)')
+    expect(within(list).getByText('03001_C').className).toContain('line-through')
+    // 加えない 03001_C の便は系統の便数に数えないので、R5 も全曜日で便がなくなる系統に数える
+    expect(document.body.textContent).toContain('土曜の便がない系統が 2 系統あり')
+  })
+
   it('「読み込みの手順の表で直す」で、読み込みの手順へ移り、表を開くよう頼む', () => {
     load()
     act(() => useStepStore.setState({ current: 'policy' }))

@@ -98,7 +98,7 @@ describe('1組の pairs は pairs 無しと同じ(受け入れ条件 2)', () => 
         weekday: 'WK',
         dropped: false,
         removed: a.report.tripIds.removed.length,
-        replacements: [{ serviceId: 'SA', rule: 'replace-service-part', servicePartIndex: 2, added: a.report.tripIds.derived.length }],
+        replacements: [{ serviceId: 'SA', rule: 'replace-service-part', servicePartIndex: 2, added: a.report.tripIds.derived.length, notActive: false }],
       },
     ])
     expect('pairs' in a.report).toBe(false)
@@ -141,17 +141,17 @@ describe('applyForm2(組が複数)', () => {
     expect(report.tripIds.removed).toEqual(['R1_01001_0700', 'R1_01001_0800_K', 'R1_01001_0900_A', 'R1_01005_1200_MSN', 'R2_0900_WB', 'R3_01001_0730'])
     expect(report.tripIds.derived.map((d) => d.from)).toEqual([...report.tripIds.derived.map((d) => d.from)].sort())
     expect(report.pairs).toEqual([
-      { weekday: '01001', dropped: false, removed: 3, replacements: [{ serviceId: '03001', rule: 'replace-family-part', servicePartIndex: 1, added: 3 }] },
-      { weekday: '01001_A', dropped: false, removed: 1, replacements: [{ serviceId: '03001_A', rule: 'replace-family-part', servicePartIndex: 1, added: 1 }] },
-      { weekday: '01001_C', dropped: true, removed: 0, replacements: [{ serviceId: '03001_C', rule: 'replace-family-part', servicePartIndex: 1, added: 0 }] },
+      { weekday: '01001', dropped: false, removed: 3, replacements: [{ serviceId: '03001', rule: 'replace-family-part', servicePartIndex: 1, added: 3, notActive: false }] },
+      { weekday: '01001_A', dropped: false, removed: 1, replacements: [{ serviceId: '03001_A', rule: 'replace-family-part', servicePartIndex: 1, added: 1, notActive: false }] },
+      { weekday: '01001_C', dropped: true, removed: 0, replacements: [{ serviceId: '03001_C', rule: 'replace-family-part', servicePartIndex: 1, added: 0, notActive: true }] },
       { weekday: '01005_MSN', dropped: false, removed: 1, replacements: [] },
       {
         weekday: 'WB',
         dropped: false,
         removed: 1,
         replacements: [
-          { serviceId: 'SB1', rule: 'replace-service-part', servicePartIndex: 2, added: 1 },
-          { serviceId: 'SB2', rule: 'append-service', servicePartIndex: null, added: 1 },
+          { serviceId: 'SB1', rule: 'replace-service-part', servicePartIndex: 2, added: 1, notActive: false },
+          { serviceId: 'SB2', rule: 'append-service', servicePartIndex: null, added: 1, notActive: false },
         ],
       },
     ])
@@ -189,18 +189,50 @@ service_id,date,exception_type
     expect(warning(result, 'replacementRunsWithWeekday')).toContain('03001 と 01001:11/4')
   })
 
-  it('期間 11/1〜:01001_C は 11/2 に走るので組を残し、10/31 だけ走る 03001_C の便を 01001_C に加える(S4)', () => {
+  it('期間 11/1〜:01001_C は 11/2 に走るので組を残すが、10/31 だけ走る 03001_C の便は期間に走らないため加えない(2026-11-04 の決定)', () => {
     const plan = multiPlan({ period: { start: '20261101', end: null } })
     const problems = checkPolicy(multiFeed(), plan)
     expect(problems.filter((p) => p.severity === 'error')).toEqual([])
-    const added = problems.find((p) => p.code === 'replacementNotActiveAdded')
-    expect(added?.severity).toBe('warning')
-    expect(added?.message).toContain('03001_C')
-    expect(added?.message).toContain('01001_C の走る日(11/2)')
-    const { feed, report } = apply(multiFeed(), plan)
-    expect(tripsOf(feed, '01001_C')).toEqual(['R1_01001_1005_C'])
+    expect(problems.map((p) => p.code)).not.toContain('replacementNotActiveAdded')
+    const skipped = problems.filter((p) => p.code === 'replacementNotActiveSkipped')
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].severity).toBe('warning')
+    expect(skipped[0].message).toContain('03001_C')
+    expect(skipped[0].message).toContain('01001_C に加えません')
+    // 組の入れ替えに使う service がすべて加わらないので、平日の便が代わりの便なしでなくなることを添える
+    expect(skipped[0].message).toContain('01001_C の便は走る日(11/2)に代わりの便なしでなくなります')
+    const result = apply(multiFeed(), plan)
+    const { feed, report } = result
+    expect(tripsOf(feed, '01001_C')).toEqual([])
     expect(tripsOf(feed, '03001_C')).toEqual([])
-    expect(report.pairs?.[2]).toMatchObject({ weekday: '01001_C', dropped: false, removed: 1 })
+    expect(report.tripIds.derived.map((d) => d.from)).not.toContain('R1_03001_1005_C')
+    expect(report.tripIds.removed).toContain('R1_01001_1000_C')
+    expect(report.pairs?.[2]).toEqual({
+      weekday: '01001_C',
+      dropped: false,
+      removed: 1,
+      replacements: [{ serviceId: '03001_C', rule: 'replace-family-part', servicePartIndex: 1, added: 0, notActive: true }],
+    })
+    expect(warning(result, 'replacementNotActiveSkipped')).toBe(
+      '新しい有効期間に1日も走らない入れ替えに使う service の便は、期間に走らないため加えませんでした(03001_C:1 便 → 01001_C)。加わる便がないため、代わりの便なしでなくなる平日の便があります(01001_C 1 便)。',
+    )
+    // 確かめることの一覧(validateEdit)にも出る
+    expect(validateEdit(multiFeed(), result, HOLIDAYS).find((i) => i.code === 'form2.replacementNotActiveSkipped')?.file).toBe('trips.txt')
+  })
+
+  it('加えない入れ替えに使う service の便と同じ署名の平日の便は、平日に戻せる(「すでにある」にしない)', () => {
+    // 03001_C の便を 01001_C の便と同じ時刻・停車にする
+    const base = multiFeed()
+    const cRows = rows(base, 'stop_times').filter((r) => r.trip_id === 'R1_01001_1000_C')
+    const same = rows(base, 'stop_times').map((r) =>
+      r.trip_id === 'R1_03001_1005_C' ? { ...cRows[Number(r.stop_sequence) - 1], trip_id: 'R1_03001_1005_C' } : r,
+    )
+    const feed = withRows(base, 'stop_times', same)
+    const plan = { ...multiPlan({ period: { start: '20261101', end: null } }), addBackTripIds: ['R1_01001_1000_C'] }
+    const { report, feed: out } = apply(feed, plan)
+    expect(report.addBack.accepted).toEqual(['R1_01001_1000_C'])
+    expect(report.addBack.ignoredAlreadyPresent).toEqual([])
+    expect(tripsOf(out, '01001_C')).toEqual(['R1_01001_1000_C'])
   })
 
   it('期間 11/3〜:01001_C の組は pairWeekdayNotActive(止めない)', () => {
@@ -408,7 +440,7 @@ SB1,20261104,1`)])
     expect(checkPolicy(feed, multiPlan()).filter((p) => p.severity === 'error')).toEqual([])
   })
 
-  it('期間に走らない入れ替えに使う service は、主の組でも主でない組と同じく警告で加える(S4)', () => {
+  it('期間に走らない入れ替えに使う service は、主の組でも主でない組と同じく警告で加えない(2026-11-04 の決定)', () => {
     const pairs = [
       { weekday: '01001', replacements: ['03001', '03001_C'] },
       { weekday: '01001_A', replacements: ['03001_A'] },
@@ -418,12 +450,20 @@ SB1,20261104,1`)])
     const plan = multiPlan({ pairs })
     const problems = checkPolicy(multiFeed(), plan)
     expect(problems.filter((p) => p.severity === 'error')).toEqual([])
-    const added = problems.filter((p) => p.code === 'replacementNotActiveAdded')
-    expect(added).toHaveLength(1)
-    expect(added[0].message).toContain('03001_C')
-    expect(added[0].message).toContain('01001 の走る日')
-    const { feed } = apply(multiFeed(), plan)
-    expect(tripsOf(feed, '01001')).toContain('R1_01001_1005_C')
+    const skipped = problems.filter((p) => p.code === 'replacementNotActiveSkipped')
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].message).toContain('03001_C')
+    expect(skipped[0].message).toContain('01001 に加えません')
+    // 主の組には 03001 の便が加わるので、代わりの便なしでなくなるとは書かない
+    expect(skipped[0].message).not.toContain('代わりの便なし')
+    const result = apply(multiFeed(), plan)
+    expect(tripsOf(result.feed, '01001')).not.toContain('R1_01001_1005_C')
+    expect(result.report.pairs?.[0].replacements.map((r) => [r.serviceId, r.added > 0, r.notActive])).toEqual([
+      ['03001', true, false],
+      ['03001_C', false, true],
+    ])
+    expect(warning(result, 'replacementNotActiveSkipped')).toContain('(03001_C:1 便 → 01001)')
+    expect(warning(result, 'replacementNotActiveSkipped')).not.toContain('代わりの便なし')
   })
 
   it('主の組の入れ替えに使う service がすべて期間に走らなければ replacementNotActive', () => {

@@ -70,6 +70,15 @@ const POLICY = {
 
 const parse = (content: string) => JSON.parse(content) as Record<string, unknown>
 
+/** 下書きの summary.pairs の1行 */
+interface SummaryPair {
+  weekday: string
+  removed: number
+  added: number
+  dropped_for_period: boolean
+  replacements_not_added_for_period: string[]
+}
+
 describe('apply_policy は確定したグループ分けの組で下書きを作る', () => {
   it('組の表(pairs・keptWeekdayServices)で下書きを作り、結果の services.groups に組・残す・なくすを書く', async () => {
     const { store, deps } = setup({ weekday: 'WK', saturday: 'SA', sundayHoliday: null, groups: CONFIRMED })
@@ -80,26 +89,55 @@ describe('apply_policy は確定したグループ分けの組で下書きを作
       weekday: '01001',
       replacement: '03001',
       groups: {
+        // 期間(11/3〜)に走らないため組ごと除いた 01001_C は、pairs・erased に入れず dropped_for_period に書く(画面の文と同じ数え方)
         pairs: [
           { weekday: '01001', replacements: ['03001'] },
           { weekday: '01001_A', replacements: ['03001_A'] },
-          { weekday: '01001_C', replacements: ['03001_C'] },
           { weekday: 'WB', replacements: ['SB1', 'SB2'] },
         ],
         kept: ['01002_RIT'],
         erased: ['01005_MSN'],
+        dropped_for_period: ['01001_C'],
+        // 03001_C も期間に走らないが、組ごと除いた組のものなので数えない
+        not_added_for_period: [],
       },
     })
     expect(body.groups_note).toBeUndefined()
     // 組ごとのなくなる便・加わる便と、期間(11/3〜)に走らないため組ごと除いた 01001_C
-    const pairs = (body.summary as { pairs: { weekday: string; dropped_for_period: boolean }[] }).pairs
+    const pairs = (body.summary as { pairs: SummaryPair[] }).pairs
     expect(pairs.map((p) => p.weekday)).toEqual(['01001', '01001_A', '01001_C', '01005_MSN', 'WB'])
-    expect(pairs.find((p) => p.weekday === '01001_C')!.dropped_for_period).toBe(true)
+    const c = pairs.find((p) => p.weekday === '01001_C')!
+    expect(c.dropped_for_period).toBe(true)
+    // 組ごと除いた組の入れ替えに使う service は、加えない service に数えない(画面の skippedOfReport と同じ)
+    expect(c.replacements_not_added_for_period).toEqual([])
     const draft = store.getState().draft
     if (draft?.kind !== 'op' || draft.record.op.type !== 'applyPolicy') throw new Error('下書きのはず')
     expect(draft.record.op.settings.pairs?.map((p) => p.weekday)).toEqual(['01001', '01001_A', '01001_C', '01005_MSN', 'WB'])
     expect(draft.record.op.settings.keptWeekdayServices).toEqual(['01002_RIT'])
     expect('notApplied' in draft.record.op.settings).toBe(false)
+  })
+
+  it('期間 11/1〜:期間に走らない 03001_C は加えず、入れ替えに使う service がすべて加わらない 01001_C は便をなくす service に数える', async () => {
+    const { deps } = setup({ weekday: 'WK', saturday: 'SA', sundayHoliday: null, groups: CONFIRMED })
+    const r = await runTool('apply_policy', { ...POLICY, start_date: '20261101' }, deps)
+    expect(r.isError).toBe(false)
+    const body = parse(r.content)
+    expect((body.services as { groups: unknown }).groups).toEqual({
+      pairs: [
+        { weekday: '01001', replacements: ['03001'] },
+        { weekday: '01001_A', replacements: ['03001_A'] },
+        { weekday: 'WB', replacements: ['SB1', 'SB2'] },
+      ],
+      kept: ['01002_RIT'],
+      erased: ['01005_MSN', '01001_C'],
+      dropped_for_period: [],
+      not_added_for_period: ['03001_C'],
+    })
+    const pairs = (body.summary as { pairs: SummaryPair[] }).pairs
+    const c = pairs.find((p) => p.weekday === '01001_C')!
+    expect(c).toMatchObject({ dropped_for_period: false, removed: 1, added: 0, replacements_not_added_for_period: ['03001_C'] })
+    // ほかの組は加えない service が無い
+    expect(pairs.filter((p) => p.weekday !== '01001_C').every((p) => p.replacements_not_added_for_period.length === 0)).toBe(true)
   })
 
   it('その種類のグループ分けが作れなければ(形2で表せない service)、下書きを作らずに理由を返す', async () => {

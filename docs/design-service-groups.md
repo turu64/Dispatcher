@@ -197,7 +197,7 @@ service の `basis`(基本の形)と `runs`(走る区分の集合)は次の順�
 | 北海道中央バス、土曜に | 5,494 便 | 11/14 土 3,736 便 | 3,739 便 | 形2で表せない `S000039`・`S000044` を残した 3 便 |
 | 北海道中央バス、日祝に | 5,494 便 | 11/15 日 3,621 便 | 3,636 便 | `S000040` を残した 15 便 |
 | 京都市営バス、土曜に(期間 11/5〜) | 6,353 便 | 11/14 土 5,353 便 | 5,417 便 | 残した大学の便 64 便 |
-| 京都市営バス、土曜に(期間 11/1〜)の 11/2 | 6,313 便 | 10/31 土 5,366 便 | 5,377 便 | 使わない SRV の 13 便を引き、残した大学の便 24 便を足す |
+| 京都市営バス、土曜に(期間 11/1〜)の 11/2 | 6,313 便 | 10/31 土 5,366 便 | 5,063 便 | 使わない SRV の 13 便を引き、残した大学の便 24 便を足し、期間に走らないため加えない `03001_C` の 314 便を引く(加えていた 11/4 の前の版では 5,377 便。§6.2-7) |
 | 士別軌道、土曜に | 55 便 | 11/14 土 27 便 | 29 便 | 残した `S000006`・`S000009` の 2 便 |
 | 北門バス、沿岸バス、土曜に | 90 便、79 便 | 76 便、55 便 | 76 便、55 便 | なし |
 
@@ -224,7 +224,8 @@ service の `basis`(基本の形)と `runs`(走る区分の集合)は次の順�
 | 状態 | HTTP 200、全体 1.86 秒(TypeSafe 側の処理は 334 ms) |
 | 応答 | `answers`(名前ごとに choice は `{type, choice, probabilities}`、boolean は `{type, probability}`)、`model: "typesafe-ai/jev"`(版の番号は無い)、`rounding: {probabilityDecimals: 2, scoreDecimals: 2}`、`usage: {inputTokens: 8567, outputTokens: 507}`、`warnings: []`、`providerMetadata.typesafe.confidence`(choice の名前だけ。boolean には無い)、`providerMetadata.gateway`(`cost: "0.000359814"` ほか、`generationId`、`routing`) |
 | 費用 | $0.00036(約 0.05 円) |
-| 転送先 | `providerMetadata.gateway.routing.finalProvider` が `typesafe-ai`。`fallbacksAvailable` に `digitalocean` がある(TypeSafe が答えないとき、Vercel が判断材料を別の会社に回すことがある。キーは Vercel にだけ送る)。中継は転送先を後から返してログに残すだけで、回すのは止めていない(§6.2-1) |
+| 転送先 | `providerMetadata.gateway.routing.finalProvider` が `typesafe-ai`。転送先を限る指定なしでは、`fallbacksAvailable` に `digitalocean` がある(TypeSafe が答えないとき、Vercel が判断材料を別の会社に回すことがある。キーは Vercel にだけ送る) |
+| 転送先を限る指定 | 2026-11-04 に、本文に `providerOptions.gateway.only: ["typesafe-ai"]` を足して1回送った(北海道中央バスの集計を架空の名前に差し替えた `server/tests/fixtures/jev_judge_request.json` の土曜の target。入力 1,408・出力 60 トークン、$0.000059)。HTTP 200、`warnings: []`、`routing.fallbacksAvailable: []`、`routing.planningReasoning` は「Provider set restricted to: typesafe-ai. System credentials planned for: typesafe-ai. Total execution order: typesafe-ai(system)」、`finalProvider: "typesafe-ai"`。口は指定を受け付け、予備の転送先(DigitalOcean)が外れた。中継はこの指定を必ず送る(§3.3・§6.2-1) |
 
 送った State は f7 の `data/out/jev_playground/v2/01001_C.json`(京都 `01001_C`、候補は土曜 5・日祝 5)から `action_on_reduction` を除いたもの。答え(参考):
 
@@ -235,7 +236,7 @@ service の `basis`(基本の形)と `runs`(走る区分の集合)は次の順�
 
 まだ確かめていないこと(§6.2):
 
-- `providerOptions.gateway.zeroDataRetention` と、転送先を TypeSafe だけにする指定(`providerOptions.gateway.only` など)を、この口が受け付けるか。試しの1回では、断られて送り先・認証・形を確かめられなくなるのを避けるため、送らなかった
+- `providerOptions.gateway.zeroDataRetention` を、この口が受け付けるか。試しの1回では、断られて送り先・認証・形を確かめられなくなるのを避けるため、送らなかった(転送先を TypeSafe だけにする指定 `providerOptions.gateway.only` は、2026-11-04 に別の1回で確かめた。上の表の「転送先を限る指定」)
 - §3.3 の新しい質問(平日だけの側・入れ替えに使う側に分けたもの)での答えの質。もう1回の呼び出しが要る
 
 ### 3.3 サーバーの中継
@@ -295,11 +296,11 @@ service の `basis`(基本の形)と `runs`(走る区分の集合)は次の順�
 
 **送り方**
 
-- 送り先は §3.2 の URL・ヘッダー。`DISPATCHER_JEV_URL` は、ホストが `ai-gateway.vercel.sh` で `https` のときだけ使う。ほかのホストを設定したら `available: false`(`reason: "badUrl"`)にする(キーを Vercel 以外に送らないため。nit)。401・403 が返っても、ほかの口に送り直さない(M4)
+- 送り先は §3.2 の URL・ヘッダー。本文は `{state, questions, providerOptions}` で、`providerOptions` は転送先を TypeSafe AI だけに限る `{"gateway": {"only": ["typesafe-ai"]}}`(固定。§6.2-1)。TypeSafe AI が答えないとき、Vercel はほかの会社に回さず失敗を返し、中継も失敗(`upstream` など)として扱う。`DISPATCHER_JEV_URL` は、ホストが `ai-gateway.vercel.sh` で `https` のときだけ使う。ほかのホストを設定したら `available: false`(`reason: "badUrl"`)にする(キーを Vercel 以外に送らないため。nit)。401・403 が返っても、ほかの口に送り直さない(M4)
 - 1つの target を1リクエストにする。並行は 4 つまで
 - 待つ時間:1リクエスト 10 秒。429・503 は 0.5 秒・1 秒を空けて2回まで送り直す(Gateway は混んだときに 503 を返す)。全体で 30 秒を超えたら、残りを打ち切り、届いた分だけを返す(打ち切った target は `timeout`)
 - 答えの形を確かめる:質問の名前がすべてあり、型が合い、choice が候補の中にあり、確率が 0〜1 で、choice の確率の和が 1 ± 0.03。合わなければその target を `invalid_answer` にする。`stats` などドキュメントに無い項目は読み飛ばす
-- `providerMetadata.gateway.routing.finalProvider` を target ごとに返す。`typesafe-ai` 以外なら、画面に「Vercel が別の送り先(digitalocean)に回しました」と出す
+- `providerMetadata.gateway.routing.finalProvider` を target ごとに返す。転送先を限っているので `typesafe-ai` のはずだが、それ以外なら、画面に「Vercel が別の送り先(digitalocean)に回しました」と出す(念のための表示)
 
 **キー・設定(`settings.py`)**
 
@@ -412,21 +413,21 @@ export function weekdayServicesOf(settings: PolicySettings): Set<string>   // pa
 | 入れ替えに使う service の calendar の行に、月〜金の列が 1 のものがある(`weekdayServiceRunsOnWeekend` と対。平日の service の走る日に加えると、その便が2回走る)。calendar_dates だけの重なりは `replacementRunsWithWeekday` の警告のまま | エラー | `replacementRunsOnWeekday` |
 | 主の組の平日の service:`weekdayCalendarOutside`・`weekdayNotActive` | 今のまま | |
 | 主でない組の平日の service が、新しい有効期間に1日も走らない | 情報(警告の一覧に入れる) | `pairWeekdayNotActive`(「01001_C は期間に走らないため、組ごと出力から除きます」) |
-| 入れ替えに使う service が、新しい有効期間に1日も走らない(**主の組も主でない組も同じ規則**) | 警告(止めない。S4) | `replacementNotActiveAdded`(「03001_C は新しい有効期間に走りませんが、その便を 01001_C の走る日(11/2)に加えます」) |
-| 主の組の、便のある入れ替えに使う service が**すべて**新しい有効期間に1日も走らない | エラー(走らない時刻表だけで主の平日の便を入れ替えないため) | `replacementNotActive` |
+| 入れ替えに使う service が、新しい有効期間に1日も走らない(**主の組も主でない組も同じ規則**) | 警告(止めない。その service の便は**加えない**。2026-11-04 に利用者が決定。§6.2-7) | `replacementNotActiveSkipped`(「入れ替えに使う service(03001_C)は新しい有効期間(…)の中で1日も走らないため、その便を 01001_C に加えません(季節ダイヤや迂回の版の便が平日に混ざらないようにするため)。」。組の入れ替えに使う service がすべて加わらないときは「01001_C には加わる便がなく、01001_C の便は走る日(11/2)に代わりの便なしでなくなります。」を添える) |
+| 主の組の、便のある入れ替えに使う service が**すべて**新しい有効期間に1日も走らない | エラー(主の平日の便を代わりの便なしでなくさないため) | `replacementNotActive` |
 | 入れ替えに使う service が、新しい有効期間の X の日(土曜に:土曜、日祝に:日曜。祝日一覧は受け取らないので数えない。年末年始 12/29〜1/3 は入力の calendar_dates の扱いを残すので除く)のうち走らない日がある | 警告(組ごとに1つ。service ごとの日数と日付を文に入れる) | `replacementPartial`(「S000001 に便を加える…(S000049:3 日(12/5・12/12・12/19))」) |
 | 平日の便を指すほかの表の行(`tripReferences`) | エラー | すべての平日の service の便で見る |
 | 除外する系統の `excludedRouteWithoutWeekdayTrips` | 警告 | すべての平日の service の便で見る |
 
 - `weekdayServiceRunsOnWeekend`・`replacementRunsOnWeekday` は `pairs` があるときだけ見る(今の1組の処理を変えない)。`pairs` が無いときの `replacementNotActive`・`replacementPartial`(calendar の範囲で見る)は今のまま
-- 期間に走らない入れ替えに使う service を、季節の service(北海道中央バスの冬ダイヤ `S000041`・`S000042`)では外し、迂回の版(京都 `03001_C`)では加える、という分け方はしていない。どちらも警告で加える。分けるかは利用者に聞く(§6.2-7)
+- 期間に走らない入れ替えに使う service は、季節の service(北海道中央バスの冬ダイヤ `S000041`・`S000042`)も迂回の版(京都 `03001_C`)も同じく加えない(2026-11-04 に利用者が決定。§6.2-7)。判定は `isReplacementNotActive`(`ops.ts`。便があり、calendar と calendar_dates で新しい有効期間に1日も走らない)で、`checkPolicy`・`applyForm2`・画面(`skippedReplacements`)で同じ規則を使う
 - 祝日の確かめは `checkPolicy` ではしない(祝日一覧を受け取らないため)。§2.6 の祝日つきの判定は A がする
 
 ### 4.3 `applyForm2`(`form2.ts`)の変え方
 
 取り決め `docs/interfaces-1104.md` §5 の節ごとに書く。`pairs` が無いときは `pairsOf` が1組を返すので、同じ処理を通る。
 
-- **§5.2 便の分け方**:平日の便 = service_id が `weekdayServicesOf` にある便。組ごとに、入れ替えに使う service の便(除外した系統を除く)を加わる便の元にする。加わる便の service_id は、その組の `weekday`
+- **§5.2 便の分け方**:平日の便 = service_id が `weekdayServicesOf` にある便。組ごとに、入れ替えに使う service の便(除外した系統を除く)を加わる便の元にする。加わる便の service_id は、その組の `weekday`。新しい有効期間に1日も走らない入れ替えに使う service(`skippedReplacementsOf`。§4.2 の `replacementNotActiveSkipped`)の便は、加わる便の元にも、平日に戻す便の「すでにある」の照合(§4.5)にも入れない(2026-11-04 の決定)
 - **§5.3 平日に戻す便の分類**:§4.5
 - **§5.4 加わる便の trip_id**:§4.4
 - **§5.5 行の並び**:今のまま
@@ -436,6 +437,7 @@ export function weekdayServicesOf(settings: PolicySettings): Set<string>   // pa
   - `weekdayServicesKept`(新):`keptWeekdayServices` のうち便があり期間に走る service を、走る日の数(10 日以下なら日付)つきで知らせる(S5)
   - `weekdayServicesErased`(新):入れ替えに使う service の無い組(なくす service)を便数つきで知らせる(「入れ替えに使うダイヤが無いため、期間の間なくす service:01005_MSN 3 便」)
   - `replacementRunsWithWeekday`(新):入れ替えに使う service と、その組の平日の service が、新しい有効期間の同じ日に走る日(5 つまで)。その日は加わる便と入れ替えに使う service の便が同じ時刻で2回走る
+  - `replacementNotActiveSkipped`(新。2026-11-04):期間に走らないため加えなかった入れ替えに使う service と便の数(「03001_C:314 便 → 01001_C」)。組の入れ替えに使う service がすべて加わらないときは、その組の平日の便が代わりの便なしでなくなることを便数つきで添える。`validateEdit` を通って対象便の確認の「確かめること」に出る(file は trips.txt)
   - `blockIdCopied`:今のまま
 - **report**:`tripIds.rule`・`servicePartIndex` は主の組の値(主の組に入れ替えに使う service が無ければ `'append-service'`・null)。`pairs` があるときだけ、新しい項目 `report.pairs` を足す:
 
@@ -446,7 +448,8 @@ pairs?: {
   dropped: boolean
   /** なくなる平日の便の数 */
   removed: number
-  replacements: { serviceId: string; rule: TripIdRule; servicePartIndex: number | null; added: number }[]
+  /** notActive:新しい有効期間に1日も走らないため、便を加えなかった(added は 0。2026-11-04) */
+  replacements: { serviceId: string; rule: TripIdRule; servicePartIndex: number | null; added: number; notActive: boolean }[]
 }[]
 export type TripIdRule = 'replace-service-part' | 'replace-family-part' | 'append-service'
 ```
@@ -503,7 +506,7 @@ export type TripIdRule = 'replace-service-part' | 'replace-family-part' | 'appen
 
 ### 4.7 京都市営バス・北海道中央バスで気を付けること
 
-- **京都 `_C`(五条坂を通らない迂回の版)**:`01001_C` は calendar_dates だけの service で、11/2 だけ走る(その日は `01001_A` と `01003_KSU` に運休の例外がある)。期間が 11/2 を含むとき、規則の案は `01001_C` ← `03001_C` で入れ替える。`03001_C` は 10/31 だけ走るので、期間を 11/1 から始めると新しい有効期間に走らないが、便は `01001_C` の走る 11/2 に加わる(警告 `replacementNotActiveAdded`。S4)。期間の開始が 11/3 以降なら `01001_C` は出力から除かれる(情報 `pairWeekdayNotActive`)
+- **京都 `_C`(五条坂を通らない迂回の版)**:`01001_C` は calendar_dates だけの service で、11/2 だけ走る(その日は `01001_A` と `01003_KSU` に運休の例外がある)。期間が 11/2 を含むとき、規則の案は `01001_C` ← `03001_C` で入れ替える。`03001_C` は 10/31 だけ走るので、期間を 11/1 から始めると新しい有効期間に走らないので、その便は加えない(警告 `replacementNotActiveSkipped`。2026-11-04 の決定。§6.2-7)。`01001_C` の 310 便は 11/2 に代わりの便なしでなくなる(11/2 に走る便は 5,063)。期間の開始が 11/3 以降なら `01001_C` は出力から除かれる(情報 `pairWeekdayNotActive`)
 - **京都 SRV(秋の土日祝の臨時便)**:特別で、接尾辞の合う平日の service が無いので使わない。土曜・日祝の自分の日にはそのまま走る
 - **年末(12/29〜1/3)**:京都は `01001` 系の削除と `02001` 系の追加、北海道中央バスは `S000001` の削除と土日祝の service の追加で表している。calendar_dates はそのまま残すので、入れ替えたあとも年末は日祝ダイヤで走る。北海道中央バスの土日祝の service は年末の平日にも走る(網羅率 0.02)が、その日は `S000001` が走らないので、加わる便と重ならない(重なる日があれば `replacementRunsWithWeekday` が出す)
 - **block_id**:京都は 17,796 便にある。今と同じく警告 `blockIdCopied`
@@ -561,6 +564,8 @@ export type TripIdRule = 'replace-service-part' | 'replace-family-part' | 'appen
 
 - **AI(Claude)**:ツールの定義(`claude_tools.json`)は変えない(変えると `agents/coordinator.md` の写しと `ant apply` による版の上げ直しが要る)。グループの情報は、結果と [画面の状態] の行で伝える
   - `apply_policy` の結果の `services` に `groups: {pairs: {weekday, replacements}[], kept: string[], erased: string[]}` を足す
+    - 数え方は画面の文・組の内訳(`sentenceServices`)と同じ。期間に走らないため組ごと除く平日の service は `pairs`・`erased` から外して `dropped_for_period` に、期間に走らないため加えない入れ替えに使う service は `pairs` から外して `not_added_for_period` に書く。入れ替えに使う service がすべて加わらない組は `erased` に入れる(2026-11-04)
+    - 下書きの `summary.pairs`(組ごと)の `replacements_not_added_for_period` は、組ごと除いた組(`dropped_for_period: true`)では空にする
   - `screenLines.ts` の [画面の状態]:「平日のダイヤ:01001 ほか 8(グループ分けで確定)、土曜:03001 ほか 4。なくす:01005_MSN。残す:01002_RIT ほか 2」
   - `defaultPolicyServices`(`store/chat.ts`)は `policyServicesFor` の値を返す
 - **変更指示書**(`ChangeOrder.tsx`):「平日 X → 土曜 Y」を、組があるときは組ごとの行にし、なくす service と残す service を別の行に並べる。第2段を外したときは、実際に入れ替えた主の組だけを「入れ替え」に書き、ほかを「入れ替えていない」に書く(S6。実際にしたことと食い違う書き方をしない)
@@ -568,7 +573,7 @@ export type TripIdRule = 'replace-service-part' | 'replace-family-part' | 'appen
 
 ### 5.4 運営情報のページと README
 
-- `DataSources.tsx` に「送り先」の欄を足し、Jev を呼んだときだけ出す:「ダイヤのグループ分けの確かめ:TypeSafe AI Jev(TypeSafe AI)。Vercel AI Gateway を経由します。送るのは service ごとの集計(service_id、運行日の数と走る日の割合、便数、系統名と系統ごとの便数、行き先、始発・終着の時刻、運行日が 10 日以下の service の日付、事業者名、有効期間)で、GTFS のファイル・停留所の位置・時刻表そのものは送りません。Vercel は、TypeSafe AI が答えないときに別の会社(DigitalOcean)に回すことがあります。」
+- `DataSources.tsx` に「送り先」の欄を足し、Jev を呼んだときだけ出す:「ダイヤのグループ分けの確かめ:TypeSafe AI Jev(TypeSafe AI)。Vercel AI Gateway を経由します。送るのは service ごとの集計(service_id、運行日の数と走る日の割合、便数、系統名と系統ごとの便数、行き先、始発・終着の時刻、運行日が 10 日以下の service の日付、事業者名、有効期間)で、GTFS のファイル・停留所の位置・時刻表そのものは送りません。TypeSafe AI に限って送ります(Vercel がほかの会社に回さないよう指定しています。TypeSafe AI が答えないときは、確かめを失敗として扱います)。」
 - `AboutPage.tsx` の、AI(Claude)の利用に触れている所に、Jev を使うことと、Claude 以外の AI であること、役割(service の分け方の確かめだけ。会話・提案・説明は Claude)を足す
 - README:「使っている AI と送るデータ」の節(無ければ作る)に、Claude(Anthropic)と並べて Jev を書く。サーバーの環境変数の一覧に §3.3 の7つを足す。`docs/deploy.md` にも足す
 - CLAUDE.md の「アプリ内の Claude」に、Jev を使うこととこの文書への参照を足す
@@ -614,14 +619,14 @@ export interface ServiceGroupsState {
 
 ### 6.2 残っている確かめ(利用者に聞く)
 
-1. **Vercel が別の会社(DigitalOcean)に回すこと。** 試しの応答に予備の送り先として出ていた。中継は今、回すのを止めていない(転送先を後から返してログに残すだけ)。README・画面に「DigitalOcean にも渡りうる」と書いて受け入れるか、`providerOptions.gateway.only` などで TypeSafe だけにするか。後者は口が受け付けるかを確かめる呼び出しがもう1回要る(許された試しの1回は §3.2 で使った)。決まるまでコードは変えず、`.env.example`・`docs/deploy.md`・1105 §4.14 には回しうることを書いた
+1. **Vercel が別の会社(DigitalOcean)に回すこと。** 試しの応答に予備の送り先として出ていた。2026-11-04 に利用者が「TypeSafe だけに限る指定を試し、効けば入れる」と決めた。2026-11-04 に、本文に `providerOptions.gateway.only: ["typesafe-ai"]` を足して1回送った(北海道中央バスの集計を架空の名前に差し替えた `server/tests/fixtures/jev_judge_request.json` の土曜の target。入力 1,408・出力 60 トークン、$0.000059)。HTTP 200、`warnings: []`、`routing.fallbacksAvailable: []`、`routing.planningReasoning` は「Provider set restricted to: typesafe-ai. System credentials planned for: typesafe-ai. Total execution order: typesafe-ai(system)」、`finalProvider: "typesafe-ai"`。口は指定を受け付け、予備の転送先(DigitalOcean)が外れた。中継は本文に `providerOptions: {"gateway": {"only": ["typesafe-ai"]}}` を必ず入れ、README・画面・運営情報のページ・`.env.example`・`docs/deploy.md`・1105 §4.14 の「回すことがある」を「TypeSafe AI に限って送る」に直した。TypeSafe AI が答えないときは、ほかの会社に回らず失敗になる(済み)
 2. **データを残さない指定(`zeroDataRetention`)。** 試していない。確かめないなら README に「データの保持は Vercel・TypeSafe の規約による」と書く
 3. **新しい質問(§3.3)の答えの質を、実際の口で確かめるか。** 京都 `03001_C`・北海道中央バス `S000027` などで数回(1回約 0.05 円)。確かめないなら、しきい値は f7 と試しの1回の値で始める
 4. **形2で表せない service の既定をエラーにしてよいか。** 北海道中央バスで「土曜ダイヤに」を選ぶと、1〜2 便の service のために利用者が「残す」を選ぶ手間が増える
 5. **一部の日だけ走る平日の service の既定を「残す」にしてよいか。** 「平日を土曜ダイヤに」の字義どおりなら「なくす」になる
 6. **デモに使う GTFS。** 単純な形は道北バス、複雑な形は士別軌道(参照データの 6642 の中にあり、到達圏も見られる。7 service、形2で表せない service あり)、多対1は北海道中央バス(到達圏には 6440・6441 の参照データが要る)を案とした。**ただし士別軌道・北海道中央バスは、今は translations.txt の `tripReferences` で減便の方針を適用できない(§4.7 の表)。** translations の規則を先に入れるか、デモを今適用できる GTFS(道北バス・旭川電気軌道・京都市営バス)にするかを、11/6 15:00 の判断より前に決める
-7. **期間に1日も走らない入れ替えに使う service を加えるか外すか。** 今はどの組でも警告(`replacementNotActiveAdded`)で加える。京都 `01001_C` ← `03001_C`(迂回の版。11/2 の便として加えたい)では正しいが、北海道中央バスで期間を 10 月にすると、冬ダイヤの `S000041`・`S000042`(11/7〜)の便が 10 月の平日に加わる。案:calendar の行を持つ入れ替えに使う service(季節のダイヤ)は組から外して警告、calendar_dates だけの service どうし(迂回の版)は加える。利用者に決めてもらう
-8. **テストの固定のデータ。** `server/tests/fixtures/jev_judge_request.json` は北海道中央バスの GTFS から集計した事業者名・系統名・行き先を含む(CC BY 4.0。出典は `server/tests/fixtures/README.md`)。リポジトリを公開する前に、このまま入れてよいか、作った名前に置き換えるかを決める
+7. **期間に1日も走らない入れ替えに使う service を加えるか外すか。** **決定(2026-11-04、利用者):加えない。** 季節ダイヤ・迂回の版が平日に混ざらないようにするため。主の組・ほかの組とも同じで、警告 `replacementNotActiveSkipped` を出し、画面(減便内容の確認・組の内訳)・確認の結果(確かめること)・変更指示書(組の内訳)に「期間に走らないため加えません」と出す。主の組の入れ替えに使う service がすべて走らないときのエラー `replacementNotActive` は今のまま。結果:北海道中央バスで期間を 10 月にしても、冬ダイヤの `S000041`・`S000042`(11/7〜)の便は 10 月の平日に加わらない。京都で期間を 11/1 から始めると、`03001_C`(10/31 だけ走る迂回の版)の便は加わらず、`01001_C` の 310 便は 11/2 に代わりの便なしでなくなる(その組の入れ替えに使う service がすべて加わらないため。警告の文に添える)。前の扱い(警告 `replacementNotActiveAdded` で加える)と、季節のダイヤだけ外す案は採らない
+8. **テストの固定のデータ。** `server/tests/fixtures/jev_judge_request.json` は北海道中央バスの GTFS から集計した事業者名・系統名・行き先を含む(CC BY 4.0。出典は `server/tests/fixtures/README.md`)。リポジトリを公開する前に、このまま入れてよいか、作った名前に置き換えるかを決める。→ **決定(2026-11-04、利用者)**:事業者名・系統名・行き先を架空の名前に差し替えた(形・数は保つ)
 
 ## 7. 課題の分け方と取り決め
 
@@ -688,7 +693,7 @@ export interface ServiceGroupsState {
 **受け入れ条件**(Jev は `httpx2` の `MockTransport` で置き換え、実際の口は呼ばない):
 
 1. キーが無ければ `GET` が `available: false`・`reason: "noKey"`、`POST` が 503(日本語)。`DISPATCHER_JEV_URL` のホストが `ai-gateway.vercel.sh` 以外か `https` でなければ `reason: "badUrl"` で、上流に1回も送らない
-2. 上流への要求:URL・ヘッダー(§3.2 の5つ。`Authorization` は `Bearer` + キー)・本文が `{state, questions}` だけ(`model` を本文に入れない)。質問の型は `boolean`(criteria なし)と `choice`。質問の文にブラウザから来た文字列が入らない(service_id と候補の名前を除く)
+2. 上流への要求:URL・ヘッダー(§3.2 の5つ。`Authorization` は `Bearer` + キー)・本文が `{state, questions, providerOptions}` だけ(`model` を本文に入れない。`providerOptions` は `{"gateway": {"only": ["typesafe-ai"]}}`)。質問の型は `boolean`(criteria なし)と `choice`。質問の文にブラウザから来た文字列が入らない(service_id と候補の名前を除く)
 3. 応答の `results[].sent` が、上流に実際に送った本文とバイト単位で同じ(JSON として同じ)
 4. 形の確かめ:知らない項目・上限を超えた数・長さ・`services` に無い service_id で 422、本文が 256 KB を超えると 413。422 の本文に送られた値が入らない
 5. 回数制限:IP ごとの1時間・1日で 429(日本語)。全体の1日の target の数と額の上限で、残りの target が `budget`。上限の数は SQLite に残り、アプリを作り直しても(同じ DB で)続く
@@ -863,11 +868,12 @@ export interface JevTargetResult {
 
 1. `form2.verify.test.ts`(正解データ)を変えずに通る。今ある `form2.test.ts`・`ops.test.ts` ほかも変えずに通る
 2. `pairs` が `[{weekday: wk, replacements: [rp]}]`・`keptWeekdayServices: []` のときの `writeGtfsZip` の結果が、`pairs` 無しのときとバイト単位で同じ(道北バスと手で作るフィードの両方)。report は `pairs` と `addBack.alreadyKept`・`notActive` のほかは同じ
-3. 手で作るフィード(`form2.fixture.ts`):主の組 + 接尾辞の組 + 2つの入れ替えに使う service を持つ組 + なくす service + 残す service + 期間に走らない組 + 月〜土の service。便の分け方、trip_id の3つの規則(とくに部分の数がそろわない便の `replace-family-part`、共通の k が2つあるときの一番右、すべての便に共通しない k を使わないこと)、組をまたぐ署名と走る日の包含(S2)、`alreadyKept`(S3)、主でない組の `replacementNotActiveAdded`(S4)、`pairWeekdayNotActive`、`duplicateService`(M2)、`weekdayServiceRunsOnWeekend`、`badPairs`、`weekdayServicesKept`・`weekdayServicesErased`・`replacementRunsWithWeekday`
+3. 手で作るフィード(`form2.fixture.ts`):主の組 + 接尾辞の組 + 2つの入れ替えに使う service を持つ組 + なくす service + 残す service + 期間に走らない組 + 月〜土の service。便の分け方、trip_id の3つの規則(とくに部分の数がそろわない便の `replace-family-part`、共通の k が2つあるときの一番右、すべての便に共通しない k を使わないこと)、組をまたぐ署名と走る日の包含(S2)、`alreadyKept`(S3)、期間に走らない入れ替えに使う service を加えない `replacementNotActiveSkipped`(主の組も主でない組も。加えない便と同じ署名の平日の便を平日に戻せること)、`pairWeekdayNotActive`、`duplicateService`(M2)、`weekdayServiceRunsOnWeekend`、`badPairs`、`weekdayServicesKept`・`weekdayServicesErased`・`replacementRunsWithWeekday`
 4. 主の組に入れ替えに使う service が無い `pairs`(名士バスの形)で、平日の便がなくなり、加わる便が 0、`replacementService` が `''` でもエラーにならない
 5. 実データ(`form2.multi.verify.test.ts`。ファイルが無ければスキップ):
    - 京都、土曜に、期間 20261105〜、§2.8 の組:`validateEdit` のエラーが 0、`collisions` が 0、主の組の `rule` が `replace-family-part`・`servicePartIndex` 1、11/11 に走る便が 5,417、`01001_C` と `03001_C` は出力から除かれる
-   - 京都、同じ組、期間 20261101〜:エラーが 0、`replacementNotActiveAdded` が `03001_C`、11/2 に走る便が 5,377
+   - 京都、同じ組、期間 20261101〜:エラーが 0、`replacementNotActiveSkipped` が `03001_C`、11/2 に走る便が 5,063(加えていたときの 5,377 から `03001_C` の 314 便を引く)、`01001_C` の組は加わる便 0
+   - 北海道中央バス、土曜に、期間 20261005〜20261031:エラーが 0、`replacementNotActiveSkipped` が `S000041`・`S000042`、加わる便の元に冬ダイヤの便が無い
    - 北海道中央バス、土曜に、期間 20261109〜、§2.8 の組(`S000039`・`S000044` は残す):11/11 に走る便が 3,739 で、その便の署名の多重集合が、入力の 11/14 に走る便の署名に残した3便を足したものと同じ
    - 北海道中央バス、日祝に(`S000040` を残す):11/11 に走る便が 3,636
    - 北海道中央バスで `S000039` を `pairs` に入れると `weekdayServiceRunsOnWeekend`
@@ -913,7 +919,7 @@ export interface JevTargetResult {
 | S1 trip_id の置き換えの位置 | §4.4 |
 | S2 署名の表の取りこぼし | §4.5 の 5 |
 | S3 残す service の便を平日に戻す | §4.5 の `alreadyKept` |
-| S4 主でない組の `replacementNotActive` | §4.2 の `replacementNotActiveAdded` |
+| S4 主でない組の `replacementNotActive` | §4.2 の `replacementNotActiveSkipped`(2026-11-04 の決定で、加える警告から加えない警告に変えた) |
 | S5 特別の service を残すと平日ダイヤの日ができる | §2.5 と §4.3 の `weekdayServicesKept` |
 | S6 第1段でグループの語を使うと食い違う | 両段を入れるので通常は起きない。第2段を外したときの書き方を §5.3 に書いた |
 | S7 食い違いのまま確定できるか | §3.4 の確定の条件 |
@@ -933,13 +939,13 @@ export interface JevTargetResult {
 | --- | --- | --- |
 | must:組ごと除く平日の service の便を「平日に戻した」と報告する | 本当(京都 11/5〜で `08600_01001_1356_C` が `accepted` に入り、出力に無かった) | §4.5 の `notActive`。`keepIds`・押さえる trip_id に入れない。除外した系統の便も `tripIds.kept` に数えない。1104 §5.3 に足した |
 | should:translations.txt で止まるのは北海道中央バスだけではない | 本当(7 つの GTFS。§4.7 の表) | 規則は入れていない(利用者の判断。§6.2-6)。表のテストと §4.7・§6.2-6 を直した |
-| should:期間に走らない入れ替えに使う service の扱いが組で違う | 本当(北海道中央バス 10/5〜10/31 で主の組の `replacementNotActive` が方針全体を止めた) | 主の組も主でない組と同じ警告で加える。主の組の入れ替えに使う service がすべて走らないときだけエラー。季節の service を外すかは利用者に聞く(§6.2-7) |
+| should:期間に走らない入れ替えに使う service の扱いが組で違う | 本当(北海道中央バス 10/5〜10/31 で主の組の `replacementNotActive` が方針全体を止めた) | 主の組も主でない組と同じ扱いにする。主の組の入れ替えに使う service がすべて走らないときだけエラー。期間に走らない入れ替えに使う service は、2026-11-04 の利用者の決定で加えない(§6.2-7) |
 | should:`diffWeekdayTrips` が組ごと除いた service の便を「なくなる便」に数える | 本当(京都 11/5〜の `01001_C` の 310 便) | `activeWeekdayServicesOf(result)` を足した。`store/edit.ts` の `diffOf` は D が直す(§4.6) |
 | should:`replacementPartial` が北海道中央バスで誤った警告ばかりになる | 本当 | X の日(土曜・日曜。年末年始を除く)のうち走らない日を数え、組ごとに1つにした。北海道中央バス 11/9〜では `S000049` の 3 日だけ(`S000002`・`S000027` の 1/2 は年末年始なので数えない) |
 | should:入れ替えに使う service が平日にも走る場合を止めていない | 本当(エラーが無かった) | `replacementRunsOnWeekday`(calendar の月〜金の列)。京都・北海道中央バスの規則の案では出ない |
 | should:実データの照合が1日だけ | 本当 | `checkEveryDay` で新しい有効期間の毎日を照らす(§7.6-5)。照合が誤りを見つけることも確かめた |
 | should:`trust_env` が既定の True | 本当(本物の通信では `HTTPS_PROXY` の取っ手が入る) | `trust_env=False`(§3.3)。テストは取っ手が無いことを確かめる |
-| should:DigitalOcean に回ることがある | 本当(試しの応答) | 許された試しの1回は使ったので、`providerOptions.gateway.only` は確かめていない。コードは変えず、回しうることを `.env.example`・`docs/deploy.md`・1105 §4.14 に書いた。§6.2-1 で利用者に聞く |
+| should:DigitalOcean に回ることがある | 本当(試しの応答) | 2026-11-04 に `providerOptions.gateway.only: ["typesafe-ai"]` を1回試し、`fallbacksAvailable` が空になった。中継はこの指定を必ず送る(§3.2・§6.2-1) |
 | should:額の上限が `cost` の届いたときだけ効く | 本当 | 送る前に見込みの額を足し、`cost` で差を直す(§3.3) |
 | should:`_refuse_real_jev` の例外が飲み込まれる | 本当 | 偽物が呼ばれた回数を数え、後片付けで失敗にする |
 | should:送った後の失敗に `sent` が無い | 本当 | `failures[].sent`(§3.3・§7.5、1105 §4.14、web の型) |
@@ -951,5 +957,5 @@ export interface JevTargetResult {
 | nit:Content-Length の無い本文の 413 のテストが無い | 本当 | 足した |
 | nit:IP ごとの値の 0 | 本当 | `.env.example`・`docs/deploy.md`・1105 §4.14 に「0 にすると全員が 429」と書いた |
 | nit:§3.3 の httpx | 本当 | `httpx2` に直した(§3.3・§3.5・§7.4) |
-| nit:固定のデータの出典 | — | `server/tests/fixtures/README.md` に出典を書いた。このまま公開してよいかは利用者に聞く(§6.2-8) |
+| nit:固定のデータの出典 | — | `server/tests/fixtures/README.md` に出典を書いた。事業者名・系統名・行き先は、利用者の決定で架空の名前に差し替えた(§6.2-8) |
 

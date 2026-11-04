@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
 import { facilitiesInUse, useResearchStore } from '@/store/research'
 import { useServiceGroupsStore } from '@/store/serviceGroups'
-import { JEV_FALLBACK_NOTE, JEV_SENT_SCOPE } from '@/components/steps/load/serviceGroupsText'
+import { JEV_ROUTING_NOTE, JEV_SENT_SCOPE } from '@/components/steps/load/serviceGroupsText'
 import { dataSourceRows, type DataSourceUsage } from './dataSourceRows'
 
 /** 出典の一覧の表示(状態は引数で受ける。画面の部品 DataSources が store から渡す) */
@@ -29,7 +29,7 @@ export function DataSourcesView({ holidays, usage }: { holidays: HolidayState; u
 
 /**
  * 「データの送り先」。ダイヤのグループ分けの確かめで Jev に送ったときだけ出す(docs/design-service-groups.md §5.4)。
- * 送る中身と送らないもの、Vercel が別の会社に回すことがある点は、読み込みの手順のスイッチの下と同じ文
+ * 送る中身と送らないもの、転送先を TypeSafe AI に限っている点は、読み込みの手順のスイッチの下と同じ文
  */
 export function JevDestination() {
   return (
@@ -43,7 +43,7 @@ export function JevDestination() {
       </p>
       <p className="text-muted-foreground">{JEV_SENT_SCOPE}</p>
       <p className="text-muted-foreground">
-        {JEV_FALLBACK_NOTE}データの保持は、Vercel と TypeSafe AI の規約によります。
+        {JEV_ROUTING_NOTE}データの保持は、Vercel と TypeSafe AI の規約によります。
       </p>
     </section>
   )

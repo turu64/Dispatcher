@@ -100,17 +100,21 @@ export function diaLabel(day: string, ids: readonly string[]): string {
 /**
  * 組の表のある減便の方針の1文:「平日のダイヤ(01001 ほか 8)を土曜のダイヤ(03001 ほか 4)の便に入れ替えます。」。
  * なくす service・残す service があれば「なくす service 1 つ・平日のまま残す service 2 つ」を添える。
- * report を渡すと、期間に走らないため組ごと除いた平日の service を数えない
+ * report を渡すと、期間に走らないため組ごと除いた平日の service と、期間に走らないため加えない入れ替えに使う service を
+ * 数えない(入れ替えに使う service がすべて加わらない組は、便をなくす service に数える)
  */
 export function groupSentence(
   settings: Pick<PolicySettings, 'kind' | 'weekdayService' | 'replacementService' | 'pairs' | 'keptWeekdayServices'>,
   report?: Pick<Form2Report, 'pairs'> | null,
   /** 承認の前に、期間に走らないため除くと分かっている平日の service(droppedPairWeekdays) */
   droppedBefore?: ReadonlySet<string>,
+  /** 承認の前に、期間に走らないため加えないと分かっている入れ替えに使う service(skippedReplacements) */
+  skippedBefore?: ReadonlySet<string>,
 ): string {
   // 版の report があれば、期間に走らないため組ごと除いた平日の service は数えない(組の内訳の「除いた組」に出す)
   const dropped = new Set([...(droppedBefore ?? []), ...(report?.pairs ?? []).filter((p) => p.dropped).map((p) => p.weekday)])
-  const { replaced, erased } = sentenceServices(settings, dropped)
+  const skipped = new Set([...(skippedBefore ?? []), ...skippedOfReport(report)])
+  const { replaced, erased } = sentenceServices(settings, dropped, skipped)
   const kept = splitPairs(settings).kept
   const label = REPLACEMENT_LABELS[settings.kind]
   if (replaced.length === 0) {
@@ -124,6 +128,14 @@ export function groupSentence(
   ]
   return extra.length > 0 ? `${head}ほかに、${extra.join('・')}があります。` : head
 }
+
+/** 版の report の、期間に走らないため加えなかった入れ替えに使う service(組ごと除いた組のものは数えない) */
+export function skippedOfReport(report?: Pick<Form2Report, 'pairs'> | null): string[] {
+  return (report?.pairs ?? []).filter((p) => !p.dropped).flatMap((p) => p.replacements.filter((r) => r.notActive).map((r) => r.serviceId))
+}
+
+/** 期間に走らないため加えない入れ替えに使う service に添える文(組の内訳・変更指示書) */
+export const SKIPPED_REPLACEMENT_NOTE = '期間に走らないため加えません'
 
 /** 足し戻しの分類(§5.3、docs/design-service-groups.md §4.5)ごとの、受け付けなかった理由 */
 export function addBackRejections(

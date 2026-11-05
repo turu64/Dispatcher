@@ -6,11 +6,12 @@ import { smallFeed } from '@/gtfs/edit/form2.fixture'
 import type { Stop } from '@/gtfs/parse'
 import { mergeBusstopFiles, type OperatorOverlap } from '@/ref/busstops'
 import { facilityCategory, facilityMeshes, mergeFacilityFiles, researchCandidates, type Facility } from '@/ref/facilities'
+import { useDriversStore } from '@/store/drivers'
 import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
 import { useReachStore } from '@/store/reach'
 import { useResearchStore } from '@/store/research'
-import { FacilityLayer, OTHER_STOPS_LEGEND, OTHER_STOPS_LEGEND_NOTE } from './FacilityLayer'
+import { FacilityLayer, MAP_OVERLAY_COLUMN_CLASS, OTHER_STOPS_LEGEND, OTHER_STOPS_LEGEND_NOTE } from './FacilityLayer'
 import {
   FACILITIES_HIGHLIGHT_LAYER,
   FACILITIES_HIGHLIGHT_RING,
@@ -291,8 +292,10 @@ describe('FacilityLayer', () => {
     const legend = screen.getByRole('group', { name: '施設の凡例' })
     const column = screen.getByTestId('facility-overlay')
     expect(legend.parentElement).toBe(column)
-    expect(column.className).toContain('top-24')
-    expect(column.className).toContain('right-3')
+    // 列そのものは、地図の右上の列(MapOverlays。利用者が置いた場所の凡例と共通)の中に入る
+    expect(MAP_OVERLAY_COLUMN_CLASS).toContain('top-24')
+    expect(MAP_OVERLAY_COLUMN_CLASS).toContain('right-3')
+    expect(column.className).not.toContain('absolute')
     for (const el of [column, legend]) expect(el.className).not.toMatch(/(^|\s)bottom-/)
 
     // 記号を押すと、名前を凡例の下(同じ列)に出す
@@ -303,6 +306,19 @@ describe('FacilityLayer', () => {
     expect(picked.parentElement).toBe(column)
     expect([...column.children].indexOf(picked)).toBeGreaterThan([...column.children].indexOf(legend))
     expect(picked.className).not.toMatch(/(^|\s)(absolute|bottom-)/)
+  })
+
+  it('営業所などを地図で置いている途中は、施設の記号を押しても名前を出さない', async () => {
+    const { map, layers } = fakeMap()
+    render(<FacilityLayer visible />)
+    await waitFor(() => expect(layers.has(FACILITIES_LAYER)).toBe(true))
+    const onClick = map.on.mock.calls.find((c) => c[0] === 'click')![2] as (e: unknown) => void
+    act(() => useDriversStore.getState().startPlacing('office'))
+    act(() => onClick({ features: [{ properties: { name: '病院', kind: 'hospital', symbol: 'hospital' } }] }))
+    expect(screen.queryByRole('status')).toBeNull()
+    act(() => useDriversStore.getState().cancelPlacing())
+    act(() => onClick({ features: [{ properties: { name: '病院', kind: 'hospital', symbol: 'hospital' } }] }))
+    expect(screen.getByRole('status').textContent).toContain('病院')
   })
 
   it('GTFS を削除・読み込み直したら、押した記号の名前を消す(次の GTFS で前提情報の手順を開いても出さない)', async () => {

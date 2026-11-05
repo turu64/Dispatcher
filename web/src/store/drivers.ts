@@ -27,9 +27,12 @@ import { useReachStore } from './reach'
 
 /**
  * 要る運転士の数(目安)の入力と、減便の前後の比較(指摘 24・18.1、docs/tasks-1105.md の D03)。
- * 画面は影響(到達圏)の手順の components/steps/reach/DriverPanel.tsx。値はメモリだけに持ち、ブラウザにもサーバーにも保存しない。
+ * 入力は前提情報の手順の「運行の前提」の欄(components/steps/research/OperationPremise.tsx)、結果は影響(到達圏)の手順の
+ * components/steps/reach/DriverPanel.tsx。値はメモリだけに持ち、ブラウザにもサーバーにも保存しない。
  *
  * - 欠員:その日に乗務できない運転士の数(0〜999 の整数。空なら null)
+ * - 在籍の運転士の数(任意。0〜9999 の整数。空なら null)。入れたときだけ、乗務できる運転士(在籍 − 欠員)と減便後に要る勤務の数を
+ *   参考に並べる(rosterCheck)。主な判定(減便で減る勤務の数と欠員の比較)には使わない
  * - 仮定:勤務の数の推定(gtfs/edit/duties.ts の estimateDuties)に渡す値。画面で変えるのは拘束の上限(13/15 時間)・点呼の分・回送の速さ
  * - 営業所・車庫・休憩施設:利用者が地図で置くか停留所から選んだ場所(D05。画面は reach/PlacesEditor.tsx、地図は map/PlacesLayer.tsx)。
  *   推定には次の対応で渡す(dutyKindOf):営業所 → depot(出庫・入庫の回送と点呼の場所。休憩も取れる)、車庫 → garage
@@ -37,12 +40,14 @@ import { useReachStore } from './reach'
  *   duties.ts は、休憩施設が1つでもあれば休憩施設・営業所の近くのすき間だけを休憩に数え、無ければどこでも休憩に数える
  * - 地図で置いている途中の種類(placing)
  *
- * GTFS を読み込み直すと(削除しても)、欠員と施設は消える(store/gtfs の feed を見張る。store/research.ts と同じ)。仮定は残す
+ * GTFS を読み込み直すと(削除しても)、欠員・在籍の運転士の数と施設は消える(store/gtfs の feed を見張る。store/research.ts と同じ)。仮定は残す
  * (到達圏の条件と同じく、利用者の設定として別の GTFS でも使う)。
  */
 
 /** 欠員の人数の上限 */
 export const MAX_SHORTAGE = 999
+/** 在籍の運転士の数の上限 */
+export const MAX_ROSTER = 9999
 
 /**
  * 利用者が置いた場所。DutyPlace(推定に渡す形)を広げたもので、kind は type から決める(dutyKindOf)。
@@ -64,6 +69,8 @@ export function dutyKindOf(type: PlaceType): DutyPlace['kind'] {
 interface DriverState {
   /** 欠員(その日に乗務できない運転士の数)。入れていなければ null */
   shortage: number | null
+  /** 在籍の運転士の数。入れていなければ null */
+  roster: number | null
   /** 勤務の数の推定の仮定(DUTY_DEFAULTS から始める) */
   params: DutyParams
   /** 営業所・車庫・休憩施設(利用者が置いた順) */
@@ -71,6 +78,7 @@ interface DriverState {
   /** 地図で置いている途中の種類。置いていなければ null */
   placing: PlaceType | null
   setShortage: (value: number | null) => void
+  setRoster: (value: number | null) => void
   setParams: (patch: Partial<DutyParams>) => void
   /** 仮定を既定に戻す */
   resetParams: () => void
@@ -85,7 +93,7 @@ interface DriverState {
   startPlacing: (type: PlaceType) => void
   /** 地図で置くのをやめる */
   cancelPlacing: () => void
-  /** 欠員と施設を消す(GTFS の読み込み直し・削除) */
+  /** 欠員・在籍の運転士の数と施設を消す(GTFS の読み込み直し・削除) */
   reset: () => void
 }
 
@@ -110,12 +118,17 @@ export function defaultPlaceName(label: string, places: readonly Pick<UserPlace,
 
 export const useDriversStore = create<DriverState>()((set, get) => ({
   shortage: null,
+  roster: null,
   params: { ...DUTY_DEFAULTS },
   places: [],
   placing: null,
   setShortage: (value) => {
     if (value !== null && (!Number.isInteger(value) || value < 0 || value > MAX_SHORTAGE)) return
     set({ shortage: value })
+  },
+  setRoster: (value) => {
+    if (value !== null && (!Number.isInteger(value) || value < 0 || value > MAX_ROSTER)) return
+    set({ roster: value })
   },
   setParams: (patch) => set((s) => ({ params: { ...s.params, ...patch } })),
   resetParams: () => set({ params: { ...DUTY_DEFAULTS } }),
@@ -147,10 +160,10 @@ export const useDriversStore = create<DriverState>()((set, get) => ({
     if (get().places.length < MAX_PLACES) set({ placing: type })
   },
   cancelPlacing: () => set({ placing: null }),
-  reset: () => set({ shortage: null, places: [], placing: null }),
+  reset: () => set({ shortage: null, roster: null, places: [], placing: null }),
 }))
 
-// GTFS を読み込み直したら(捨てたときも)、前の GTFS の欠員と施設を消す
+// GTFS を読み込み直したら(捨てたときも)、前の GTFS の欠員・在籍の運転士の数と施設を消す
 useGtfsStore.subscribe((s, prev) => {
   if (s.feed !== prev.feed) useDriversStore.getState().reset()
 })
@@ -202,6 +215,28 @@ export interface DriverComparison {
   assumptions: string[]
   /** 営業所・車庫・休憩施設を置く前と後の勤務の数。置いていなければ null */
   placesEffect: PlacesEffect | null
+  /** 在籍の運転士の数を入れたときの参考の数。入れていなければ null */
+  rosterCheck: RosterCheck | null
+}
+
+/**
+ * 在籍の運転士の数を入れたときの参考(主な判定には使わない)。
+ * 乗務できる運転士(在籍 − 欠員。欠員を入れていなければ在籍のまま)と、要る勤務の数(目安。減便後、減便後が無ければ減便前)を並べる
+ */
+export interface RosterCheck {
+  roster: number
+  /** 欠員(入れていなければ null) */
+  shortage: number | null
+  /** 乗務できる運転士の数(在籍 − 欠員)。欠員が在籍より多ければ 0 */
+  available: number
+  /** 欠員が在籍より多い(数の入れ違いの疑い) */
+  shortageOverRoster: boolean
+  /** 比べる勤務の数(目安) */
+  needed: number
+  /** needed が減便後の数か、減便後が無いため減便前の数か */
+  basis: 'after' | 'before'
+  /** 要る勤務の数が乗務できる運転士の数を上回る数(上回らなければ 0) */
+  over: number
 }
 
 /** 営業所・車庫・休憩施設を置く前(without)と後(with)の勤務の数 */
@@ -224,6 +259,8 @@ export interface DriverInput {
   params: DutyParams
   places: readonly DutyPlace[]
   shortage: number | null
+  /** 在籍の運転士の数(省けば null) */
+  roster?: number | null
 }
 
 // 同じ GTFS・日付・仮定なら計算し直さない(手順を移ったり欠員を打ったりするたびに推定し直さないため)
@@ -292,9 +329,26 @@ function verdictOf(
   return { kind: 'short', reduced: dutyDiff, shortage, missing: shortage - dutyDiff }
 }
 
+/** 在籍の運転士の数の参考(在籍を入れていなければ null) */
+function rosterCheckOf(roster: number | null, shortage: number | null, before: DriverSide, after: DriverSide | null): RosterCheck | null {
+  if (roster === null) return null
+  const needed = after ? after.duties.dutyCount : before.duties.dutyCount
+  const available = Math.max(0, roster - (shortage ?? 0))
+  return {
+    roster,
+    shortage,
+    available,
+    shortageOverRoster: shortage !== null && shortage > roster,
+    needed,
+    basis: after ? 'after' : 'before',
+    over: Math.max(0, needed - available),
+  }
+}
+
 /** 減便の前後の便・営業運行時間・勤務の数を比べ、欠員と照らす */
 export function compareDrivers(input: DriverInput): DriverComparison {
   const { base, edited, date, weekdayServices, params, places, shortage } = input
+  const roster = input.roster ?? null
   const before = driverSide(base, date, params, places)
   const after = edited ? driverSide(edited.feed, date, params, places) : null
   const weekday =
@@ -322,6 +376,7 @@ export function compareDrivers(input: DriverInput): DriverComparison {
     verdict: verdictOf(after, weekday, dutyDiff, shortage),
     assumptions: before.duties.assumptions,
     placesEffect,
+    rosterCheck: rosterCheckOf(roster, shortage, before, after),
   }
 }
 
@@ -343,7 +398,7 @@ export function weekdayServicesOfEdit(state: Pick<EditState, 'draft' | 'versions
 }
 
 /**
- * 画面の今の状態(減便前の GTFS・減便後の GTFS・比較する日付・欠員・仮定)での比較。
+ * 画面の今の状態(減便前の GTFS・減便後の GTFS・比較する日付・欠員・在籍の運転士の数・仮定)での比較。
  * GTFS か比較する日付が無ければ null。影響(到達圏)の手順の DriverPanel が使う。
  * 計算は描画の中(useMemo)で行う。道北バスで比較する日付を変えたときの計算は、場所なしで 13〜25ms、営業所・車庫・休憩施設を
  * 置いて 32〜42ms(Node、11/5 に測定。最初の1回は 83ms のことがある)で 100ms を下回るため、Web Worker には移していない
@@ -355,6 +410,7 @@ export function useDriverComparison(): DriverComparison | null {
   const draft = useEditStore((s) => s.draft)
   const versions = useEditStore((s) => s.versions)
   const shortage = useDriversStore((s) => s.shortage)
+  const roster = useDriversStore((s) => s.roster)
   const params = useDriversStore((s) => s.params)
   const places = useDriversStore((s) => s.places)
   const weekdayServices = useMemo(() => weekdayServicesOfEdit({ draft, versions }), [draft, versions])
@@ -368,6 +424,7 @@ export function useDriverComparison(): DriverComparison | null {
       params,
       places,
       shortage,
+      roster,
     })
-  }, [base, edited, date, weekdayServices, params, places, shortage])
+  }, [base, edited, date, weekdayServices, params, places, shortage, roster])
 }

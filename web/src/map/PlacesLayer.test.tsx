@@ -186,6 +186,19 @@ describe('PlacesLayer(地図で置く)', () => {
     expect(screen.queryByRole('status')).toBeNull()
   })
 
+  it('置く操作の無い手順(placeable が false)では地図を押しても足さず、置いている途中ならやめる', async () => {
+    const fake = setup()
+    const { rerender } = render(<PlacesLayer visible loadImage={immediateImage} />)
+    act(() => useDriversStore.getState().startPlacing('office'))
+    expect(fake.canvas.style.cursor).toBe('crosshair')
+    rerender(<PlacesLayer visible placeable={false} loadImage={immediateImage} />)
+    expect(useDriversStore.getState().placing).toBeNull()
+    expect(fake.canvas.style.cursor).toBe('')
+    act(() => useDriversStore.getState().startPlacing('office'))
+    act(() => fake.click(142.4, 43.8))
+    expect(useDriversStore.getState().places).toHaveLength(0)
+  })
+
   it('Esc でやめる', async () => {
     const fake = setup()
     render(<PlacesLayer visible loadImage={immediateImage} />)

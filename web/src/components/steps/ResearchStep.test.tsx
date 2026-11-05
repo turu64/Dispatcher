@@ -9,6 +9,7 @@ import type { Stop } from '@/gtfs/parse'
 import { mergeBusstopFiles } from '@/ref/busstops'
 import { facilityMeshes, mergeFacilityFiles } from '@/ref/facilities'
 import { createChatStore, RESEARCH_KEEP_OPEN, TOKEN_MISSING, type ChatStoreDeps, type TokenStorage } from '@/store/chat'
+import { useDriversStore } from '@/store/drivers'
 import { useEditStore } from '@/store/edit'
 import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
@@ -159,8 +160,27 @@ describe('ResearchStep', () => {
   it('GTFS を読み込む前は案内だけ', () => {
     act(() => useGtfsStore.getState().clear())
     setup()
-    expect(screen.getByText(/GTFS を読み込むと、周辺の事業者・学校・病院を調べられます/)).toBeTruthy()
+    expect(screen.getByText(/GTFS を読み込むと、運行の前提.+を設定し、周辺の事業者・学校・病院を調べられます/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: RESEARCH_START })).toBeNull()
+  })
+
+  it('調査の欄の上に、運行の前提(営業所・休憩施設・運転士の数)の欄を出し、欠員・在籍の運転士の数を入れられる', () => {
+    setup()
+    const premise = screen.getByRole('region', { name: '運行の前提(営業所・休憩施設・運転士の数)' })
+    const research = screen.getByRole('heading', { name: '周辺の事業者・施設の調査' })
+    expect(premise.compareDocumentPosition(research) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(premise).getByTestId('places-editor')).toBeTruthy()
+    fireEvent.change(within(premise).getByLabelText('欠員(その日に乗務できない運転士の数)'), { target: { value: '20' } })
+    fireEvent.change(within(premise).getByLabelText('在籍の運転士の数(任意)'), { target: { value: '110' } })
+    expect(useDriversStore.getState()).toMatchObject({ shortage: 20, roster: 110 })
+    act(() => useDriversStore.getState().reset())
+  })
+
+  it('施設を読めないときも、運行の前提の欄は出す', () => {
+    setup()
+    act(() => useResearchStore.setState({ facilities: { status: 'error', key: facilityMeshes(STOPS).join(','), message: '施設を読み込めませんでした' } }))
+    expect(screen.getByText('施設を読み込めませんでした')).toBeTruthy()
+    expect(screen.getByRole('region', { name: '運行の前提(営業所・休憩施設・運転士の数)' })).toBeTruthy()
   })
 
   it('停留所の周り 2km の候補を種類ごとにまとめ、既定で事業者と優先順位の上から選ぶ(自社と優先順位の外は選ばない)', () => {

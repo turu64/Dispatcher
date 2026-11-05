@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, ExternalLink } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStore, type StoreApi, type UseBoundStore } from 'zustand'
 import StepSection from '@/components/StepSection'
+import OperationPremise from '@/components/steps/research/OperationPremise'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { checkedAtText, safeUrl, type ResearchResult, type ResearchStatus } from '@/claude/research'
@@ -496,11 +497,12 @@ export function ResultCard({ result, highlighted = false }: { result: ResearchRe
  * 前提情報の手順。停留所の分布の外接矩形 +2km にある周辺のバス事業者・学校・病院を参照データ(国土数値情報)から洗い出し、
  * 調べる対象を選んで AI に Web で調べてもらう(docs/interfaces-1105.md §3.2・§6.4、docs/tasks-1103.md の T16)。
  * 対象は重要拠点の優先順位の上から既定で選び、上限は 30 件。保存済みの結果(デモ)を使えば、AI を呼ばずに結果を見られる。
- * サーバーに送るのは target_id だけ。GTFS の中身は送らない
+ * サーバーに送るのは target_id だけ。GTFS の中身は送らない。
+ * 調査の欄の上に、運行の前提(営業所・休憩施設・運転士の数。research/OperationPremise.tsx)の欄を置く
  */
 export default function ResearchStep({ chat = useChatStore }: { chat?: ChatStoreHook }) {
   const feed = useGtfsStore((s) => s.feed)
-  return <StepSection title="2. 前提情報">{!feed ? <p className="text-sm text-muted-foreground">GTFS を読み込むと、周辺の事業者・学校・病院を調べられます。</p> : <ResearchBody chat={chat} />}</StepSection>
+  return <StepSection title="2. 前提情報">{!feed ? <p className="text-sm text-muted-foreground">GTFS を読み込むと、運行の前提(営業所・休憩施設・運転士の数)を設定し、周辺の事業者・学校・病院を調べられます。</p> : <ResearchBody chat={chat} />}</StepSection>
 }
 
 function ResearchBody({ chat }: { chat: ChatStoreHook }) {
@@ -608,9 +610,12 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
 
   return (
     <>
+      <OperationPremise />
+
+      <h3 className="text-sm font-medium">周辺の事業者・施設の調査</h3>
       <p className="text-sm text-muted-foreground">
         停留所の分布の外周に 2km の余白を足した範囲から、周辺のバス事業者・学校・病院を洗い出します。調べる対象を選び、AI に Web
-        で調べてもらうと、通学・通院の時刻などの判断材料が出典つきで集まります。この手順を飛ばして、次の「減便の方針」へ進めます。
+        で調べてもらうと、通学・通院の時刻などの判断材料が出典つきで集まります。調査は飛ばして、次の「減便の方針」へ進めます。
       </p>
 
       <PriorityList />

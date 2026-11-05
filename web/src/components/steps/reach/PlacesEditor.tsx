@@ -25,7 +25,8 @@ import { useGtfsStore } from '@/store/gtfs'
 import { searchStops } from './places'
 
 /**
- * 影響(到達圏)の手順の「要る運転士の数(目安)」の中の、営業所・車庫・休憩施設を置く欄(指摘 24、docs/tasks-1105.md の D05)。
+ * 前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)の中の、営業所・車庫・休憩施設を置く欄
+ * (指摘 24、docs/tasks-1105.md の D05。11/5 に影響(到達圏)の手順から移した)。
  * 足し方は2つ:「地図で置く」を押して地図を1回押す(地図は map/PlacesLayer.tsx)か、停留所の名前で探して選ぶ。
  * 名前を変える・消すができ、一覧は JSON に書き出し・読み込みできる(lib/placesFile.ts)。
  * 場所はメモリだけに持ち(store/drivers.ts)、サーバーにもブラウザの保存にも入れない。推定(gtfs/edit/duties.ts)に渡す

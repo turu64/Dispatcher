@@ -8,9 +8,14 @@ import {
   formatRatioDiff,
   parseCheckMinutes,
   parseDeadheadKmh,
+  parseRoster,
   parseShortage,
+  rosterCaveatText,
+  rosterCheckText,
+  rosterWarningText,
   verdictText,
 } from './driverText'
+import type { RosterCheck } from '@/store/drivers'
 
 describe('verdictText(欠員との比較の文)', () => {
   it('足りる・足りないは「目安」と書き、数は判定から入れる', () => {
@@ -32,7 +37,7 @@ describe('verdictText(欠員との比較の文)', () => {
   it('減便後が無いとき・欠員が無いときの文', () => {
     expect(verdictText({ kind: 'noEdited' }, '20261104')).toContain('減便の方針を承認すると')
     expect(verdictText({ kind: 'noShortage', reduced: 25 }, '20261104')).toBe(
-      '減便で減る勤務の数(目安)は 25 です。欠員を入れると、足りるかの目安を出します。',
+      '減便で減る勤務の数(目安)は 25 です。',
     )
   })
 
@@ -47,6 +52,41 @@ describe('verdictText(欠員との比較の文)', () => {
       ...driverCaveats(DUTY_DEFAULTS, [{ kind: 'rest', name: '休憩所', lat: 0, lon: 0 }]),
     ]
     for (const line of all) expect(line).not.toContain('あなた')
+  })
+})
+
+describe('在籍の運転士の数の参考の文', () => {
+  const check = (patch: Partial<RosterCheck> = {}): RosterCheck => ({
+    roster: 110,
+    shortage: 20,
+    available: 90,
+    shortageOverRoster: false,
+    needed: 57,
+    basis: 'after',
+    over: 0,
+    ...patch,
+  })
+
+  it('乗務できる運転士(在籍 − 欠員)と、減便後に要る勤務の数を並べる', () => {
+    expect(rosterCheckText(check())).toBe('参考:乗務できる運転士(在籍 110 − 欠員 20)90 人/減便後に要る勤務の数(目安)57。')
+    expect(rosterCheckText(check({ shortage: null, available: 110, basis: 'before', needed: 82 }))).toBe(
+      '参考:乗務できる運転士(在籍 110。欠員は未入力)110 人/減便前に要る勤務の数(目安)82。',
+    )
+    expect(rosterWarningText(check())).toBeNull()
+  })
+
+  it('要る勤務の数が乗務できる運転士を上回るとき・欠員が在籍より多いときは注意にする', () => {
+    expect(rosterWarningText(check({ available: 50, over: 7 }))).toBe('注意:減便後に要る勤務の数(目安)が、乗務できる運転士の数を 7 上回ります。')
+    expect(rosterWarningText(check({ roster: 10, shortage: 20, available: 0, shortageOverRoster: true, over: 57 }))).toContain(
+      '欠員が在籍の運転士の数より多く',
+    )
+  })
+
+  it('勤務の数は下限の目安で、事業者の運用番号の数と差があることを1文で添える', () => {
+    expect(rosterCaveatText(null)).toContain('下限の目安')
+    expect(rosterCaveatText(null)).toContain('事業者の運用番号の数')
+    expect(rosterCaveatText(64)).toContain('入力の運用番号の数(参考)は減便前 64')
+    for (const t of [rosterCheckText(check()), rosterCaveatText(null), rosterCaveatText(3)]) expect(t).not.toContain('あなた')
   })
 })
 
@@ -98,6 +138,14 @@ describe('入力の読み取り', () => {
     expect(parseShortage('2.5').ok).toBe(false)
     expect(parseShortage('-1').ok).toBe(false)
     expect(parseShortage('abc').ok).toBe(false)
+  })
+
+  it('在籍の運転士の数は空なら null、0〜9999 の整数', () => {
+    expect(parseRoster('')).toEqual({ ok: true, value: null })
+    expect(parseRoster('１１０')).toEqual({ ok: true, value: 110 })
+    expect(parseRoster('9999')).toEqual({ ok: true, value: 9999 })
+    expect(parseRoster('10000')).toEqual({ ok: false, message: '9999人以下にしてください' })
+    expect(parseRoster('1.5').ok).toBe(false)
   })
 
   it('点呼は 0〜120 分、回送の速さは 5〜60 km/h の整数', () => {

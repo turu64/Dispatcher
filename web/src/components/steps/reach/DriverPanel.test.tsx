@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BOUND_LIMIT_MIN, DUTY_DEFAULTS } from '@/gtfs/edit/duties'
 import { applyForm2, activeWeekdayServicesOf } from '@/gtfs/edit/form2'
 import { basePlan, feedOf, smallFeed } from '@/gtfs/edit/form2.fixture'
@@ -12,7 +12,7 @@ import DriverPanel, { DriverView } from './DriverPanel'
 
 afterEach(() => {
   cleanup()
-  useDriversStore.setState({ shortage: null, params: { ...DUTY_DEFAULTS }, places: [] })
+  useDriversStore.setState({ shortage: null, roster: null, params: { ...DUTY_DEFAULTS }, places: [] })
   useReachStore.setState({ source: null, edited: null, date: null })
   useEditStore.setState({ draft: null, versions: [] })
 })
@@ -60,7 +60,7 @@ function showInStore(base: GtfsFeed, edited: GtfsFeed | null, date: string, draf
   })
 }
 
-function viewOf(input: Partial<DriverInput> & Pick<DriverInput, 'base'>) {
+function viewOf(input: Partial<DriverInput> & Pick<DriverInput, 'base'>, onOpenPremise: () => void = () => {}) {
   const c = compareDrivers({
     edited: null,
     date: WEDNESDAY,
@@ -71,7 +71,7 @@ function viewOf(input: Partial<DriverInput> & Pick<DriverInput, 'base'>) {
     ...input,
   })
   return render(
-    <DriverView comparison={c} params={c.before.duties.params} places={[]} onShortage={() => {}} onParams={() => {}} onResetParams={() => {}} />,
+    <DriverView comparison={c} params={c.before.duties.params} places={input.places ?? []} onOpenPremise={onOpenPremise} />,
   )
 }
 
@@ -187,46 +187,73 @@ describe('DriverPanel(store とつないだ欄)', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('欠員を入れると判定が変わり、空にすると入れていない状態に戻る', () => {
+  it('入力の欄は無く、結果と「前提情報で設定する」ボタンだけを出す', () => {
+    showInStore(shuttleFeed(14), shuttleFeed(6), WEDNESDAY)
+    render(<DriverPanel />)
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.queryByRole('spinbutton')).toBeNull()
+    expect(screen.queryByRole('radio')).toBeNull()
+    expect(screen.queryByTestId('places-editor')).toBeNull()
+    expect(screen.queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['前提情報で設定する'])
+    expect(screen.getByTestId('shortage-hint').textContent).toBe('前提情報で欠員を入れると、足りるかの目安を出します。')
+  })
+
+  it('store の欠員・仮定を変えると(前提情報の欄で入れたとき)、判定と表を数え直す', () => {
     showInStore(shuttleFeed(14), shuttleFeed(6), WEDNESDAY)
     useEditStore.setState({ versions: [] })
     render(<DriverPanel />)
-    const input = screen.getByLabelText('欠員(その日に乗務できない運転士の数)')
-    fireEvent.change(input, { target: { value: '２' } })
-    expect(useDriversStore.getState().shortage).toBe(2)
+    expect(screen.getByTestId('driver-verdict').textContent).toBe('減便で減る勤務の数(目安)は 1 です。')
+    act(() => useDriversStore.getState().setShortage(2))
     // 方針が分からない(版が無い)ときも、差と欠員は比べる
     expect(screen.getByTestId('driver-verdict').textContent).toContain('あと 1 足りない目安')
-    fireEvent.change(input, { target: { value: '1.5' } })
-    expect(screen.getByText('0 以上の整数を入れてください')).toBeTruthy()
-    expect(useDriversStore.getState().shortage).toBe(2)
-    fireEvent.change(input, { target: { value: '' } })
-    expect(useDriversStore.getState().shortage).toBeNull()
-    expect(screen.getByTestId('driver-verdict').textContent).toContain('欠員を入れると')
-  })
-
-  it('「仮定を変える」で拘束を 15 時間にすると計算し直す', () => {
-    showInStore(shuttleFeed(14), shuttleFeed(6), WEDNESDAY)
-    useDriversStore.getState().setShortage(1)
-    render(<DriverPanel />)
-    expect(rowText('勤務の数(目安)')).toBe('勤務の数(目安)21−1')
-    fireEvent.click(screen.getByText('仮定を変える'))
-    fireEvent.click(screen.getByRole('radio', { name: '15 時間(延長の上限)' }))
-    expect(useDriversStore.getState().params.maxBoundMin).toBe(BOUND_LIMIT_MIN.extended)
+    expect(screen.queryByTestId('shortage-hint')).toBeNull()
+    act(() => useDriversStore.getState().setParams({ maxBoundMin: BOUND_LIMIT_MIN.extended }))
     expect(rowText('勤務の数(目安)')).toBe('勤務の数(目安)11±0')
-    expect(screen.getByTestId('driver-verdict').textContent).toContain('あと 1 足りない目安')
-    // 使った仮定の文も 15 時間になる
+    expect(screen.getByTestId('assumptions-summary').textContent).toContain('拘束時間の上限 15 時間')
     expect(screen.getByRole('list', { name: '使った仮定' }).textContent).toContain('拘束時間は 15 時間以内')
-    fireEvent.click(screen.getByRole('button', { name: '既定値に戻す' }))
-    expect(rowText('勤務の数(目安)')).toBe('勤務の数(目安)21−1')
+  })
+})
+
+describe('DriverView(在籍の運転士の数の参考)', () => {
+  it('在籍を入れていなければ出さない', () => {
+    viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), shortage: 1 })
+    expect(screen.queryByTestId('roster-check')).toBeNull()
   })
 
-  it('点呼の分を変えても計算し直す(入庫後の点呼を延ばすと拘束が延びる)', () => {
-    // 平日 12 便(6:00〜17:30。拘束 12 時間 15 分)。入庫後の点呼を 75 分にすると 13 時間 15 分になり、2つの勤務になる
-    showInStore(shuttleFeed(12), shuttleFeed(6), WEDNESDAY)
-    render(<DriverPanel />)
-    expect(rowText('勤務の数(目安)')).toBe('勤務の数(目安)11±0')
-    fireEvent.click(screen.getByText('仮定を変える'))
-    fireEvent.change(screen.getByLabelText('入庫後の点呼'), { target: { value: '75' } })
-    expect(rowText('勤務の数(目安)')).toBe('勤務の数(目安)21−1')
+  it('在籍を入れると、判定の下に乗務できる運転士と減便後に要る勤務の数を並べ、運用番号の数との差を1文で添える', () => {
+    viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), shortage: 1, roster: 5 })
+    const check = screen.getByTestId('roster-check')
+    expect(check.textContent).toContain('参考:乗務できる運転士(在籍 5 − 欠員 1)4 人/減便後に要る勤務の数(目安)1。')
+    expect(check.textContent).toContain('下限の目安のため、事業者の運用番号の数')
+    expect(screen.queryByTestId('roster-warning')).toBeNull()
+    // 判定の下に出す
+    expect(screen.getByTestId('driver-verdict').compareDocumentPosition(check) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 主な判定は変えない
+    expect(screen.getByTestId('driver-verdict').textContent).toBe('減便で減る勤務の数(目安)1 ≥ 欠員 1 → 足りる目安です。')
+  })
+
+  it('減便後に要る勤務の数が乗務できる運転士を上回るときは注意にする', () => {
+    viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), shortage: 1, roster: 1 })
+    const warning = screen.getByTestId('roster-warning')
+    expect(warning.textContent).toContain('減便後に要る勤務の数(目安)が、乗務できる運転士の数を 1 上回ります。')
+    expect(warning.className).toContain('text-destructive')
+  })
+
+  it('減便後が無ければ減便前の勤務の数と比べ、欠員が在籍より多ければ数を確かめる注意にする', () => {
+    viewOf({ base: shuttleFeed(14), roster: 10 })
+    expect(screen.getByTestId('roster-check').textContent).toContain('参考:乗務できる運転士(在籍 10。欠員は未入力)10 人/減便前に要る勤務の数(目安)2。')
+    cleanup()
+    viewOf({ base: shuttleFeed(14), roster: 10, shortage: 20 })
+    expect(screen.getByTestId('roster-warning').textContent).toContain('欠員が在籍の運転士の数より多く')
+  })
+})
+
+describe('DriverView(前提情報で設定する)', () => {
+  it('ボタンを押すと onOpenPremise を呼ぶ', () => {
+    const open = vi.fn()
+    viewOf({ base: smallFeed() }, open)
+    fireEvent.click(screen.getByRole('button', { name: '前提情報で設定する' }))
+    expect(open).toHaveBeenCalledTimes(1)
   })
 })

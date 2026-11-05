@@ -1551,6 +1551,34 @@ WK1700,17:10:00,17:10:00,A,2`),
       for (const name of NAMES) expect(r.content).not.toContain(name)
     })
 
+    it('在籍の運転士の数を入れたときだけ roster_check を足し、その意味を notes で伝える。場所の名前は送らない', async () => {
+      const NAME = '秘匿の営業所R'
+      const places: DutyPlace[] = [{ kind: 'depot', name: NAME, lat: 43.76, lon: 142.36 }]
+      const without = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places, shortage: 1 }) })
+      await withPolicy(without.deps, without.store)
+      const b0 = parse((await runTool('summarize_impact', { date: null, step_hours: null }, without.deps)).content)
+      expect((b0.drivers as Record<string, unknown>).roster_check).toBeUndefined()
+      expect((b0.notes as string[]).some((n) => n.startsWith('drivers.roster_check'))).toBe(false)
+
+      const { store, deps } = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places, shortage: 1, roster: 3 }) })
+      await withPolicy(deps, store)
+      const r = await runTool('summarize_impact', { date: null, step_hours: null }, deps)
+      const body = parse(r.content)
+      const d = body.drivers as { duties: { after: number }; verdict: unknown; roster_check: Record<string, unknown> }
+      expect(d.roster_check).toEqual({
+        roster: 3,
+        available: 2,
+        shortage_over_roster: false,
+        needed_duties: d.duties.after,
+        needed_basis: 'after',
+        over: Math.max(0, d.duties.after - 2),
+      })
+      // 主な判定は在籍に関係なく、減る勤務の数と欠員の比較のまま
+      expect(d.verdict).toEqual((b0.drivers as { verdict: unknown }).verdict)
+      expect((body.notes as string[]).some((n) => n.startsWith('drivers.roster_check') && n.includes('下限の目安'))).toBe(true)
+      expect(r.content).not.toContain(NAME)
+    })
+
     it('20KB を超えたら、ほかの一覧より先に facility_access → round_trip の一覧を後ろから省き、省いた数を書く(fitImpactLists)', () => {
       const big = (i: number) => ({ name: `施設${i}`, filler: 'あ'.repeat(300) })
       const body = {

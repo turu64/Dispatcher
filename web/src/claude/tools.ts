@@ -212,18 +212,21 @@ export interface ToolDeps {
   /** search_trips が、到達圏の計算中に終わるのを待つ上限(ミリ秒)。既定 20000。過ぎたら到達圏を使う手がかりを出さずに返す */
   hintWaitMs?: number
   /**
-   * 要る運転士の数(目安)の欄の入力(欠員・仮定・営業所などの場所。D06)。summarize_impact の drivers に使う。
+   * 要る運転士の数(目安)の入力(前提情報の手順の「運行の前提」の欄の、欠員・在籍の運転士の数・仮定・営業所などの場所。D06)。
+   * summarize_impact の drivers に使う。
    * 省けば要る運転士の数の store(useDriversStore)の今の値を読む
    */
   drivers?: () => DriverSettings
 }
 
-/** 要る運転士の数(目安)の推定の入力のうち、利用者が影響(到達圏)の手順の欄で決めるもの */
+/** 要る運転士の数(目安)の推定の入力のうち、利用者が前提情報の手順の「運行の前提」の欄で決めるもの */
 export interface DriverSettings {
   params: DutyParams
   places: readonly DutyPlace[]
   /** 欠員(その日に乗務できない運転士の数)。入れていなければ null */
   shortage: number | null
+  /** 在籍の運転士の数。入れていなければ null(省けば null) */
+  roster?: number | null
 }
 
 export interface ToolOutcome {
@@ -1067,6 +1070,7 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
       ROUND_TRIP_NOTE,
       FACILITY_ACCESS_TOOL_NOTE,
       DRIVERS_NOTE,
+      ...(drivers.roster_check ? [DRIVERS_ROSTER_NOTE] : []),
     ],
   }
   return ok(fitImpactLists(body), ['zero_service_routes'])
@@ -1082,7 +1086,10 @@ const FACILITY_ACCESS_TOOL_NOTE =
   'facility_access は、学校・病院ごとに、徒歩圏の停留所で降りられて着く窓の中に着く便と、乗れて出る窓の中に出る便を、比較する日付に走る便だけ減便前と減便後で数えたものです。facilities は、着く便か出る便が減便後に 0 便になる施設だけを、重要拠点の優先順位(priority_rank)・距離の順に上位 20 件まで(省いた数は facilities_omitted)。窓は始業・外来の受付などに間に合う時間帯の目安で、source が research なら調べた結果(basis に読んだ時刻、source_url に出典)、default なら既定の窓です。乗車人数・混み具合・鉄道との乗り継ぎは判定していません。'
 
 const DRIVERS_NOTE =
-  'drivers は、比較する日付の便を時刻順に勤務へつなぎ、改善基準告示の上限で区切った勤務の数(要る運転士の数の下限の目安)と営業運行時間を、減便前と減便後で比べたものです(画面の手順4「影響(到達圏)」の「要る運転士の数(目安)」と同じ計算)。判定(verdict)は「減便で減る勤務の数(前 − 後)」と欠員の比較だけです。目安であって、休息期間・休日・予備の要員・実際の仕業と交番は事業者が判断します。'
+  'drivers は、比較する日付の便を時刻順に勤務へつなぎ、改善基準告示の上限で区切った勤務の数(要る運転士の数の下限の目安)と営業運行時間を、減便前と減便後で比べたものです(画面の手順4「影響(到達圏)」の「要る運転士の数(目安)」と同じ計算)。欠員・在籍の運転士の数・営業所などの場所・仮定は、利用者が画面の手順2「前提情報」の「運行の前提」の欄で入れた値です。判定(verdict)は「減便で減る勤務の数(前 − 後)」と欠員の比較だけです。目安であって、休息期間・休日・予備の要員・実際の仕業と交番は事業者が判断します。'
+
+const DRIVERS_ROSTER_NOTE =
+  'drivers.roster_check は、利用者が在籍の運転士の数(roster)を入れたときだけの参考です。available は乗務できる運転士の数(在籍 − 欠員。欠員を入れていなければ在籍のまま。欠員が在籍より多いときは 0 で、shortage_over_roster が true)、needed_duties は比べた勤務の数(目安。needed_basis が after なら減便後、before なら減便後の GTFS がないため減便前)、over は needed_duties が available を上回る数(上回らなければ 0)です。勤務の数は下限の目安のため、事業者の運用番号の数(operator_runs_before は入力の運用番号の数(参考))とは差があります。主な判定は verdict で、roster_check は判定を変えません。'
 
 function sideJson(s: RoundTripSide): Record<string, unknown> {
   return { trips: s.trips, first: s.first, last: s.last }
@@ -1204,7 +1211,7 @@ function facilityAccessJson(
 /** 要る運転士の数の欄の今の値(ToolDeps.drivers を省いたとき) */
 function defaultDriverSettings(): DriverSettings {
   const s = useDriversStore.getState()
-  return { params: s.params, places: s.places, shortage: s.shortage }
+  return { params: s.params, places: s.places, shortage: s.shortage, roster: s.roster }
 }
 
 /**
@@ -1235,6 +1242,19 @@ function driversJson(c: DriverComparison): Record<string, unknown> {
     },
     places: c.placesEffect?.count ?? 0,
     assumptions: c.assumptions,
+    // 在籍の運転士の数を入れたときだけ足す(意味は notes の DRIVERS_ROSTER_NOTE)
+    ...(c.rosterCheck
+      ? {
+          roster_check: {
+            roster: c.rosterCheck.roster,
+            available: c.rosterCheck.available,
+            shortage_over_roster: c.rosterCheck.shortageOverRoster,
+            needed_duties: c.rosterCheck.needed,
+            needed_basis: c.rosterCheck.basis,
+            over: c.rosterCheck.over,
+          },
+        }
+      : {}),
   }
 }
 

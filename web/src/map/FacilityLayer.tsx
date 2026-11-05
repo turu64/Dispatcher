@@ -5,6 +5,7 @@ import { OTHER_STOP_RADIUS_M } from '@/ref/busstops'
 import { FACILITY_KIND_LABELS, type FacilityKind, type ResearchCandidate } from '@/ref/facilities'
 import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
+import { useDriversStore } from '@/store/drivers'
 import { useResearchView } from '@/store/research'
 import { useStepStore } from '@/store/steps'
 import {
@@ -143,17 +144,20 @@ export function FacilityLayer({ visible }: { visible: boolean }) {
     const abort = new AbortController()
     // 記号を押したら名前を出す
     const onClick = (e: MapLayerMouseEvent) => {
+      // 営業所などを地図で置いている途中(map/PlacesLayer.tsx)は、施設の名前を出さない(その位置に場所を足すだけにする)
+      if (useDriversStore.getState().placing) return
       const props = e.features?.[0]?.properties as { name?: unknown; detail?: unknown; kind?: unknown; symbol?: unknown } | undefined
       if (typeof props?.name !== 'string') return
       const kind = typeof props.kind === 'string' && props.kind in FACILITY_KIND_LABELS ? (props.kind as FacilityKind) : null
       const symbol = typeof props.symbol === 'string' && (FACILITY_SYMBOL_KINDS as readonly string[]).includes(props.symbol) ? (props.symbol as FacilitySymbolKind) : null
       setPicked({ name: props.name, detail: typeof props.detail === 'string' ? props.detail : '', kind, symbol })
     }
+    // 置いている途中は十字の印のままにする
     const onEnter = () => {
-      map.getCanvas().style.cursor = 'pointer'
+      if (!useDriversStore.getState().placing) map.getCanvas().style.cursor = 'pointer'
     }
     const onLeave = () => {
-      map.getCanvas().style.cursor = ''
+      if (!useDriversStore.getState().placing) map.getCanvas().style.cursor = ''
     }
     let registered = false
     addFacilityImages(map, abort.signal)
@@ -201,7 +205,7 @@ export function FacilityLayer({ visible }: { visible: boolean }) {
   if (!visible || candidates.length === 0) return null
   // 凡例と押した記号の名前は、右上の拡大・縮小のボタンの下に縦に積む(互いに重ならず、下の中央の時間帯の切り替えとも重ならない)
   return (
-    <div className="pointer-events-none absolute top-24 right-3 flex flex-col items-end gap-2" data-testid="facility-overlay">
+    <div className="pointer-events-none flex flex-col items-end gap-2" data-testid="facility-overlay">
       <FacilityLegend candidates={candidates} selected={selected} otherStops={otherStops} />
       {picked && (
         <div className="pointer-events-auto flex max-w-60 items-start gap-1.5 rounded-lg bg-background/95 px-3 py-2 text-xs shadow-md ring-1 ring-foreground/10" role="status">
@@ -225,17 +229,24 @@ export function FacilityLayer({ visible }: { visible: boolean }) {
 }
 
 /**
- * 地図を出す手順に共通の重ね:到達圏(ReachLayers)と、前提情報の手順でだけ見せる施設(FacilityLayer)。
+ * 地図を出す手順に共通の重ね:到達圏(ReachLayers)と、前提情報の手順でだけ見せる施設(FacilityLayer)と、
+ * 前提情報・影響・平日便を戻す手順で見せる利用者が置いた場所(PlacesLayer。前提情報の手順の「運行の前提」の欄で置く)。
  * 手順の一覧(registry.ts)で、地図を出す手順すべてにこの同じ部品を渡す。部品が同じなので、手順を移っても
- * 到達圏の重ねを作り直さない(地図の位置合わせをやり直さない)
+ * 到達圏の重ねを作り直さない(地図の位置合わせをやり直さない)。
+ * 施設と場所の凡例は、右上の拡大・縮小のボタンの下に1つの列で縦に積む(前提情報の手順で両方が出ても重ならない)
  */
+/** 施設と場所の凡例を積む、地図の右上の列(拡大・縮小のボタンの下) */
+export const MAP_OVERLAY_COLUMN_CLASS = 'pointer-events-none absolute top-24 right-3 flex flex-col items-end gap-2'
+
 export default function MapOverlays() {
   const current = useStepStore((s) => s.current)
   return (
     <>
       <ReachLayers />
-      <FacilityLayer visible={current === 'research'} />
-      <PlacesLayer visible={current === 'reach' || current === 'restore'} />
+      <div className={MAP_OVERLAY_COLUMN_CLASS} data-testid="map-overlay-column">
+        <FacilityLayer visible={current === 'research'} />
+        <PlacesLayer visible={current === 'research' || current === 'reach' || current === 'restore'} placeable={current === 'research'} />
+      </div>
     </>
   )
 }

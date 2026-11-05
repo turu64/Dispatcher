@@ -1,10 +1,10 @@
 import type { DutyParams, DutyPlace } from '@/gtfs/edit/duties'
 import { formatDateJa } from '@/lib/dates'
 import type { ParseResult } from '@/reach/input'
-import { MAX_SHORTAGE, type DriverVerdict } from '@/store/drivers'
+import { MAX_ROSTER, MAX_SHORTAGE, type DriverVerdict, type RosterCheck } from '@/store/drivers'
 
 /**
- * 要る運転士の数(目安)の欄(DriverPanel.tsx)の文。語は docs/wording.md に従い、「あなた」を使わない。
+ * 要る運転士の数(目安)の欄(DriverPanel.tsx)と、前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)の文。語は docs/wording.md に従い、「あなた」を使わない。
  * 数はすべて計算(store/drivers.ts の compareDrivers)から入れる。届出・勤務の要否は言い切らない
  */
 
@@ -17,6 +17,21 @@ export const DRIVER_PANEL_LEAD =
 
 /** 欠員の入力欄の名前 */
 export const SHORTAGE_LABEL = '欠員(その日に乗務できない運転士の数)'
+
+/** 在籍の運転士の数の入力欄の名前 */
+export const ROSTER_LABEL = '在籍の運転士の数(任意)'
+
+/** 前提情報の手順の「運行の前提」の欄の見出し */
+export const PREMISE_TITLE = '運行の前提(営業所・休憩施設・運転士の数)'
+
+/** 影響(到達圏)の手順の欄から、運行の前提の欄へ移るボタン */
+export const PREMISE_JUMP = '前提情報で設定する'
+
+/** 欠員を入れていないときに、結果の欄に出す文 */
+export const SHORTAGE_HINT = '前提情報で欠員を入れると、足りるかの目安を出します。'
+
+/** 欠員を入れていないときに、平日便を戻す手順の1行に添える文(入れる場所を示す) */
+export const SHORTAGE_WHERE = '手順「前提情報」の「運行の前提」の欄で欠員を入れると、足りるかの目安を出します。'
 
 /** 分を「400時間42分」にする */
 export function formatHours(minutes: number): string {
@@ -50,7 +65,7 @@ export function verdictText(verdict: DriverVerdict, date: string): string {
     case 'notWeekday':
       return notWeekdayText(date)
     case 'noShortage':
-      return `減便で減る勤務の数(目安)は ${verdict.reduced} です。欠員を入れると、足りるかの目安を出します。`
+      return `減便で減る勤務の数(目安)は ${verdict.reduced} です。`
     case 'enough':
       return `減便で減る勤務の数(目安)${verdict.reduced} ≥ 欠員 ${verdict.shortage} → 足りる目安です。`
     case 'short':
@@ -83,6 +98,44 @@ export function driverCaveats(params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivi
   ]
 }
 
+/**
+ * 在籍の運転士の数を入れたときの参考の文(主な判定とは別)。
+ * 「参考:乗務できる運転士(在籍 110 − 欠員 20)90 人/減便後に要る勤務の数(目安)57。」
+ */
+export function rosterCheckText(check: RosterCheck): string {
+  const minus = check.shortage === null ? '。欠員は未入力' : ` − 欠員 ${check.shortage}`
+  const side = check.basis === 'after' ? '減便後' : '減便前'
+  return `参考:乗務できる運転士(在籍 ${check.roster}${minus})${check.available} 人/${side}に要る勤務の数(目安)${check.needed}。`
+}
+
+/** 在籍の運転士の数の参考の注意(要る勤務の数が乗務できる運転士を上回る・欠員が在籍より多い)。どちらでもなければ null */
+export function rosterWarningText(check: RosterCheck): string | null {
+  if (check.shortageOverRoster) return '注意:欠員が在籍の運転士の数より多くなっています。前提情報の数を確かめてください。'
+  if (check.over > 0) {
+    return `注意:${check.basis === 'after' ? '減便後' : '減便前'}に要る勤務の数(目安)が、乗務できる運転士の数を ${check.over} 上回ります。`
+  }
+  return null
+}
+
+/** 在籍の運転士の数の参考に添える1文。勤務の数は下限の目安で、事業者の運用番号の数と差があること */
+export function rosterCaveatText(operatorRuns: number | null): string {
+  return operatorRuns === null
+    ? '勤務の数の推定は下限の目安のため、事業者の運用番号の数(実際の勤務の数)とは差があります。'
+    : `勤務の数の推定は下限の目安のため、事業者の運用番号の数(入力の運用番号の数(参考)は減便前 ${operatorRuns})とは差があります。`
+}
+
+/** 使った仮定の短い一覧(拘束・点呼・回送の速さ・置いた場所の数) */
+export function assumptionsSummary(params: Pick<DutyParams, 'maxBoundMin' | 'preCheckMin' | 'postCheckMin' | 'deadheadKmh'>, places: readonly DutyPlace[]): string[] {
+  const depots = places.filter((p) => p.kind !== 'rest').length
+  const rests = places.filter((p) => p.kind === 'rest').length
+  return [
+    `拘束時間の上限 ${params.maxBoundMin / 60} 時間`,
+    `点呼 出庫前 ${params.preCheckMin} 分・入庫後 ${params.postCheckMin} 分`,
+    `回送 時速 ${params.deadheadKmh}km`,
+    `営業所・車庫 ${depots} か所・休憩施設 ${rests} か所`,
+  ]
+}
+
 /** 運用番号の数(参考)の説明 */
 export const OPERATOR_RUNS_NOTE =
   '入力の運用番号の数は、減便前の GTFS の trip_id の先頭の番号の種類の数です(参考。事業者の実際の勤務の数とは限りません)。'
@@ -95,14 +148,26 @@ function normalizeDigits(text: string): string {
   return text.trim().replace(/[０-９．]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
 }
 
-/** 欠員の入力。空なら null(入れていない)。0〜999 の整数 */
-export function parseShortage(text: string): { ok: true; value: number | null } | { ok: false; message: string } {
+export type OptionalCountResult = { ok: true; value: number | null } | { ok: false; message: string }
+
+/** 空でもよい人数の入力。空なら null(入れていない)。0〜max の整数 */
+function parseOptionalCount(text: string, max: number): OptionalCountResult {
   const s = normalizeDigits(text)
   if (s === '') return { ok: true, value: null }
   if (!/^\d+$/.test(s)) return { ok: false, message: '0 以上の整数を入れてください' }
   const value = Number(s)
-  if (value > MAX_SHORTAGE) return { ok: false, message: `${MAX_SHORTAGE}人以下にしてください` }
+  if (value > max) return { ok: false, message: `${max}人以下にしてください` }
   return { ok: true, value }
+}
+
+/** 欠員の入力。空なら null(入れていない)。0〜999 の整数 */
+export function parseShortage(text: string): OptionalCountResult {
+  return parseOptionalCount(text, MAX_SHORTAGE)
+}
+
+/** 在籍の運転士の数の入力。空なら null(入れていない)。0〜9999 の整数 */
+export function parseRoster(text: string): OptionalCountResult {
+  return parseOptionalCount(text, MAX_ROSTER)
 }
 
 function parseIntegerIn(text: string, min: number, max: number, unit: string): ParseResult {

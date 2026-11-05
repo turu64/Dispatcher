@@ -727,9 +727,10 @@ CREATE TABLE jev_usage (                                                        
 | --- | --- |
 | 便の区間と営業運行時間 | `web/src/gtfs/edit/serviceHours.ts`(`tripLegs`・`serviceHours`・`compareServiceHours`) |
 | 勤務の数の推定と仮定の文 | `web/src/gtfs/edit/duties.ts`(`estimateDuties`・`DUTY_DEFAULTS`・`dutyAssumptions`・`operatorRunsOf`) |
-| 減便の前後の比較と欠員の判定 | `web/src/store/drivers.ts`(`compareDrivers`・`useDriverComparison`。欠員・仮定・場所はメモリだけ) |
-| 画面 | 手順4「影響(到達圏)」の `reach/DriverPanel.tsx`(文は `reach/driverText.ts`)、変更指示書の `output/DriverSummary.tsx`、手順5「平日便を戻す」の1行 |
-| 営業所・車庫・休憩施設 | `reach/PlacesEditor.tsx`(地図で置く・停留所から選ぶ)、`map/PlacesLayer.tsx`、JSON は `lib/placesFile.ts` |
+| 減便の前後の比較と欠員の判定 | `web/src/store/drivers.ts`(`compareDrivers`・`useDriverComparison`。欠員・在籍の運転士の数・仮定・場所はメモリだけ) |
+| 入力の画面 | 手順2「前提情報」の「運行の前提(営業所・休憩施設・運転士の数)」の欄 `research/OperationPremise.tsx`(在籍の運転士の数・欠員・営業所などの場所・推定の仮定。11/5 の利用者の指摘で、手順4 から移した) |
+| 結果の画面 | 手順4「影響(到達圏)」の `reach/DriverPanel.tsx`(結果だけ。「前提情報で設定する」で運行の前提の欄へ移る。`steps/stepIds.ts` の `jumpToPremise`。文は `reach/driverText.ts`)、変更指示書の `output/DriverSummary.tsx`、手順5「平日便を戻す」の1行 |
+| 営業所・車庫・休憩施設 | `reach/PlacesEditor.tsx`(地図で置く・停留所から選ぶ。運行の前提の欄の中に出す)、`map/PlacesLayer.tsx`(記号は前提情報・影響・平日便を戻す手順の地図に出し、地図で置けるのは前提情報の手順だけ)、JSON は `lib/placesFile.ts` |
 | AI | `summarize_impact` の結果の `drivers`(`web/src/claude/tools.ts` の `driversJson`。§13.7) |
 
 ### 13.2 区間の作り方
@@ -772,7 +773,7 @@ CREATE TABLE jev_usage (                                                        
 | 回送の道のりの倍率・速さ | 直線距離の 1.3 倍・時速 20km | 速さを変えられる(時速 5〜60km) |
 | 営業所・車庫・休憩施設に近い停留所とみなす距離 | 300m | 変えない |
 
-- 仮定は「仮定を変える」の開閉の中で変え、変えると計算し直す。GTFS を読み込み直しても仮定は残す(到達圏の条件と同じく利用者の設定)。欠員と場所は消す
+- 仮定は、前提情報の手順の運行の前提の欄の「勤務の数の推定の仮定を変える」の開閉の中で変え、変えると計算し直す。GTFS を読み込み直しても仮定は残す(到達圏の条件と同じく利用者の設定)。欠員・在籍の運転士の数と場所は消す。影響(到達圏)の手順の欄には、使った仮定の短い一覧(拘束・点呼・回送の速さ・置いた場所の数)と、開閉の中の全文を出す
 - 使った仮定は `dutyAssumptions` の文で、画面・変更指示書・AI(`drivers.assumptions`)に同じ文を出す
 - 道北バス(9/17 版)で平日を土曜ダイヤにしたときの見積もり(計画の §6 の3):勤務の数(目安)は 82 → 68(−14)、入力の運用番号の数(参考)は 101 → 86(−15)。絶対数は仮定で ±20% ほど動くが、同じ仮定での前後の差はそろう
 
@@ -793,11 +794,12 @@ CREATE TABLE jev_usage (                                                        
 
 ### 13.7 減便の前後の比較と欠員の判定
 
-- 減便で減る勤務の数 = 減便前の勤務の数 − 減便後の勤務の数(`dutyDiff`)。欠員は、手順4「影響(到達圏)」の独立の数の欄(その日に乗務できない運転士の数。0〜999 の整数、空も可)で入れる。減便の理由の補足の文からは読まない
+- 減便で減る勤務の数 = 減便前の勤務の数 − 減便後の勤務の数(`dutyDiff`)。欠員は、手順2「前提情報」の運行の前提の欄の独立の数の欄(その日に乗務できない運転士の数。0〜999 の整数、空も可)で入れる。減便の理由の補足の文からは読まない。欠員が空なら、手順4 の欄に「前提情報で欠員を入れると、足りるかの目安を出します。」と出す
 - 判定(`verdict`):
   - 減便後の GTFS がない → `noEdited`(AI には `no_edited`)
   - 比較する日付に、減便前の平日ダイヤ(減便の方針で入れ替える平日の service)が走らない → `notWeekday`(前後で便と勤務の数が変わらない旨と、平日の日付を選ぶ案内を出す)。方針が分からないとき(元に戻す下書きで減便前に戻るとき)は判定しない
   - 欠員を入れていない → `noShortage`(減る勤務の数だけを出す)
   - 減る勤務の数 ≥ 欠員 → `enough`(「足りる目安」)、減る勤務の数 < 欠員 → `short`(「あと {missing} 足りない目安」)
+- 在籍の運転士の数(参考。`rosterCheck`):任意の数(0〜9999 の整数、空も可)。入れたときだけ、判定の下に「参考:乗務できる運転士(在籍 − 欠員)N 人/減便後に要る勤務の数(目安)M。」を出す(N は在籍 − 欠員で、欠員が空なら在籍のまま、欠員が在籍より多ければ 0 にして数を確かめる注意を出す。減便後の GTFS がなければ M は減便前の数)。M が N を超えるときは注意にする。勤務の数は下限の目安で、事業者の運用番号の数(入力の運用番号の数(参考))とは差があることを1文で添える。主な判定(減る勤務の数と欠員の比較)は変えない。変更指示書・手順5 の1行・AI にも、在籍を入れたときだけ出す
 - 入力の運用番号の数(参考):減便前の GTFS だけで出す。その日に走る service が1つで、trip_id がすべて `{運用}_{順番}_{01}_{service_id}_{始発の時刻}` の形(道北バス。`docs/interfaces-1104.md` §5.4)のときに、先頭の部分の種類の数。減便後の GTFS では運用番号の意味が保てないので出さない。事業者の実際の勤務の数とは限らないと添える
-- AI(`summarize_impact` の `drivers`。調整役の版 4):`{date, draft, service_hours: {before_min, after_min, reduction_min, before_trips, after_trips}, duties: {before, after, diff}, operator_runs_before, shortage, verdict: {kind, reduced?, missing?}, places, assumptions}`。画面の欄と同じ `compareDrivers` の値で、欠員・仮定・場所は画面の欄の今の値。AI は「目安」「下限」を外さず、休息期間・予備の要員・実際の仕業は事業者が判断すると添える(調整役の system に書く)。平日に戻した便の集計(`add_back_trips` の `totals.note`)は、要る運転士の数は `drivers` で見られると案内する
+- AI(`summarize_impact` の `drivers`。調整役の版 4):`{date, draft, service_hours: {before_min, after_min, reduction_min, before_trips, after_trips}, duties: {before, after, diff}, operator_runs_before, shortage, verdict: {kind, reduced?, missing?}, places, assumptions, roster_check?: {roster, available, shortage_over_roster, needed_duties, needed_basis, over}}`。`roster_check` は在籍の運転士の数を入れたときだけ足し、その意味は `notes` の1文で伝える(ツールの定義 `claude_tools.json`・`agents/coordinator.md` は変えない)。画面の欄と同じ `compareDrivers` の値で、欠員・在籍の運転士の数・仮定・場所は前提情報の手順の運行の前提の欄の今の値。置いた場所の名前は送らない(数だけ)。AI は「目安」「下限」を外さず、休息期間・予備の要員・実際の仕業は事業者が判断すると添える(調整役の system に書く)。平日に戻した便の集計(`add_back_trips` の `totals.note`)は、要る運転士の数は `drivers` で見られると案内する

@@ -23,7 +23,8 @@ import {
  * 種類ごとに形と色を分け(営業所は四角、車庫はひし形、休憩施設は三角)、右上に凡例「利用者が置いた場所」を出す。
  * 「地図で置く」(store/drivers.ts の placing)の間は、地図を1回押した位置に場所を足す。地図を動かす・拡大する操作は
  * そのまま使える(MapLibre は動かした後には click を出さない)。Esc でやめる。
- * 地図を隠す手順・前提情報の手順(visible が false)では何も出さず、置いている途中ならやめる。
+ * 場所は前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)で置き、前提情報・影響・平日便を戻す手順の地図に出す。
+ * 地図を隠す手順・読み込みの手順(visible が false)では何も出さず、置いている途中ならやめる。
  * レイヤーは、場所を初めて置くか置き始めたときに足す(使わない人の地図に記号の画像を足さない)。足した後は隠すだけ
  */
 
@@ -67,10 +68,20 @@ export function PlacesLegend({ places, placing }: { places: readonly UserPlace[]
 }
 
 /**
- * 利用者が置いた場所の記号と凡例。visible は地図を出していて、場所を見せる手順(影響・平日便を戻す)か。
+ * 利用者が置いた場所の記号と凡例。visible は地図を出していて、場所を見せる手順(前提情報・影響・平日便を戻す)か。
+ * 凡例は、地図の右上の列(FacilityLayer.tsx の MapOverlays)の中に出す。
+ * placeable は地図で置けるか(置く操作のある前提情報の手順だけ)。置けない手順に移ったら、置いている途中ならやめる。
  * loadImage はテストで差し替える
  */
-export default function PlacesLayer({ visible, loadImage = loadSymbolImage }: { visible: boolean; loadImage?: LoadSymbolImage }) {
+export default function PlacesLayer({
+  visible,
+  placeable = true,
+  loadImage = loadSymbolImage,
+}: {
+  visible: boolean
+  placeable?: boolean
+  loadImage?: LoadSymbolImage
+}) {
   const map = useMapStore((s) => s.map) as PlacesMap | null
   const places = useDriversStore((s) => s.places)
   const placing = useDriversStore((s) => s.placing)
@@ -125,14 +136,15 @@ export default function PlacesLayer({ visible, loadImage = loadSymbolImage }: { 
     if (map.getLayer(PLACES_LAYER)) map.setLayoutProperty(PLACES_LAYER, 'visibility', visible ? 'visible' : 'none')
   }, [map, used, visible, ready])
 
-  // 場所を見せない手順に移ったら、置くのをやめる
+  // 場所を見せない手順・置く操作のない手順に移ったら、置くのをやめる
+  const canPlace = visible && placeable
   useEffect(() => {
-    if (!visible && placing !== null) useDriversStore.getState().cancelPlacing()
-  }, [visible, placing])
+    if (!canPlace && placing !== null) useDriversStore.getState().cancelPlacing()
+  }, [canPlace, placing])
 
   // 置いている途中:地図を1回押した位置に足す。Esc でやめる。地図を動かす操作は止めない
   useEffect(() => {
-    if (!map || !visible || placing === null) return
+    if (!map || !canPlace || placing === null) return
     const canvas = map.getCanvas()
     canvas.style.cursor = 'crosshair'
     const onClick = (e: MapMouseEvent) => {
@@ -152,11 +164,11 @@ export default function PlacesLayer({ visible, loadImage = loadSymbolImage }: { 
       window.removeEventListener('keydown', onKey)
       canvas.style.cursor = ''
     }
-  }, [map, visible, placing])
+  }, [map, canPlace, placing])
 
   if (!visible || (places.length === 0 && placing === null)) return null
   return (
-    <div className="pointer-events-none absolute top-24 right-3 flex flex-col items-end gap-2" data-testid="places-overlay">
+    <div className="pointer-events-none flex flex-col items-end gap-2" data-testid="places-overlay">
       <PlacesLegend places={places} placing={placing} />
       {shownPick && (
         <div className="pointer-events-auto flex max-w-60 items-start gap-1.5 rounded-lg bg-background/95 px-3 py-2 text-xs shadow-md ring-1 ring-foreground/10" role="status">

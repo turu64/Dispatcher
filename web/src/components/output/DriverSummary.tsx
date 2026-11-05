@@ -8,20 +8,22 @@ import {
   formatHours,
   formatHoursDiff,
   formatRatioDiff,
+  rosterCaveatText,
+  rosterCheckText,
+  rosterWarningText,
   SERVICE_HOURS_NOTE,
+  SHORTAGE_WHERE,
   verdictText,
 } from '@/components/steps/reach/driverText'
 
 /**
  * 変更指示書と平日便を戻す手順に出す、要る運転士の数(目安)のまとめ(指摘 24・18.1、docs/tasks-1105.md の D04)。
- * 数はすべて store/drivers.ts の compareDrivers が出し、ここでは並べるだけ。欠員と仮定は影響(到達圏)の手順の DriverPanel で入れる
+ * 数はすべて store/drivers.ts の compareDrivers が出し、ここでは並べるだけ。欠員・在籍の運転士の数・仮定・場所は、前提情報の手順の
+ * 「運行の前提」の欄(steps/research/OperationPremise.tsx)で入れる。在籍の運転士の数は、入れたときだけ参考の数を足す
  */
 
 /** まとまりの見出し */
 export const DRIVER_SUMMARY_TITLE = '要る運転士の数(目安)'
-
-/** 欠員を入れていないときに、入れる場所を示す文 */
-export const SHORTAGE_WHERE = '欠員は、手順「影響(到達圏)」の「要る運転士の数(目安)」の欄で入れられます。'
 
 /** 変更指示書の比較する日付が、影響(到達圏)の手順の日付と違いうることの断り(画面だけ) */
 export const SUMMARY_DATE_NOTE =
@@ -36,6 +38,7 @@ export default function DriverSummary({ base, version, date }: { base: GtfsFeed;
   const params = useDriversStore((s) => s.params)
   const places = useDriversStore((s) => s.places)
   const shortage = useDriversStore((s) => s.shortage)
+  const roster = useDriversStore((s) => s.roster)
   const comparison = useMemo(
     () =>
       date === null
@@ -48,8 +51,9 @@ export default function DriverSummary({ base, version, date }: { base: GtfsFeed;
             params,
             places,
             shortage,
+            roster,
           }),
-    [base, version, date, params, places, shortage],
+    [base, version, date, params, places, shortage, roster],
   )
   if (!comparison) {
     return (
@@ -126,6 +130,18 @@ export function DriverSummaryView({ comparison, note }: { comparison: DriverComp
           {verdictText(verdict, date)}
         </p>
       )}
+      {comparison.rosterCheck && (
+        <p data-testid="driver-summary-roster">
+          {rosterCheckText(comparison.rosterCheck)}
+          {rosterWarningText(comparison.rosterCheck) && (
+            <span className="ml-1 font-semibold">
+              <span aria-hidden="true">⚠ </span>
+              {rosterWarningText(comparison.rosterCheck)}
+            </span>
+          )}
+          <span className="ml-1 text-muted-foreground print:text-black">{rosterCaveatText(comparison.operatorRuns)}</span>
+        </p>
+      )}
       <p className="text-muted-foreground print:text-black">{SERVICE_HOURS_NOTE}</p>
       <div>
         <p className="text-muted-foreground print:text-black">使った仮定:</p>
@@ -156,6 +172,24 @@ export function DriverLine() {
   return <DriverLineView comparison={comparison} />
 }
 
+/** 1行に足す、在籍の運転士の数の参考(在籍を入れたときだけ) */
+function RosterLine({ comparison }: { comparison: DriverComparison }) {
+  const check = comparison.rosterCheck
+  if (!check) return null
+  const warning = rosterWarningText(check)
+  return (
+    <span className="block" data-testid="driver-line-roster">
+      {rosterCheckText(check)}
+      {warning && (
+        <span className="font-medium text-destructive">
+          <span aria-hidden="true">⚠ </span>
+          {warning}
+        </span>
+      )}
+    </span>
+  )
+}
+
 /** 1行の中身(store を使わない) */
 export function DriverLineView({ comparison }: { comparison: DriverComparison }) {
   const { before, after, dutyDiff, verdict, date } = comparison
@@ -169,6 +203,7 @@ export function DriverLineView({ comparison }: { comparison: DriverComparison })
       {counts}
       {verdictText(verdict, date)}
       {verdict.kind === 'noShortage' && SHORTAGE_WHERE}
+      {comparison.rosterCheck && <RosterLine comparison={comparison} />}
     </p>
   )
 }

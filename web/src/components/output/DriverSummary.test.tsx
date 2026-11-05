@@ -8,11 +8,12 @@ import type { GtfsFeed } from '@/gtfs/load'
 import { compareDrivers, useDriversStore, type DriverInput } from '@/store/drivers'
 import { useEditStore } from '@/store/edit'
 import { useReachStore } from '@/store/reach'
-import DriverSummary, { DriverLine, DriverLineView, DriverSummaryView, SHORTAGE_WHERE, SUMMARY_DATE_NOTE } from './DriverSummary'
+import { SHORTAGE_WHERE } from '@/components/steps/reach/driverText'
+import DriverSummary, { DriverLine, DriverLineView, DriverSummaryView, SUMMARY_DATE_NOTE } from './DriverSummary'
 
 afterEach(() => {
   cleanup()
-  useDriversStore.setState({ shortage: null, params: { ...DUTY_DEFAULTS }, places: [] })
+  useDriversStore.setState({ shortage: null, roster: null, params: { ...DUTY_DEFAULTS }, places: [] })
   useReachStore.setState({ source: null, edited: null, date: null })
   useEditStore.setState({ draft: null, versions: [] })
 })
@@ -128,6 +129,26 @@ describe('DriverSummaryView(変更指示書のまとまり)', () => {
     expect(none).toContain('休憩施設の位置がないため')
   })
 
+  it('在籍の運転士の数は入れたときだけ、乗務できる運転士と減便後に要る勤務の数を参考に並べる。置いた場所の名前は出さない', () => {
+    render(<DriverSummaryView comparison={comparisonOf({ shortage: 1 })} />)
+    expect(screen.queryByTestId('driver-summary-roster')).toBeNull()
+    cleanup()
+
+    const places = [{ kind: 'depot' as const, name: '秘匿の営業所S', lat: 43.76, lon: 142.36 }]
+    render(<DriverSummaryView comparison={comparisonOf({ shortage: 1, roster: 3, places })} />)
+    const roster = screen.getByTestId('driver-summary-roster').textContent ?? ''
+    expect(roster).toContain('参考:乗務できる運転士(在籍 3 − 欠員 1)2 人/減便後に要る勤務の数(目安)1。')
+    expect(roster).toContain('事業者の運用番号の数')
+    expect(roster).not.toContain('注意')
+    expect(screen.getByTestId('driver-summary').textContent).not.toContain(places[0].name)
+    cleanup()
+
+    // 要る勤務の数が乗務できる運転士を上回れば注意にする(主な判定は変えない)
+    render(<DriverSummaryView comparison={comparisonOf({ shortage: 1, roster: 1 })} />)
+    expect(screen.getByTestId('driver-summary-roster').textContent).toContain('注意:減便後に要る勤務の数(目安)が、乗務できる運転士の数を 1 上回ります。')
+    expect(screen.getByTestId('driver-summary-verdict').textContent).toBe('欠員 1 人:減便で減る勤務の数(目安)1 ≥ 欠員 1 → 足りる目安です。')
+  })
+
   it('仮定を変えると(拘束 15 時間)、勤務の数と仮定の文がその値になる', () => {
     render(<DriverSummaryView comparison={comparisonOf({ params: { ...DUTY_DEFAULTS, maxBoundMin: BOUND_LIMIT_MIN.extended } })} />)
     expect(rowText('勤務の数(目安)')).toBe('勤務の数(目安)11±0')
@@ -177,6 +198,16 @@ describe('DriverLine(平日便を戻す手順の1行)', () => {
     const text = screen.getByTestId('driver-line').textContent ?? ''
     expect(text).toContain('減便後(下書き) 1')
     expect(text).toContain(SHORTAGE_WHERE)
+  })
+
+  it('在籍の運転士の数を入れたときだけ、参考の数を足し、上回れば注意にする', () => {
+    render(<DriverLineView comparison={comparisonOf({ shortage: 1 })} />)
+    expect(screen.queryByTestId('driver-line-roster')).toBeNull()
+    cleanup()
+    render(<DriverLineView comparison={comparisonOf({ shortage: 1, roster: 1 })} />)
+    const roster = screen.getByTestId('driver-line-roster').textContent ?? ''
+    expect(roster).toContain('参考:乗務できる運転士(在籍 1 − 欠員 1)0 人/減便後に要る勤務の数(目安)1。')
+    expect(roster).toContain('⚠ 注意:減便後に要る勤務の数(目安)が、乗務できる運転士の数を 1 上回ります。')
   })
 
   it('比較する日付が平日でなければ、前後で差が無い旨を出す', () => {

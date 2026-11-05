@@ -4,6 +4,7 @@ import type { Map as MapLibreMap } from 'maplibre-gl'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
 import { useChatStore } from '@/store/chat'
+import { useDriversStore } from '@/store/drivers'
 import { useEditStore } from '@/store/edit'
 import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
@@ -82,6 +83,7 @@ afterEach(() => {
     useStepStore.setState({ current: 'load' })
     useSidePanelStore.setState({ tab: 'edit' })
     useChatStore.getState().reset()
+    useDriversStore.getState().reset()
   })
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -272,6 +274,35 @@ function proposeClaudePolicy() {
     useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: null, note: '' } }, 'claude')
   })
 }
+
+describe('運行の前提(前提情報の手順)と要る運転士の数(影響の手順)', () => {
+  it('影響の手順の「前提情報で設定する」で、前提情報の手順の運行の前提の欄へ移り、焦点を置く。AI のタブを開いていても編集に戻す', () => {
+    load()
+    render(<App />)
+    act(() => {
+      useStepStore.getState().go('reach')
+    })
+    // 影響の手順の欄には欠員の入力が無い(描いてあって隠れている前提情報の手順の欄にだけある)
+    const reach = screen.getByRole('heading', { name: '4. 影響(到達圏)' }).closest('[data-slot="card"]') as HTMLElement
+    expect(within(reach).queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
+    expect(within(reach).getByTestId('shortage-hint')).toBeTruthy()
+    act(() => useSidePanelStore.getState().show('chat'))
+    act(() => {
+      fireEvent.click(within(reach).getByRole('button', { name: '前提情報で設定する', hidden: true }))
+    })
+    expect(useStepStore.getState().current).toBe('research')
+    expect(useSidePanelStore.getState().tab).toBe('edit')
+    const premise = screen.getByRole('region', { name: '運行の前提(営業所・休憩施設・運転士の数)' })
+    expect(document.activeElement).toBe(premise)
+    // そこで入れた欠員は、影響の手順の結果に出る
+    fireEvent.change(within(premise).getByLabelText('欠員(その日に乗務できない運転士の数)'), { target: { value: '1' } })
+    act(() => {
+      useStepStore.getState().go('reach')
+    })
+    expect(within(reach).queryByTestId('shortage-hint')).toBeNull()
+    expect(within(reach).getByTestId('driver-verdict').textContent).not.toContain('欠員を入れると')
+  })
+})
 
 describe('左の欄のタブ(編集と AI に相談)', () => {
   it('読み込んだら「編集」と「AI に相談」のタブが出て、切り替えると中身が入れ替わる。地図は手順のとおり出す', () => {

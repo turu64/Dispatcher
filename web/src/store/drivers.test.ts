@@ -33,7 +33,7 @@ function inputOf(base: GtfsFeed, result: Form2Result | null, date: string, extra
 }
 
 afterEach(() => {
-  useDriversStore.setState({ shortage: null, params: { ...DUTY_DEFAULTS }, places: [], placing: null })
+  useDriversStore.setState({ shortage: null, roster: null, params: { ...DUTY_DEFAULTS }, places: [], placing: null })
   useGtfsStore.getState().clear()
 })
 
@@ -52,6 +52,19 @@ describe('useDriversStore(欠員・仮定・施設)', () => {
     expect(useDriversStore.getState().shortage).toBeNull()
   })
 
+  it('在籍の運転士の数は 0〜9999 の整数か null だけを受け付ける', () => {
+    const s = useDriversStore.getState()
+    s.setRoster(110)
+    s.setRoster(10000)
+    s.setRoster(-1)
+    s.setRoster(1.5)
+    expect(useDriversStore.getState().roster).toBe(110)
+    s.setRoster(9999)
+    expect(useDriversStore.getState().roster).toBe(9999)
+    s.setRoster(null)
+    expect(useDriversStore.getState().roster).toBeNull()
+  })
+
   it('仮定を変えて、既定に戻せる', () => {
     useDriversStore.getState().setParams({ maxBoundMin: BOUND_LIMIT_MIN.extended, preCheckMin: 20 })
     expect(useDriversStore.getState().params).toEqual({ ...DUTY_DEFAULTS, maxBoundMin: 900, preCheckMin: 20 })
@@ -59,15 +72,17 @@ describe('useDriversStore(欠員・仮定・施設)', () => {
     expect(useDriversStore.getState().params).toEqual(DUTY_DEFAULTS)
   })
 
-  it('GTFS を読み込み直すと欠員と施設は消え、仮定は残る', () => {
+  it('GTFS を読み込み直すと欠員・在籍の運転士の数と施設は消え、仮定は残る', () => {
     useGtfsStore.getState().setLoaded({ label: 'a.zip', feed: smallFeed() })
     const s = useDriversStore.getState()
     s.setShortage(20)
+    s.setRoster(110)
     s.addPlace({ type: 'garage', name: '車庫', lat: 43.76, lon: 142.36 })
     s.startPlacing('rest')
     s.setParams({ maxBoundMin: BOUND_LIMIT_MIN.extended })
     useGtfsStore.getState().setLoaded({ label: 'b.zip', feed: smallFeed() })
     expect(useDriversStore.getState().shortage).toBeNull()
+    expect(useDriversStore.getState().roster).toBeNull()
     expect(useDriversStore.getState().places).toEqual([])
     expect(useDriversStore.getState().placing).toBeNull()
     expect(useDriversStore.getState().params.maxBoundMin).toBe(BOUND_LIMIT_MIN.extended)
@@ -268,6 +283,22 @@ describe('weekdayServicesOfEdit(減便の方針の平日の service)', () => {
   })
 })
 
+describe('compareDrivers(在籍の運転士の数の参考)', () => {
+  it('在籍を入れなければ rosterCheck は null。入れれば在籍 − 欠員と、減便後(無ければ減便前)の勤務の数を比べる', () => {
+    const base = smallFeed()
+    const result = applied(base)
+    expect(compareDrivers(inputOf(base, result, WEDNESDAY, { shortage: 1 })).rosterCheck).toBeNull()
+    const c = compareDrivers(inputOf(base, result, WEDNESDAY, { shortage: 1, roster: 3 }))
+    expect(c.rosterCheck).toMatchObject({ roster: 3, shortage: 1, available: 2, basis: 'after', needed: c.after!.duties.dutyCount })
+    expect(c.rosterCheck!.over).toBe(Math.max(0, c.after!.duties.dutyCount - 2))
+    const noEdit = compareDrivers(inputOf(base, null, WEDNESDAY, { roster: 0 }))
+    expect(noEdit.rosterCheck).toMatchObject({ roster: 0, shortage: null, available: 0, basis: 'before', needed: noEdit.before.duties.dutyCount })
+    expect(noEdit.rosterCheck!.over).toBe(noEdit.before.duties.dutyCount)
+    // 欠員が在籍より多いときは 0 人とし、数の入れ違いの疑いを立てる
+    expect(compareDrivers(inputOf(base, null, WEDNESDAY, { roster: 1, shortage: 5 })).rosterCheck).toMatchObject({ available: 0, shortageOverRoster: true })
+  })
+})
+
 // 道北バスのデモの筋:欠員 20 人に対して、平日を土曜ダイヤにすると足りる目安(82 → 57、25 減る)、
 // 10/29 版の形(平日に 25 便戻す。82 → 68、14 減る)では足りない目安。ZIP はコミットしないので、無ければスキップする
 const BEFORE_ZIP = fileURLToPath(new URL('../../../data/raw/gtfs/dohoku_bus_減便前.zip', import.meta.url))
@@ -288,6 +319,15 @@ describe.skipIf(!existsSync(BEFORE_ZIP) || !existsSync(AFTER_ZIP))('compareDrive
     expect(c.after!.duties.dutyCount).toBe(57)
     expect(c.operatorRuns).toBe(101)
     expect(c.verdict).toEqual({ kind: 'enough', reduced: 25, shortage: 20 })
+  })
+
+  it('在籍 110・欠員 20 を入れても勤務の数と判定は変わらず(82 → 57)、乗務できる運転士 90 人と減便後に要る勤務の数 57 を参考に出す', () => {
+    const result = applied(base, basePlan({ weekdayService: '01', replacementService: '03', period: { start: '20261101', end: null } }))
+    const c = compareDrivers(inputOf(base, result, WEDNESDAY, { shortage: 20, roster: 110 }))
+    expect([c.before.duties.dutyCount, c.after!.duties.dutyCount]).toEqual([82, 57])
+    expect(c.verdict).toEqual({ kind: 'enough', reduced: 25, shortage: 20 })
+    expect(c.rosterCheck).toEqual({ roster: 110, shortage: 20, available: 90, shortageOverRoster: false, needed: 57, basis: 'after', over: 0 })
+    expect(compareDrivers(inputOf(base, null, SATURDAY, { roster: 110 })).before.duties.dutyCount).toBe(57)
   })
 
   it('10/29 版の形では、勤務の数は 14 減り、欠員 20 人にあと 6 足りない目安', () => {

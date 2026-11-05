@@ -1,6 +1,6 @@
 import { flushSync } from 'react-dom'
 import { useSidePanelStore } from '@/store/sidePanel'
-import { useStepStore } from '@/store/steps'
+import { useStepStore, type StepKey } from '@/store/steps'
 
 /** 手順の欄の id。チャットの下書きの知らせの「編集で確かめる」ボタンが、下書きを確かめる手順へ移るときに使う */
 export const STEP_IDS = {
@@ -12,16 +12,32 @@ export const STEP_IDS = {
 export type JumpStepKey = keyof typeof STEP_IDS
 
 /**
- * 左の欄を「編集」のタブにして該当する手順を開き、その欄へ移る(スクロールして、焦点を置く)。
+ * 前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)の id。
+ * 影響(到達圏)の手順の「要る運転士の数(目安)」の欄の「前提情報で設定する」ボタンが移る先
+ */
+export const PREMISE_SECTION_ID = 'operation-premise'
+
+/**
+ * 左の欄を「編集」のタブにして手順を開き、その中の要素へ移る(スクロールして、焦点を置く)。
  * 開く前の手順の欄(と「編集」のタブ)は隠れているので、開いた描画を済ませてから焦点を置く
  */
-export function jumpToStep(step: JumpStepKey): void {
+export function jumpToElement(step: StepKey, elementId: string): void {
   flushSync(() => {
     useSidePanelStore.getState().show('edit')
     useStepStore.getState().go(step)
   })
-  const el = document.getElementById(STEP_IDS[step])
+  const el = document.getElementById(elementId)
   if (!el) return
   el.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
   el.focus({ preventScroll: true })
+}
+
+/** 左の欄を「編集」のタブにして該当する手順を開き、その欄へ移る */
+export function jumpToStep(step: JumpStepKey): void {
+  jumpToElement(step, STEP_IDS[step])
+}
+
+/** 前提情報の手順を開き、「運行の前提」の欄へ移る */
+export function jumpToPremise(): void {
+  jumpToElement('research', PREMISE_SECTION_ID)
 }

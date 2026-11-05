@@ -70,7 +70,7 @@ describe('在籍の運転士の数の参考の文', () => {
   it('乗務できる運転士(在籍 − 欠員)と、減便後に要る勤務の数を並べる', () => {
     expect(rosterCheckText(check())).toBe('参考:乗務できる運転士(在籍 110 − 欠員 20)90 人/減便後に要る勤務の数(目安)57。')
     expect(rosterCheckText(check({ shortage: null, available: 110, basis: 'before', needed: 82 }))).toBe(
-      '参考:乗務できる運転士(在籍 110。欠員は未入力)110 人/減便前に要る勤務の数(目安)82。',
+      '参考:乗務できる運転士(在籍 110、欠員は未入力)110 人/減便前に要る勤務の数(目安)82。',
     )
     expect(rosterWarningText(check())).toBeNull()
   })

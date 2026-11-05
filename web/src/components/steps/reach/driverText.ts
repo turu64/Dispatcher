@@ -103,7 +103,7 @@ export function driverCaveats(params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivi
  * 「参考:乗務できる運転士(在籍 110 − 欠員 20)90 人/減便後に要る勤務の数(目安)57。」
  */
 export function rosterCheckText(check: RosterCheck): string {
-  const minus = check.shortage === null ? '。欠員は未入力' : ` − 欠員 ${check.shortage}`
+  const minus = check.shortage === null ? '、欠員は未入力' : ` − 欠員 ${check.shortage}`
   const side = check.basis === 'after' ? '減便後' : '減便前'
   return `参考:乗務できる運転士(在籍 ${check.roster}${minus})${check.available} 人/${side}に要る勤務の数(目安)${check.needed}。`
 }
@@ -121,7 +121,7 @@ export function rosterWarningText(check: RosterCheck): string | null {
 export function rosterCaveatText(operatorRuns: number | null): string {
   return operatorRuns === null
     ? '勤務の数の推定は下限の目安のため、事業者の運用番号の数(実際の勤務の数)とは差があります。'
-    : `勤務の数の推定は下限の目安のため、事業者の運用番号の数(入力の運用番号の数(参考)は減便前 ${operatorRuns})とは差があります。`
+    : `勤務の数の推定は下限の目安のため、事業者の運用番号の数とは差があります。入力の運用番号の数(参考)は減便前 ${operatorRuns} です。`
 }
 
 /** 使った仮定の短い一覧(拘束・点呼・回送の速さ・置いた場所の数) */

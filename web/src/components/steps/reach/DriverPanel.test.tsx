@@ -242,7 +242,7 @@ describe('DriverView(在籍の運転士の数の参考)', () => {
 
   it('減便後が無ければ減便前の勤務の数と比べ、欠員が在籍より多ければ数を確かめる注意にする', () => {
     viewOf({ base: shuttleFeed(14), roster: 10 })
-    expect(screen.getByTestId('roster-check').textContent).toContain('参考:乗務できる運転士(在籍 10。欠員は未入力)10 人/減便前に要る勤務の数(目安)2。')
+    expect(screen.getByTestId('roster-check').textContent).toContain('参考:乗務できる運転士(在籍 10、欠員は未入力)10 人/減便前に要る勤務の数(目安)2。')
     cleanup()
     viewOf({ base: shuttleFeed(14), roster: 10, shortage: 20 })
     expect(screen.getByTestId('roster-warning').textContent).toContain('欠員が在籍の運転士の数より多く')

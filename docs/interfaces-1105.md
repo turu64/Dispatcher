@@ -535,7 +535,9 @@ CREATE TABLE jev_usage (                                                        
     - `band`(onlyTripInBand の便)・`route_weekday_trips`・`lost_cells`(restoresLostCells の便)は、値のある便だけに入れる。判断材料を出さない scope の便には `hints` などの項目を入れない
     - `nearby_facilities` は優先順位・距離の順の 1 件(`target_id`・名前・種類・`priority_rank`・`matches`、調べた窓なら `window`)。窓に当たる施設の数は nearFacility の `hint_texts` に入る。学校・病院を読めていないときと、窓に当たる施設のない便には項目を入れない(読めていない理由は notes)
     - `facility_research` は 5 施設まで、事実は先頭の 3 件・値は 40 字まで。20KB を超えたら便より先に省く(今までどおり)
-  - 道北バス(9/17 版)で平日を土曜ダイヤにし(期間 11/9〜、外す系統なし)、学校・病院と保存済みの結果(デモ 30 件)を読み込んだとき、なくなる便 297 便を limit 50 で 11 回で読めた。1回に返る便は 16・19・23・28・29・28・31・31・30・31・31 便(最初の回は判断材料 9 つと学校・病院を持つ便が並ぶので少ない)。`web/src/claude/tools.verify.test.ts` で、20KB に収まること・重ならず漏れないこと・12 回以内で読めることを確かめる
+    - offset 0 の項目の説明の notes は、tool の説明に無いことだけを短く書く(波5のレビュー)
+  - 20KB を超える結果は、便を省く前に、収まるまで次の順に省く(`fitTrips`。波5のレビュー):1 `facility_research` を後ろから(数は `facility_research_omitted`)、2 同じ結果の前の便に出た施設の `nearby_facilities` を `target_id`・`matches` だけに、3 `hint_texts`(名前は tool の説明の hints の「」、時間帯は `band.label`。nearFacility の施設の数は失う。notes の hint_texts の言い方を求める文も外す)、4 `via`、5 便を後ろから(`truncated`)。1〜4 で省いたものは notes の1文(「結果を 20KB に収めるため、次を省きました:…」)にまとめる。先頭の1便だけで 20KB を超えるときは、その便を返さずに `next_offset` を1つ進める(`truncated_note` に trip_id を書く)
+  - 道北バス(9/17 版)で平日を土曜ダイヤにし(期間 11/9〜、外す系統なし)、学校・病院と保存済みの結果(デモ 30 件)を読み込んだとき、なくなる便 297 便を limit 50 で 8 回で読めた。1回に返る便は 27・33・39・40・42・42・43・31 便(省く前は 11 回、最初の回は 16 便。最初の回は判断材料 9 つと学校・病院を持つ便が並ぶので少ない。30 便にするには、平日に戻す理由に要る前の便と同じ施設の `matches` や `feed` まで省くことになるので、そこまでは省かない)。`web/src/claude/tools.verify.test.ts` で、20KB に収まること・重ならず漏れないこと・12 回以内で読めること・最初の回が 25 便以上であることを確かめる
 - 「止める」:ツールを実行している間なら、実行を止め、答えていない呼び出しすべての `is_error`(「利用者が止めました」)を `interrupt` の `results` に入れて送る(§4.7。主のスレッドの `requires_action` を `interrupt` が閉じるかは資料に無いので、結果で決着させる。結果と `interrupt` を1回で送り、その間にモデルが動かないようにする)
 
 ### 6.4 画面

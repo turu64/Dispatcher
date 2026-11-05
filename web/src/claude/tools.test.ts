@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { AGENCY, FEED_INFO, feedOf, rowsOf, smallFeed } from '../gtfs/edit/form2.fixture'
 import { defaultFacilityWindows, facilityWindows } from '../gtfs/edit/facilityHours'
 import { reachBaseFeed, reachSetup } from '../gtfs/edit/restore.fixture'
-import type { HintFacility, RestoreHintContext } from '../gtfs/edit/restore'
+import type { HintFacility, NearFacility, RestoreHintContext, RestoreHintDetail } from '../gtfs/edit/restore'
 import { makeBands } from '../gtfs/departures'
 import { DEFAULT_REACH_PARAMS } from '../reach/reach'
-import { DUTY_DEFAULTS } from '../gtfs/edit/duties'
+import { DUTY_DEFAULTS, type DutyPlace } from '../gtfs/edit/duties'
 import { compareDrivers } from '../store/drivers'
 import { createEditStore, type BaseGtfs } from '../store/edit'
 import type { ReachSnapshot } from '../store/reach'
@@ -18,6 +18,7 @@ import {
   MAX_RESULT_BYTES,
   resolveRouteRefs,
   runTool,
+  shortHintText,
   type ReachAccess,
   type ReachView,
   type ToolDeps,
@@ -455,7 +456,7 @@ describe('結果が 20KB を超えたら切り詰めて件数を書く', () => {
     // returned は省いた後の便の数で、offset + returned + truncated + omitted_over_limit が total になる(続きの位置を読み違えないように)
     expect(body.returned).toBe((body.trips as unknown[]).length)
     expect(Number(body.offset) + Number(body.returned) + Number(body.truncated) + Number(body.omitted_over_limit)).toBe(body.total)
-    expect(String(body.truncated_note)).toContain(`returned(${String(body.returned)})は省いた後に trips に入れた便の数`)
+    expect(String(body.truncated_note)).toContain(`returned は trips に入れた ${String(body.returned)} 件`)
     // 続きは next_offset から読む(truncated_note も offset を案内する)
     expect(body.next_offset).toBe(body.returned)
     expect(String(body.truncated_note)).toContain(`offset を ${String(body.returned)} にして読んでください`)
@@ -475,6 +476,105 @@ describe('結果が 20KB を超えたら切り詰めて件数を書く', () => {
     // 20KB 以下ならそのまま
     const small = { status: 'ok', total: 1, returned: 1, omitted_over_limit: 0, trips: trips.slice(0, 1) }
     expect(fitTrips(small)).toBe(JSON.stringify(small))
+  })
+
+  // tools.ts の HINT_TEXTS_NOTE と同じ文(hint_texts を省いたら外す)
+  const HINT_TEXTS_NOTE = '利用者には「唯一の便」とは書かず、hint_texts の言い方を使ってください。系統の便数は route_weekday_trips です。'
+  const OMITTED_NOTE_HEAD = '結果を 20KB に収めるため、次を省きました:'
+
+  it('便を省く前に、調べた施設の結果・前の便と同じ施設の詳しい項目・hint_texts・via の順に省き、省いたものを1つの文に書く(波5のレビュー)', () => {
+    // 施設は 2 つ(便ごとに交互)。どの便も hint_texts と via を持つ。調べた施設の結果は 1 件 3KB ほど
+    const facility = (i: number) => ({ target_id: `P04:病院${i}`, name: `病院${i}`.repeat(10), category: '入院設備のある病院', priority_rank: 1, matches: [`07:${String(10 + i)}着 病院前${i}`] })
+    // via を省いても収まらず、便も省く大きさ(1便 600 バイトほど × 60 便)
+    const trips = Array.from({ length: 60 }, (_, i) => ({
+      feed: 'base',
+      trip_id: `T${String(i).padStart(2, '0')}`,
+      headsign: '行き先'.repeat(30),
+      via: ['経由の停留所'.repeat(5), '次の停留所'.repeat(5)],
+      hints: ['weekdayOnlyRoute', 'routeWouldVanish', 'nearFacility'],
+      hint_texts: ['平日だけの系統', '全曜日で便がなくなる系統', '学校・病院の近く(2 施設)'],
+      nearby_facilities: [facility(i % 2)],
+    }))
+    const research = Array.from({ length: 3 }, (_, i) => ({ target_id: `P04:病院${i}`, facts: [{ value: 'あ'.repeat(1000) }] }))
+    const body = { status: 'ok', total: 60, offset: 0, returned: 60, omitted_over_limit: 0, next_offset: null, notes: ['状態の文', HINT_TEXTS_NOTE], facility_research: research, trips }
+    const text = fitTrips(body)
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(MAX_RESULT_BYTES)
+    const out = parse(text)
+    // 1. 調べた施設の結果は件数だけ
+    expect(out.facility_research).toEqual([])
+    expect(out.facility_research_omitted).toBe(3)
+    const kept = out.trips as Record<string, unknown>[]
+    expect(kept.length).toBeGreaterThan(0)
+    // 2. 施設ごとに最初の便だけ name・category・priority_rank を持ち、後の便は target_id と matches だけ
+    const seen = new Set<unknown>()
+    for (const t of kept) {
+      const f = (t.nearby_facilities as Record<string, unknown>[])[0]
+      if (seen.has(f.target_id)) expect(Object.keys(f).sort()).toEqual(['matches', 'target_id'])
+      else expect(f).toMatchObject({ name: expect.any(String), category: '入院設備のある病院', priority_rank: 1 })
+      seen.add(f.target_id)
+      expect(f.matches).toHaveLength(1)
+      // 3・4. hint_texts と via は省き、hints は残す
+      expect(t).not.toHaveProperty('hint_texts')
+      expect(t).not.toHaveProperty('via')
+      expect(t.hints).toEqual(['weekdayOnlyRoute', 'routeWouldVanish', 'nearFacility'])
+    }
+    // 省いたものの文は1つ。無い hint_texts の言い方を使うよう求める文は外す。ほかの文は残す
+    const notes = out.notes as string[]
+    const omitted = notes.filter((n) => n.startsWith(OMITTED_NOTE_HEAD))
+    expect(omitted).toHaveLength(1)
+    for (const part of ['facility_research の後ろから 3 件', '前の便に出た施設の nearby_facilities の target_id・matches 以外', 'hint_texts(', 'via(']) {
+      expect(omitted[0]).toContain(part)
+    }
+    expect(notes).not.toContain(HINT_TEXTS_NOTE)
+    expect(notes).toContain('状態の文')
+    // 便も省き、数を合わせる
+    expect(out.returned).toBe(kept.length)
+    expect(kept.length + Number(out.truncated)).toBe(60)
+    expect(out.next_offset).toBe(kept.length)
+  })
+
+  it('一つ前の段で収まれば、その先は省かない(hint_texts を省けば収まるなら via と便は残す)', () => {
+    const trips = Array.from({ length: 30 }, (_, i) => ({
+      trip_id: `T${i}`,
+      via: ['駅前'],
+      hints: ['weekdayOnlyRoute'],
+      hint_texts: ['平日だけの系統'.repeat(50)],
+    }))
+    const out = parse(fitTrips({ status: 'ok', total: 30, offset: 0, returned: 30, omitted_over_limit: 0, next_offset: null, notes: [HINT_TEXTS_NOTE], trips }))
+    const kept = out.trips as Record<string, unknown>[]
+    expect(kept).toHaveLength(30)
+    expect(out).not.toHaveProperty('truncated')
+    for (const t of kept) {
+      expect(t).not.toHaveProperty('hint_texts')
+      expect(t.via).toEqual(['駅前'])
+    }
+    const omitted = (out.notes as string[]).filter((n) => n.startsWith(OMITTED_NOTE_HEAD))
+    expect(omitted).toHaveLength(1)
+    expect(omitted[0]).not.toContain('via(')
+  })
+
+  describe('先頭の1便だけで 20KB を超えるとき(全部の便を省く)', () => {
+    const big = { trip_id: 'BIG_TRIP', headsign: 'あ'.repeat(9000) }
+    const small = (i: number) => ({ trip_id: `S${i}`, headsign: '駅前' })
+
+    it('その便を飛ばして next_offset を1つ進め、同じ offset を読み続けないようにする', () => {
+      // offset 1 の便が大きい。後ろの便も一緒に省き、続きは offset 2 から(offset 2 からは小さい便なので返せる)
+      const text = fitTrips({ status: 'ok', total: 4, offset: 1, returned: 3, omitted_over_limit: 0, next_offset: null, notes: [], trips: [big, small(2), small(3)] })
+      expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(MAX_RESULT_BYTES)
+      const out = parse(text)
+      expect(out).toMatchObject({ total: 4, offset: 1, returned: 0, truncated: 3, next_offset: 2, trips: [] })
+      // offset + returned + truncated + omitted_over_limit = total
+      expect(Number(out.offset) + Number(out.returned) + Number(out.truncated) + Number(out.omitted_over_limit)).toBe(out.total)
+      const note = String(out.truncated_note)
+      expect(note).toContain('offset 1 の便(trip_id BIG_TRIP)は1便だけで 20KB を超える')
+      expect(note).toContain('offset を 2 にしてください')
+    })
+
+    it('その便が最後なら next_offset は null', () => {
+      const out = parse(fitTrips({ status: 'ok', total: 1, offset: 0, returned: 1, omitted_over_limit: 0, next_offset: null, notes: [], trips: [big] }))
+      expect(out).toMatchObject({ total: 1, offset: 0, returned: 0, truncated: 1, next_offset: null, trips: [] })
+      expect(String(out.truncated_note)).toContain('この便のほかに続きはありません')
+    })
   })
 })
 
@@ -856,7 +956,10 @@ WK0800,08:10:00,08:10:00,B,2`),
         // 調べた施設の結果を先に省く
         expect(body.facility_research).toEqual([])
         expect(body.facility_research_omitted).toBe(3)
-        expect((body.notes as string[]).some((n) => n.includes('facility_research(調べた施設の結果)の後ろから 3 件を省きました'))).toBe(true)
+        // 省いたものは1つの文にまとめる(省くたびに文を足さない)
+        const omittedNotes = (body.notes as string[]).filter((n) => n.startsWith('結果を 20KB に収めるため、次を省きました:'))
+        expect(omittedNotes).toHaveLength(1)
+        expect(omittedNotes[0]).toContain('facility_research の後ろから 3 件(get_research_results で読めます)')
         // 便の省いた数は便だけ(施設の数を足さない)
         const kept = (body.trips as unknown[]).length
         expect(kept).toBeGreaterThan(0)
@@ -879,16 +982,31 @@ WK0800,08:10:00,08:10:00,B,2`),
         expect(body).not.toHaveProperty('facility_research_omitted')
         const trips = body.trips as { nearby_facilities: Record<string, unknown>[] }[]
         expect(trips.length).toBeGreaterThan(0)
+        // 施設ごとに、最初に出た便には window までの全部、同じ結果の後の便には target_id と matches だけを入れる
+        const seen = new Set<unknown>()
         for (const t of trips) {
           expect(t.nearby_facilities).toHaveLength(1)
           for (const f of t.nearby_facilities) {
-            expect(typeof f.window).toBe('string')
+            if (seen.has(f.target_id)) {
+              expect(Object.keys(f).sort()).toEqual(['matches', 'target_id'])
+            } else {
+              seen.add(f.target_id)
+              expect(typeof f.window).toBe('string')
+              expect(f.name).toBe('ＪＡ北海道厚生連旭川厚生病院附属外来センター')
+            }
             expect(new TextEncoder().encode(JSON.stringify(f)).length).toBeLessThan(MAX_NEARBY_BYTES_WITH_WINDOW)
           }
         }
+        expect(seen.size).toBe(3)
         expect(body.returned).toBe(trips.length)
-        expect(trips.length + Number(body.truncated)).toBe(50)
-        expect(String(body.truncated_note)).toContain(`${50 - trips.length} 件`)
+        // 便を省いたときだけ truncated を書く(offset + returned + truncated + omitted_over_limit = total)
+        const truncated = typeof body.truncated === 'number' ? body.truncated : 0
+        expect(trips.length + truncated).toBe(50)
+        if (truncated > 0) expect(String(body.truncated_note)).toContain(`${truncated} 件`)
+        else expect(body).not.toHaveProperty('truncated')
+        const omittedNotes = (body.notes as string[]).filter((n) => n.startsWith('結果を 20KB に収めるため、次を省きました:'))
+        expect(omittedNotes).toHaveLength(1)
+        expect(omittedNotes[0]).toContain('前の便に出た施設の nearby_facilities の target_id・matches 以外')
       })
 
       it('調べた施設の結果を省くだけで収まれば、便は省かず truncated を書かない', async () => {
@@ -1020,8 +1138,15 @@ WK0800,08:10:00,08:10:00,B,2`),
     expect(body.total).toBe(trips.length)
     expect(trips.map((t) => t.trip_id)).toEqual(['R3_0730_WK'])
     for (const t of trips) expect(t.hints.some((h) => h === 'onlyTripInBand' || h === 'weekdayOnlyRoute')).toBe(true)
-    // 空の配列は null と同じ(絞らない)
-    expect(parse((await runTool('search_trips', { ...SEARCH, limit: 50, hints: [] }, deps)).content).total).toBe(3)
+    // 空の配列は null と同じ(絞らない。結果も同じ)
+    const empty = await runTool('search_trips', { ...SEARCH, limit: 50, hints: [] }, deps)
+    expect(empty.isError).toBe(false)
+    expect(parse(empty.content).total).toBe(3)
+    expect(parse(empty.content)).toEqual(parse((await runTool('search_trips', { ...SEARCH, limit: 50, hints: null }, deps)).content))
+    // 判断材料を出さない scope でも、空の配列は null と同じでエラーにしない
+    const added = await runTool('search_trips', { ...SEARCH, scope: 'added', limit: 50, hints: [] }, deps)
+    expect(added.isError).toBe(false)
+    expect(parse(added.content)).toEqual(parse((await runTool('search_trips', { ...SEARCH, scope: 'added', limit: 50, hints: null }, deps)).content))
     // 方針が無ければ判断材料が無いので、hints では絞れない
     const none = setup()
     const r = await runTool('search_trips', { ...SEARCH, scope: 'base_weekday', hints: ['morning'] }, none.deps)
@@ -1408,6 +1533,24 @@ WK1700,17:10:00,17:10:00,A,2`),
       expect(d2.verdict.kind).toBe('no_shortage')
     })
 
+    it('営業所・車庫・休憩施設を置いたとき、places は数だけにし、assumptions にも場所の名前を入れない(F02)', async () => {
+      const NAMES = ['秘匿の営業所T', '秘匿の車庫T', '秘匿の休憩所T']
+      const places: DutyPlace[] = [
+        { kind: 'depot', name: NAMES[0], lat: 43.76, lon: 142.36 },
+        { kind: 'garage', name: NAMES[1], lat: 43.77, lon: 142.36 },
+        { kind: 'rest', name: NAMES[2], lat: 43.76, lon: 142.37 },
+      ]
+      const { store, deps } = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places, shortage: 1 }) })
+      await withPolicy(deps, store)
+      const r = await runTool('summarize_impact', { date: null, step_hours: null }, deps)
+      const d = parse(r.content).drivers as { places: unknown; assumptions: string[] }
+      expect(d.places).toBe(3)
+      // 営業所・車庫は 2 か所、休憩施設は 1 か所と、数だけを書く
+      expect(d.assumptions.some((a) => a.includes('営業所・車庫(2 か所)'))).toBe(true)
+      expect(d.assumptions.some((a) => a.includes('休憩施設(1 か所)'))).toBe(true)
+      for (const name of NAMES) expect(r.content).not.toContain(name)
+    })
+
     it('20KB を超えたら、ほかの一覧より先に facility_access → round_trip の一覧を後ろから省き、省いた数を書く(fitImpactLists)', () => {
       const big = (i: number) => ({ name: `施設${i}`, filler: 'あ'.repeat(300) })
       const body = {
@@ -1455,5 +1598,55 @@ WK1700,17:10:00,17:10:00,A,2`),
       const small = { ...body, round_trip: { problems: [] }, facility_access: null }
       expect(fitImpactLists(small)).toBe(small)
     })
+  })
+})
+
+describe('判断材料の短い文(shortHintText。search_trips の hint_texts)', () => {
+  const detail = (o: Partial<RestoreHintDetail> = {}): RestoreHintDetail => ({
+    hints: [],
+    lostCells: null,
+    band: null,
+    routeTrips: { before: 2, after: 0 },
+    ...o,
+  })
+  /** 窓に当たった時刻の数が matched の施設(matched が 0 なら徒歩圏にあるだけ) */
+  const near = (matched: number): NearFacility => ({
+    facility: { targetId: 'P29:x', name: '高校' } as HintFacility,
+    stopId: 'S',
+    stopName: '学校前',
+    distanceM: 120,
+    matches: Array.from({ length: matched }, () => ({ timing: 'arrive' as const, stopId: 'S', stopName: '学校前', time: '07:40', distanceM: 120 })),
+  })
+
+  it('onlyTripInBand は、band があれば時間帯を括弧に入れ、無ければ名前だけ', () => {
+    expect(shortHintText('onlyTripInBand', detail({ band: { label: '6〜9時', before: 2, after: 0 } }))).toBe('時間帯の便がなくなる(6〜9時)')
+    expect(shortHintText('onlyTripInBand', detail())).toBe('時間帯の便がなくなる')
+  })
+
+  it('nearFacility は、窓に当たる施設の数を括弧に入れる(窓に当たらない施設は数えない。0 なら名前だけ)', () => {
+    expect(shortHintText('nearFacility', detail())).toBe('学校・病院の近く')
+    expect(shortHintText('nearFacility', detail({ facilities: [] }))).toBe('学校・病院の近く')
+    expect(shortHintText('nearFacility', detail({ facilities: [near(0)] }))).toBe('学校・病院の近く')
+    expect(shortHintText('nearFacility', detail({ facilities: [near(1), near(0)] }))).toBe('学校・病院の近く(1 施設)')
+    expect(shortHintText('nearFacility', detail({ facilities: [near(1), near(2), near(0), near(1)] }))).toBe('学校・病院の近く(3 施設)')
+  })
+
+  it('ほかの判断材料は、画面の名前だけ(数を添えない。「唯一」と書かない)', () => {
+    const d = detail({ band: { label: '6〜9時', before: 1, after: 0 }, lostCells: { cells: 3, population: 10 }, facilities: [near(1)] })
+    const expected: Record<string, string> = {
+      weekdayOnlyRoute: '平日だけの系統',
+      routeWouldVanish: '全曜日で便がなくなる系統',
+      firstTripOfRoute: '系統の始発',
+      lastTripOfRoute: '系統の終発',
+      morning: '朝(6〜9時)',
+      evening: '夕方・夜(15〜21時)',
+      onlyServiceAtStop: '停留所の発車がなくなる',
+      restoresLostCells: '到達圏が戻る',
+    }
+    for (const [hint, text] of Object.entries(expected)) {
+      const got = shortHintText(hint as RestoreHintDetail['hints'][number], d)
+      expect(got).toBe(text)
+      expect(got).not.toContain('唯一')
+    }
   })
 })

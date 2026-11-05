@@ -30,8 +30,9 @@ export type ResetReason = 'reload' | 'delete'
  *    削除では、下書きの番号も 1 からに戻す(会話の発言も消えるので、前の「下書き #N」と重ならない)
  * 4. store/map:地図の施設の強調
  * 5. store/research:前提情報の手順の施設・事業者・選択・調査の結果・デモの調査結果(reset)
- * 6. store/serviceGroups:ダイヤのグループ分け(判断材料・案・利用者の直し・確定・Jev の答え)。Jev に送っている問い合わせは中断し、
- *    届いた答えを捨てる。Jev に送るかのスイッチは、読み込み直しでも削除でも残す(送るのを止めた選択を黙って戻さないため)
+ * 6. store/serviceGroups:ダイヤのグループ分け(判断材料・案・利用者の直し・Jev の答え)。Jev に送っている問い合わせは中断し、
+ *    届いた答えと、送るかを聞いている状態(awaitingConsent)を捨てる。送るかは残さず、読み込むたびにダイアログ
+ *    (components/steps/load/JevConsentDialog.tsx)で聞き直す(ブラウザに保存しない決定のため)
  * 7. store/chat:AI との会話。セッションを終え(DELETE /api/claude/session を keepalive で送る)、発言の一覧を消す(reset)
  * 8. store/steps:開いている手順を先頭(読み込み)に。store/sidePanel:左の欄のタブを「編集」に
  * 9. store/priority:重要拠点の優先順位(削除だけ)

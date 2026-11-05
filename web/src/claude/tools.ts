@@ -247,8 +247,8 @@ const NO_POLICY = '減便の方針が承認されていないため、使えま�
 const NO_EDIT =
   '減便の方針の下書きも承認済みの減便の方針もないため、比較する減便後の GTFS がありません。先に apply_policy を使ってください。'
 const NO_REACH_HINTS = '到達圏の比較がまだないため、到達圏を使う判断材料は出していません。'
-const HINT_TEXTS_NOTE =
-  'hint_texts は hints と同じ並びの短い文で、時間帯・停留所・系統の全体のどれについての判断材料かを書いたものです。利用者に説明するときは「唯一の便」とは書かず、hint_texts の言い方を使ってください。系統の便数は route_weekday_trips(減便前・減便後の平日の便数。方向は分けていません)を使ってください。'
+// offset 0 の結果だけに入れる項目の説明は、tool の説明(claude_tools.json)に無いことだけを短く書く(1回目の結果に便を多く入れるため)
+const HINT_TEXTS_NOTE = '利用者には「唯一の便」とは書かず、hint_texts の言い方を使ってください。系統の便数は route_weekday_trips です。'
 const REACH_BUSY_HINTS = '到達圏の計算が終わらなかったため、到達圏を使う判断材料は出していません。しばらくしてから探し直してください。'
 
 const NO_FACILITY_HINTS_WITHOUT_REACH =
@@ -256,7 +256,10 @@ const NO_FACILITY_HINTS_WITHOUT_REACH =
 const NO_FACILITY_DATA =
   '手順2「前提情報」の学校・病院の参照データを読み込めていないため、学校・病院の判断材料(nearFacility・nearby_facilities)は出していません(該当がないという意味ではありません)。'
 const FACILITY_NOTE =
-  'nearby_facilities は、便の停留所の徒歩圏にあり、施設ごとの時間帯の窓に当たる学校・病院です(便ごとに優先順位・距離の順で 1 件。ほかに当たる施設の数は nearby_facilities_omitted)。学校・病院を読み込んでいて nearby_facilities のない便は、窓に当たる施設が徒歩圏にありません。window のない施設は既定の窓です。'
+  'nearby_facilities は、便の停留所の徒歩圏にあり施設ごとの時間帯の窓に当たる学校・病院の 1 件です。項目のない便は、窓に当たる施設が徒歩圏にありません。window のない施設は既定の窓です。'
+const LOST_CELLS_NOTE = 'lost_cells は、ほかの便を平日に戻したときとの重なりを考えていません。'
+const ORDER_NOTE = '到達圏の比較や学校・病院の読み込みが途中で変わると、判断材料と並びが変わります。'
+const FEED_NOTE = '加わる便(feed が edited)は、なくなる便(feed が base)と同じ trip_id のことがあります。'
 /** offset が 0 より大きいとき、項目の説明の notes の代わりに入れる文 */
 const NOTES_ON_FIRST_PAGE = '項目の説明は offset 0 の結果の notes と同じです(省きました)。'
 
@@ -1492,14 +1495,8 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
     }
     return trip
   })
-  if ((scope === 'removed' || scope === 'base_weekday') && details.size > 0) {
-    explainNotes.push(HINT_TEXTS_NOTE)
-    explainNotes.push('lost_cells は、この便だけを平日に戻したときに到達圏に戻る区画(セル)の数と推計人口です(ほかの便を平日に戻したときとの重なりは考えていません)。')
-  }
-  explainNotes.push(
-    '並びは同じ入力なら毎回同じです(scope removed は判断材料の多い順、ほかは始発の時刻の順。同じなら trip_id の順)。ただし、到達圏の比較や学校・病院の読み込みが途中で変わると、判断材料と並びが変わります。',
-    'trip_id は feed とあわせて読んでください。加わる便(feed が edited)は、なくなる減便前の便(feed が base)と同じ trip_id のことがあります。',
-  )
+  if ((scope === 'removed' || scope === 'base_weekday') && details.size > 0) explainNotes.push(HINT_TEXTS_NOTE, LOST_CELLS_NOTE)
+  explainNotes.push(ORDER_NOTE, FEED_NOTE)
   if (offset > 0 && offset >= filtered.length) stateNotes.push(`offset(${offset})が対象の便の数(${filtered.length})以上のため、返す便はありません。`)
   const notes = [...stateNotes, ...(offset === 0 ? explainNotes : [NOTES_ON_FIRST_PAGE])]
   const nextOffset = offset + list.length < filtered.length ? offset + list.length : null
@@ -1518,47 +1515,123 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
     ...(facilityHints ? { facility_research: [...researched.values()].map(facilityResearchJson) } : {}),
     trips: list,
   }
-  // 20KB を超えたら、調べた施設の結果を先に後ろから省き(省いた数は facility_research_omitted)、それでも超えれば
-  // fitTrips が便を後ろから省く(truncated は便の数だけ)。2つの数を混ぜると、Claude が省いた便の数を読み違えるため分ける
-  const research = body.facility_research as Record<string, unknown>[] | undefined
-  if (research && research.length > 0 && byteLength(JSON.stringify(body)) > MAX_RESULT_BYTES) {
-    const kept = [...research]
-    while (kept.length > 0 && byteLength(JSON.stringify({ ...body, facility_research: kept, facility_research_omitted: research.length - kept.length })) > MAX_RESULT_BYTES) {
-      kept.pop()
-    }
-    body.facility_research = kept
-    body.facility_research_omitted = research.length - kept.length
-    notes.push(
-      `結果が 20KB を超えたため、facility_research(調べた施設の結果)の後ろから ${research.length - kept.length} 件を省きました。nearby_facilities の target_id の結果は get_research_results で読めます。`,
-    )
-  }
   return { content: fitTrips(body), isError: false }
 }
 
+/** 便の項目を1つ除いた写し(便でなければそのまま) */
+function withoutKey(t: unknown, key: string): unknown {
+  if (typeof t !== 'object' || t === null || !(key in t)) return t
+  const rest: Record<string, unknown> = { ...(t as Record<string, unknown>) }
+  delete rest[key]
+  return rest
+}
+
+/** trip_id を断り書きに入れるときの長さの上限(字) */
+const MAX_NOTE_TRIP_ID_CHARS = 64
+
 /**
- * search_trips の結果を 20KB に収める。超えたら trips を後ろから省き、returned を省いた後の便の数に直し、
- * 省いた便の数を truncated に、続きの位置を next_offset に書く(offset + returned + truncated + omitted_over_limit = total)。
- * fitResult に任せると returned が省く前の数のまま残り、Claude が受け取った便の数と続きの位置を読み違えるため、ここで数え直す
+ * search_trips の結果を 20KB に収める。収まれば何も省かない。超えたら、収まるまで次の順に省く(指摘18.4。波5のレビュー)。
+ * 判断材料の多い便が並ぶ1回目の結果にも便を多く入れるため、便を省く前に、ほかから読み取れる項目を省く。
+ * 1〜4 で省いたものは、notes の1文(「結果を 20KB に収めるため、次を省きました:…」)にまとめて書く(省くたびに文を足さない)。
+ * 1. facility_research(調べた施設の結果)を後ろから。省いた数は facility_research_omitted(get_research_results で読める)
+ * 2. 同じ結果の前の便に出た施設の nearby_facilities を、target_id と matches だけにする(名前・種類・優先順位・window は前の便にある)
+ * 3. hint_texts(名前は tool の説明の hints の識別子との対応、時間帯は band.label にある。nearFacility の施設の数は失う)。
+ *    notes の HINT_TEXTS_NOTE(hint_texts の言い方を使うこと)も外す
+ * 4. via(通る停留所は stop_name で探せる)
+ * 5. trips を後ろから。returned を省いた後の便の数に直し、省いた便の数を truncated に、続きの位置を next_offset に書く
+ *    (offset + returned + truncated + omitted_over_limit = total)。fitResult に任せると returned が省く前の数のまま残り、
+ *    Claude が受け取った便の数と続きの位置を読み違えるため、ここで数え直す。
+ *    先頭の1便だけで 20KB を超えるときは、その便を返さずに next_offset を1つ進める(同じ offset を読み続けないように)
  */
 export function fitTrips(body: Record<string, unknown>): string {
-  let text = JSON.stringify(body)
-  const trips = body.trips
-  if (byteLength(text) <= MAX_RESULT_BYTES || !Array.isArray(trips)) return text
+  const over = (o: Record<string, unknown>) => byteLength(JSON.stringify(o)) > MAX_RESULT_BYTES
+  if (!over(body) || !Array.isArray(body.trips)) return JSON.stringify(body)
+  let baseNotes = Array.isArray(body.notes) ? [...(body.notes as unknown[])] : []
+  const omittedParts: string[] = []
+  /** 省いたものの断り書きを notes の最後の1文にした body */
+  const withNote = (o: Record<string, unknown>, parts: readonly string[]) =>
+    parts.length === 0 ? o : { ...o, notes: [...baseNotes, `結果を 20KB に収めるため、次を省きました:${parts.join('、')}。`] }
+  let current: Record<string, unknown> = { ...body }
+
+  // 1. 調べた施設の結果
+  const research = Array.isArray(body.facility_research) ? (body.facility_research as unknown[]) : []
+  if (research.length > 0) {
+    const kept = [...research]
+    const part = () => `facility_research の後ろから ${research.length - kept.length} 件(get_research_results で読めます)`
+    const make = () => withNote({ ...current, facility_research: kept, facility_research_omitted: research.length - kept.length }, [part()])
+    while (kept.length > 0 && over(make())) kept.pop()
+    if (kept.length < research.length) {
+      current = { ...current, facility_research: [...kept], facility_research_omitted: research.length - kept.length }
+      omittedParts.push(part())
+    }
+  }
+  if (!over(withNote(current, omittedParts))) return JSON.stringify(withNote(current, omittedParts))
+
+  // 2. 前の便と同じ施設の nearby_facilities
+  const seen = new Set<unknown>()
+  let deduped = false
+  const trips2 = (current.trips as unknown[]).map((t) => {
+    if (typeof t !== 'object' || t === null || !Array.isArray((t as Record<string, unknown>).nearby_facilities)) return t
+    const trip = t as Record<string, unknown>
+    const list = (trip.nearby_facilities as Record<string, unknown>[]).map((f) => {
+      if (!seen.has(f.target_id)) {
+        seen.add(f.target_id)
+        return f
+      }
+      deduped = true
+      return { target_id: f.target_id, matches: f.matches }
+    })
+    return { ...trip, nearby_facilities: list }
+  })
+  if (deduped) {
+    current = { ...current, trips: trips2 }
+    omittedParts.push('前の便に出た施設の nearby_facilities の target_id・matches 以外(前の便にあります)')
+    if (!over(withNote(current, omittedParts))) return JSON.stringify(withNote(current, omittedParts))
+  }
+
+  // 3. hint_texts
+  const trips3 = current.trips as unknown[]
+  if (trips3.some((t) => typeof t === 'object' && t !== null && 'hint_texts' in t)) {
+    current = {
+      ...current,
+      trips: trips3.map((t) => withoutKey(t, 'hint_texts')),
+    }
+    // 無い hint_texts の言い方を使うよう求める項目の説明は外す(「唯一の便」と書かないことは tool の説明にある)
+    baseNotes = baseNotes.filter((n) => n !== HINT_TEXTS_NOTE)
+    omittedParts.push('hint_texts(名前は tool の説明の hints の「」、時間帯は band.label。施設の数は省略)')
+    if (!over(withNote(current, omittedParts))) return JSON.stringify(withNote(current, omittedParts))
+  }
+
+  // 4. via
+  const trips4 = current.trips as unknown[]
+  if (trips4.some((t) => typeof t === 'object' && t !== null && 'via' in t)) {
+    current = { ...current, trips: trips4.map((t) => withoutKey(t, 'via')) }
+    omittedParts.push('via(stop_name で通る停留所を探せます)')
+    if (!over(withNote(current, omittedParts))) return JSON.stringify(withNote(current, omittedParts))
+  }
+
+  // 5. 便を後ろから
+  const trips = current.trips as unknown[]
   const offset = typeof body.offset === 'number' ? body.offset : 0
+  const omittedOverLimit = typeof body.omitted_over_limit === 'number' ? body.omitted_over_limit : 0
+  const total = typeof body.total === 'number' ? body.total : offset + trips.length + omittedOverLimit
   const kept = [...trips]
+  let text = JSON.stringify(withNote(current, omittedParts))
   while (kept.length > 0) {
     kept.pop()
     const cut = trips.length - kept.length
-    const next = offset + kept.length
-    const copy: Record<string, unknown> = {
-      ...body,
-      returned: kept.length,
-      next_offset: next,
-      truncated: cut,
-      truncated_note: `結果が 20KB を超えたため、trips の後ろから ${cut} 件を省きました。returned(${kept.length})は省いた後に trips に入れた便の数で、省いた ${cut} 件は trips に入っていません。続きは、同じ条件で offset を ${next} にして読んでください。`,
-      trips: kept,
+    let next: number | null = offset + kept.length
+    let note = `結果が 20KB を超えたため、trips の後ろから ${cut} 件を省きました(returned は trips に入れた ${kept.length} 件)。続きは、同じ条件で offset を ${next} にして読んでください。`
+    if (kept.length === 0) {
+      // 先頭の1便だけで 20KB を超える。同じ offset を読み続けないよう、その便を飛ばして続きの位置を進める
+      next = offset + 1 < total ? offset + 1 : null
+      const head = trips[0] as Record<string, unknown> | null
+      const id = typeof head?.trip_id === 'string' ? [...head.trip_id].slice(0, MAX_NOTE_TRIP_ID_CHARS).join('') : null
+      note =
+        `offset ${offset} の便${id !== null ? `(trip_id ${id})` : ''}は1便だけで 20KB を超えるため、返せませんでした。trips の ${cut} 件をすべて省きました(returned は 0)。` +
+        (next !== null ? `この便を飛ばして続きを読むには、同じ条件で offset を ${next} にしてください。` : 'この便のほかに続きはありません。')
     }
-    text = JSON.stringify(copy)
+    text = JSON.stringify(withNote({ ...current, returned: kept.length, next_offset: next, truncated: cut, truncated_note: note, trips: kept }, omittedParts))
     if (byteLength(text) <= MAX_RESULT_BYTES) return text
   }
   return text

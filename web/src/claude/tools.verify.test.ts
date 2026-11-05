@@ -6,7 +6,9 @@
 // 平日を土曜ダイヤにする減便の方針(期間 11/9〜、外す系統なし)のなくなる便を、limit 50 で offset を進めながら読み、
 // 1回に返る便の数と大きさを出力する。
 // 1回の相談のツールの上限(12 回)の中で、なくなる便をすべて読めること(指摘15.2)を確かめる。最初の数回は判断材料の多い便
-// (9 つの判断材料と学校・病院を持つ便)が並ぶため、1回に返る便の数は後ろの回より少ない
+// (9 つの判断材料と学校・病院を持つ便)が並ぶため、1回に返る便の数は後ろの回より少ない。20KB を超える回は、便を省く前に
+// 調べた施設の結果・前の便と同じ施設の詳しい項目・hint_texts・via を省く(tools.ts の fitTrips。波5のレビュー)。
+// 2026-11-05 の測定では、1回目は 27 便(省く前は 16 便)、全体は 8 回(省く前は 11 回)
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -150,8 +152,9 @@ describe.skipIf(!ready)('search_trips の大きさ(道北バス、学校・病�
     )
     expect(seen.size).toBe(total)
     expect(pages[0].withFacilities).toBeGreaterThan(0)
-    // 1回の相談のツールの上限(12 回)で読み切れる。最初の回(判断材料の最も多い便)も 15 便を下回らない
+    // 1回の相談のツールの上限(12 回)で読み切れる。最初の回(判断材料の最も多い便)も 25 便を下回らない。
+    // 30 便にするには、平日に戻す理由に要る項目(前の便と同じ施設の matches、feed など)まで省くことになるため、そこまでは省かない
     expect(pages.length).toBeLessThanOrEqual(12)
-    expect(pages[0].returned).toBeGreaterThanOrEqual(15)
+    expect(pages[0].returned).toBeGreaterThanOrEqual(25)
   }, 120_000)
 })

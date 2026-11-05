@@ -6,7 +6,7 @@ import { feedOf } from '@/gtfs/edit/form2.fixture'
 import type { GtfsFeed } from '@/gtfs/load'
 import type { Stop } from '@/gtfs/parse'
 import { MAX_PLACES, PLACES_FILE_FORMAT, serializePlaces } from '@/lib/placesFile'
-import { compareDrivers, useDriversStore, type UserPlace } from '@/store/drivers'
+import { compareDrivers, dutyKindOf, useDriversStore, type UserPlace } from '@/store/drivers'
 import { useGtfsStore } from '@/store/gtfs'
 import { DriverView } from './DriverPanel'
 import { placesEffectText, searchStops } from './places'
@@ -198,7 +198,7 @@ describe('DriverView の、置く前と後の勤務の数', () => {
   it('場所を置くと、表の下に置く前と後の勤務の数を出す(置かなければ出さない)', () => {
     const base = shuttle()
     // 約 50km 離れた車庫:出庫・入庫の回送が加わり、運転時間 9 時間を超えるので勤務が分かれる
-    const far: UserPlace = { id: 'g', type: 'garage', kind: 'depot', name: '車庫', lat: 44.21, lon: 142.36 }
+    const far: UserPlace = { id: 'g', type: 'garage', kind: dutyKindOf('garage'), name: '車庫', lat: 44.21, lon: 142.36 }
     const input = { base, edited: null, date: '20261104', weekdayServices: null, params: { ...DUTY_DEFAULTS }, shortage: null }
     const without = compareDrivers({ ...input, places: [] })
     const placed = compareDrivers({ ...input, places: [far] })

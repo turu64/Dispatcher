@@ -29,7 +29,8 @@ export function DataSourcesView({ holidays, usage }: { holidays: HolidayState; u
 
 /**
  * 「データの送り先」。ダイヤのグループ分けの確かめで Jev に送ったときだけ出す(docs/design-service-groups.md §5.4)。
- * 送る中身と送らないもの、転送先を TypeSafe AI に限っている点は、読み込みの手順のスイッチの下と同じ文
+ * 送る中身と送らないもの、転送先を TypeSafe AI に限っている点は、読み込むたびに送るかを聞くダイアログ
+ * (steps/load/JevConsentDialog.tsx)と同じ文
  */
 export function JevDestination() {
   return (

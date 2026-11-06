@@ -9,7 +9,7 @@ import { applyForm2, defaultFeedVersion, feedVersionProblem, type Form2Result } 
 import { planOf, type PolicyKind } from '@/gtfs/edit/ops'
 import { form2Texts, timingNotices, validateEdit, type ValidationIssue } from '@/gtfs/validate/edit'
 import { exportFileName, writeGtfsZip } from '@/gtfs/write'
-import { formatDateJa, todayInJapan } from '@/lib/dates'
+import { appNow, appToday, formatDateJa } from '@/lib/dates'
 import { diffOf, draftName, generatedAtOf, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { FromTo, IssueList, NoteList } from './editParts'
@@ -87,7 +87,7 @@ export default function ExportStep() {
   // (既定の規則のときは、feed_version は出力の日時で決まるので、承認した版のままで足りる)
   // 作り直しと検証は道北バスの規模で 70ms ほどかかるので、入力のたびには待たせない(useDeferredValue で後から追いつく)。
   // 追いつく前に押されても、出力のときに押した値で作り直して検証するので、誤った値は書き出さない
-  const [previewAt] = useState(() => generatedAtOf(new Date()))
+  const [previewAt] = useState(() => generatedAtOf(appNow()))
   const deferredVersion = useDeferredValue(customVersion)
   const deferredProblem = feedVersionProblem(deferredVersion)
   const previewVersion = useMemo<Form2Result | null>(() => {
@@ -120,7 +120,7 @@ export default function ExportStep() {
     setExportIssues([])
     try {
       // 押した時刻で作り直す(承認済みの計画だけを使う)
-      const generatedAt = generatedAtOf(new Date())
+      const generatedAt = generatedAtOf(appNow())
       const outcome = applyForm2(base.feed, plan, { generatedAt, feedVersion: customVersion })
       if (!outcome.ok) {
         setError(outcome.message)
@@ -241,7 +241,7 @@ function FeedVersionField({ before, problem, previewAt }: { before: string; prob
 /** 出力する内容の要約(承認済みの最後の版):有効期間、feed_version、§5.10 の文言、平日便、全曜日で便がなくなる系統、足し戻しの集計 */
 function ExportSummary({ base, version, customVersion }: { base: BaseGtfs; version: Form2Result; customVersion: string }) {
   // 実施日までの日数などに使う今日(日本時間)。画面を開いた日
-  const [today] = useState(() => todayInJapan(new Date()))
+  const [today] = useState(() => appToday())
   const { report } = version
   const diff = useMemo(() => diffOf(base.feed, version), [base.feed, version])
   const totals = useMemo(() => restoreTotals(base.feed, report.addBack.accepted), [base.feed, report.addBack.accepted])

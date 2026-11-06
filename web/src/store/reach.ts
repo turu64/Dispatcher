@@ -3,7 +3,7 @@ import { isValidGtfsDate, servicesFor } from '../gtfs/calendar'
 import { departureCountsByBand, makeBands, type DepartureCounts, type TimeBand } from '../gtfs/departures'
 import type { GtfsFeed } from '../gtfs/load'
 import type { Stop } from '../gtfs/parse'
-import { todayInJapan } from '../lib/dates'
+import { appToday } from '../lib/dates'
 import { defaultServiceDate } from '../lib/serviceDay'
 import {
   compareReach,
@@ -493,6 +493,6 @@ export function createReachStore(deps: ReachStoreDeps) {
 export const useReachStore = createReachStore({
   compute: computeReachInWorker,
   loadRef: (mesh1s) => fetchRefData(mesh1s),
-  today: () => todayInJapan(new Date()),
+  today: () => appToday(),
   paramDelayMs: 300,
 })

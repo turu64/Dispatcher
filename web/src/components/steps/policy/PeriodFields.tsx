@@ -5,7 +5,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { PolicyKind } from '@/gtfs/edit/ops'
 import { holidaysBetween, uncoveredRanges } from '@/gtfs/holidays'
-import { formatDateJa, todayInJapan } from '@/lib/dates'
+import { appToday, formatDateJa } from '@/lib/dates'
 import { cn } from '@/lib/utils'
 import { useHolidayStore, type HolidayState } from '@/store/holidays'
 import { pickStartDate, type PeriodTarget } from './periodRange'
@@ -212,7 +212,7 @@ type EndMode = 'indefinite' | 'date'
  */
 export function PeriodHoles({ input, start, onStartChange, end, onEndChange, indefinite, onIndefiniteChange, holidayState }: PeriodValue) {
   const [open, setOpen] = useState<PeriodTarget | null>(null)
-  const [thisYear] = useState(() => todayInJapan(new Date()).slice(0, 4))
+  const [thisYear] = useState(() => appToday().slice(0, 4))
   const boxRef = useRef<HTMLElement | null>(null)
   // 「終了日」を選んだあと、セレクトの選択肢が閉じて焦点を戻すときに、終了日のカレンダーを開く
   const openEndAfterSelect = useRef(false)

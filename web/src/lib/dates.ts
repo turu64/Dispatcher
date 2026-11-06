@@ -42,3 +42,39 @@ export function formatDateJa(date: string): string {
   const d = Number(date.slice(6, 8))
   return `${y}年${m}月${d}日(${WEEKDAY_LABELS[weekdayIndex(date)]})`
 }
+
+/**
+ * デモのときだけ固定する「今日」。URL のクエリ `?today=YYYY-MM-DD` を読み、'YYYYMMDD' を返す。
+ * 渡していない・形が違う・実在しない日付なら null(固定しない)。ハッシュ(#/about)はクエリと別なので両立する
+ */
+export function fixedTodayFrom(search: string): string | null {
+  const value = new URLSearchParams(search).get('today')
+  return value === null ? null : fromInputDate(value)
+}
+
+/** 今の画面で固定している「今日」('YYYYMMDD')。固定していなければ null */
+export function fixedToday(search: string = typeof window === 'undefined' ? '' : window.location.search): string | null {
+  return fixedTodayFrom(search)
+}
+
+/**
+ * 画面の「今日」('YYYYMMDD'、日本時間)。デモで `?today=` を渡したときはその日にする。
+ * 画面・判断材料・AI に送る [画面の状態] の「今日」は、すべてこの関数を通す
+ */
+export function appToday(search?: string): string {
+  return fixedToday(search) ?? todayInJapan(new Date())
+}
+
+/**
+ * 画面の「今」。固定していなければ今の時刻。固定しているときは、固定した日の、今の時刻(日本時間の時・分・秒)にする
+ * (承認した日時・出力の作成日時(feed_version の既定)を固定した日にそろえるため)
+ */
+export function appNow(search?: string, real: Date = new Date()): Date {
+  const fixed = fixedToday(search)
+  if (fixed === null) return real
+  const day = 86_400_000
+  const jst = 9 * 3600 * 1000
+  const msOfDay = (((real.getTime() + jst) % day) + day) % day
+  const midnightUtc = Date.UTC(Number(fixed.slice(0, 4)), Number(fixed.slice(4, 6)) - 1, Number(fixed.slice(6, 8)))
+  return new Date(midnightUtc - jst + msOfDay)
+}

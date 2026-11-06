@@ -7,6 +7,7 @@ import type { HolidayList } from '../gtfs/holidays'
 import type { GtfsFeed } from '../gtfs/load'
 import type { SampleGtfsInfo } from '../gtfs/sample'
 import { validateEdit, type ValidationIssue } from '../gtfs/validate/edit'
+import { appNow } from '../lib/dates'
 import { useHolidayStore } from './holidays'
 import { useReachStore, type EditedSource } from './reach'
 
@@ -398,7 +399,7 @@ export function createEditStore(deps: EditStoreDeps) {
  * 検証には、そのときの祝日一覧(読めていなければ null)を使う。
  */
 export const useEditStore = createEditStore({
-  now: () => new Date(),
+  now: () => appNow(),
   onEdited: (e) => useReachStore.getState().setEdited(e),
   holidays: () => {
     const h = useHolidayStore.getState().holidays

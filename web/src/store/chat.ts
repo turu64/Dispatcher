@@ -9,7 +9,7 @@ import type { RestoreHintContext } from '../gtfs/edit/restore'
 import { describeServices, feedValidity, guessServiceChoice, policyValidity } from '../gtfs/edit/services'
 import { groupedPolicyServices } from '../gtfs/groups/view'
 import type { GtfsFeed } from '../gtfs/load'
-import { todayInJapan } from '../lib/dates'
+import { appNow, appToday } from '../lib/dates'
 import { draftName, japanIso, useEditStore, type DraftNotice } from './edit'
 import { useHolidayStore } from './holidays'
 import { useReachStore } from './reach'
@@ -1141,7 +1141,7 @@ export const chatToolDeps: ToolDeps = {
   edit: () => useEditStore.getState(),
   reach: useReachStore,
   holidays: holidayList,
-  today: () => todayInJapan(new Date()),
+  today: () => appToday(),
   policyServices,
   hintContext,
 }
@@ -1152,7 +1152,7 @@ export function currentScreenState(): ScreenState {
   const reach = useReachStore.getState()
   const results = [...useResearchStore.getState().results.values()]
   return {
-    today: todayInJapan(new Date()),
+    today: appToday(),
     gtfs: base ? { label: base.label, validity: feedValidity(base.feed), services: policyServices(null) } : null,
     reach: base ? { date: reach.date, stepHours: reach.stepHours } : null,
     research: { count: results.length, demo: results.filter((r) => r.origin === 'demo').length },
@@ -1186,7 +1186,7 @@ export const useChatStore = createChatStore({
     })
   },
   storage: sessionTokenStorage,
-  now: () => new Date(),
+  now: () => appNow(),
   watchBase: (onChange) => {
     useEditStore.subscribe((state, prev) => {
       if (state.base !== prev.base) onChange()

@@ -7,7 +7,7 @@ import { addBackReasons, policyReasonOf, type EditRecord } from '@/gtfs/edit/ops
 import { stopDiff, type StopDiffResult } from '@/gtfs/edit/stopDiff'
 import { movementSummary, pickNoticeDate } from '@/gtfs/edit/notice'
 import { form2Texts } from '@/gtfs/validate/edit'
-import { formatDateJa, todayInJapan } from '@/lib/dates'
+import { appToday, formatDateJa } from '@/lib/dates'
 import { diffOf, draftName, lastVersion, useEditStore, type BaseGtfs } from '@/store/edit'
 import { useResearchStore } from '@/store/research'
 import { checkedAtText } from '@/claude/research'
@@ -156,7 +156,7 @@ function Sheet({
   version: Form2Result
   customFeedVersion: string
 }) {
-  const [today] = useState(() => todayInJapan(new Date()))
+  const [today] = useState(() => appToday())
   const { report, plan } = version
 
   const diff = useMemo(() => diffOf(base.feed, version), [base.feed, version])

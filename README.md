@@ -123,6 +123,8 @@ cd server
 uv run dispatcher-server
 ```
 
+デモの収録では、URL のクエリで画面の「今日」を固定できます(例 `http://localhost:5173/?today=2026-10-25`。`#/about` はクエリの後ろに付けます)。固定している間は、上の端にその旨が出ます。形の違う値(`YYYY-MM-DD` 以外や実在しない日付)は無視します。
+
 デモ用に保存した調査結果(道北バスの周辺 30 件、`data/demo/research_dohoku.json`)を、サーバーの SQLite に取り込めます。
 
 ```bash

@@ -30,7 +30,7 @@ import {
 } from '@/gtfs/groups/view'
 import type { HolidayList } from '@/gtfs/holidays'
 import type { ValidationIssue } from '@/gtfs/validate/edit'
-import { todayInJapan } from '@/lib/dates'
+import { appToday } from '@/lib/dates'
 import { cn } from '@/lib/utils'
 import { setChatToolProviders } from '@/store/chat'
 import { useEditStore, type BaseGtfs } from '@/store/edit'
@@ -91,7 +91,7 @@ export function PolicyForm({
   const [startDate, setStartDate] = useState(() => {
     if (initial) return initial.period.start
     // 既定の開始日:今日が入力の有効期間の中なら今日、そうでなければ入力の開始日
-    const today = todayInJapan(new Date())
+    const today = appToday()
     return input && input.start <= today && today <= input.end ? today : (input?.start ?? '')
   })
   const [indefinite, setIndefinite] = useState(initial ? initial.period.end === null : true)

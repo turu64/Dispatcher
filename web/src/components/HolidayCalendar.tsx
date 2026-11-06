@@ -16,7 +16,7 @@ import { ja } from 'react-day-picker/locale'
 import { getDefaultClassNames, type DayButton } from 'react-day-picker'
 import { cn } from '@/lib/utils'
 import { Calendar, CalendarDayButton } from '@/components/ui/calendar'
-import { formatDateJa } from '@/lib/dates'
+import { appToday, formatDateJa } from '@/lib/dates'
 import { addDays, isValidGtfsDate, weekdayIndex } from '@/gtfs/calendar'
 import type { HolidayList } from '@/gtfs/holidays'
 
@@ -198,7 +198,7 @@ export default function HolidayCalendar(props: HolidayCalendarProps) {
 
   // 最初に開く月:選んだ日(期間なら開始日)の月、無ければ min の月、それも無ければ今月
   const [month, setMonth] = useState<number>(() =>
-    clampMonth(monthIndex((anchor ?? minStr ?? dateToGtfs(new Date())).slice(0, 6)), n, minStr, maxStr),
+    clampMonth(monthIndex((anchor ?? minStr ?? appToday()).slice(0, 6)), n, minStr, maxStr),
   )
   const shownMonth = clampMonth(month, n, minStr, maxStr)
   // 外から選んだ日が変わって、または並べる月の数が変わって(欄の幅が変わったとき)、選んだ日が見せている月(n か月)の外に
@@ -267,6 +267,8 @@ export default function HolidayCalendar(props: HolidayCalendarProps) {
   const defaults = getDefaultClassNames()
   const common = {
     locale: ja,
+    // 今日の印(太字と下線など)は画面の「今日」に合わせる(デモで ?today= を渡したときはその日)
+    today: gtfsToDate(appToday()),
     weekStartsOn: 0 as const,
     showOutsideDays: false,
     numberOfMonths: n,

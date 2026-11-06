@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import type { EditRecord, Form2Plan, PolicyReason } from '@/gtfs/edit/ops'
 import type { Form2Result } from '@/gtfs/edit/form2'
 import { form2Texts, timingNotices } from '@/gtfs/validate/edit'
-import { todayInJapan } from '@/lib/dates'
+import { appToday } from '@/lib/dates'
 import { blockingIssues, diffOf, draftName, useEditStore, type BaseGtfs } from '@/store/edit'
 import { draftActor, replaceClaudeDraftMessage } from '../editActions'
 import { FromTo, InlineConfirm, IssueList, NoteList } from '../editParts'
@@ -30,7 +30,7 @@ export function PolicyReview({ draft, onCommitted }: { draft: OpDraft; onCommitt
   const [vanishChecked, setVanishChecked] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   // 実施日までの日数などに使う今日(日本時間)。画面を開いた日
-  const [today] = useState(() => todayInJapan(new Date()))
+  const [today] = useState(() => appToday())
   const op = draft.record.op
   if (op.type !== 'applyPolicy') return null
   const byClaude = draft.record.by === 'claude'

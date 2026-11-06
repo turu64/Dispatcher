@@ -7,6 +7,7 @@ import BaseMap from '@/map/BaseMap'
 import MapEmptyNotice from '@/map/MapEmptyNotice'
 import AddressSearch from '@/map/AddressSearch'
 import AboutPage, { ABOUT_HASH } from '@/pages/AboutPage'
+import { fixedToday, formatDateJa } from '@/lib/dates'
 import { useHolidayStore } from '@/store/holidays'
 import { useStepStore } from '@/store/steps'
 
@@ -30,6 +31,8 @@ function useHash(): string {
 // 運営情報のページを開いている間も、手順と地図は消さずに隠しておく(入力中の値と地図の表示を残すため)
 export default function App() {
   const about = useHash() === ABOUT_HASH
+  // デモで「今日」を固定しているとき(URL の ?today=)は、上の端にその旨を出す
+  const [demoToday] = useState(() => fixedToday())
   const current = useStepStore((s) => s.current)
   const step = stepOf(current)?.def ?? STEPS[0]
   const showMap = step.showMap
@@ -54,6 +57,11 @@ export default function App() {
             <h1 className="text-lg font-semibold">Dispatcher</h1>
             <p className="truncate text-xs text-muted-foreground">減便ダイヤの判断支援</p>
           </div>
+          {demoToday && (
+            <p className="min-w-0 truncate rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200" role="note">
+              デモ用に、今日を {formatDateJa(demoToday)} として動いています
+            </p>
+          )}
           <a href={ABOUT_HASH} className="shrink-0 text-xs underline underline-offset-4 hover:text-foreground/80">
             このサイトについて・データの出典
           </a>

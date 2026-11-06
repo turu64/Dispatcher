@@ -8,18 +8,19 @@ import {
   formatHours,
   formatHoursDiff,
   formatRatioDiff,
-  rosterCaveatText,
-  rosterCheckText,
-  rosterWarningText,
+  needBasisText,
+  ROSTER_WHERE,
   SERVICE_HOURS_NOTE,
-  SHORTAGE_WHERE,
+  supplyText,
+  supplyWarningText,
   verdictText,
 } from '@/components/steps/reach/driverText'
 
 /**
  * 変更指示書と平日便を戻す手順に出す、要る運転士の数(目安)のまとめ(指摘 24・18.1、docs/tasks-1105.md の D04)。
- * 数はすべて store/drivers.ts の compareDrivers が出し、ここでは並べるだけ。欠員・在籍の運転士の数・仮定・場所は、前提情報の手順の
- * 「運行の前提」の欄(steps/research/OperationPremise.tsx)で入れる。在籍の運転士の数は、入れたときだけ参考の数を足す
+ * 数はすべて store/drivers.ts の compareDrivers が出し、ここでは並べるだけ。欠員・在籍の運転士の数・週の出勤日数・仮定・場所は、
+ * 前提情報の手順の「運行の前提」の欄(steps/research/OperationPremise.tsx)で入れる。判定(乗務できる運転士の数(目安)と
+ * 減便後に要る勤務の数の比較)は、在籍の運転士の数を入れたときだけ出す
  */
 
 /** まとまりの見出し */
@@ -39,6 +40,7 @@ export default function DriverSummary({ base, version, date }: { base: GtfsFeed;
   const places = useDriversStore((s) => s.places)
   const shortage = useDriversStore((s) => s.shortage)
   const roster = useDriversStore((s) => s.roster)
+  const workDays = useDriversStore((s) => s.workDays)
   const comparison = useMemo(
     () =>
       date === null
@@ -52,8 +54,9 @@ export default function DriverSummary({ base, version, date }: { base: GtfsFeed;
             places,
             shortage,
             roster,
+            workDays,
           }),
-    [base, version, date, params, places, shortage, roster],
+    [base, version, date, params, places, shortage, roster, workDays],
   )
   if (!comparison) {
     return (
@@ -68,12 +71,14 @@ export default function DriverSummary({ base, version, date }: { base: GtfsFeed;
 
 /**
  * まとまりの中身(store を使わない。テストでは値を直接渡す)。営業運行時間の前・後・削減量、勤務の数の前・後・差、
- * 欠員(入れたときだけ)と判定、使った仮定を1つのまとまりで出す。印刷で途中から紙を分けない(break-inside-avoid)
+ * 判定(在籍の運転士の数を入れたときだけ)と乗務できる運転士の数(目安)の数え方・要る勤務の数の出し方、使った仮定を1つのまとまりで出す。印刷で途中から紙を分けない(break-inside-avoid)
  */
 export function DriverSummaryView({ comparison, note }: { comparison: DriverComparison; note?: string }) {
-  const { before, after, hours, dutyDiff, verdict, shortage, date } = comparison
-  // 欠員と判定は、欠員を入れたとき(と平日ダイヤが走らない日)だけ出す
-  const showVerdict = verdict.kind === 'enough' || verdict.kind === 'short' || (verdict.kind === 'notWeekday' && shortage !== null)
+  const { before, after, hours, dutyDiff, verdict, supply, need, date } = comparison
+  // 判定は、在籍の運転士の数を入れたとき(と平日ダイヤが走らない日)だけ出す
+  const judged = verdict.kind === 'enough' || verdict.kind === 'short'
+  const showVerdict = judged || (verdict.kind === 'notWeekday' && supply !== null)
+  const warning = supply ? supplyWarningText(supply) : null
   return (
     <div className="flex break-inside-avoid flex-col gap-0.5" data-testid="driver-summary" aria-label={DRIVER_SUMMARY_TITLE} role="group">
       <p>
@@ -121,25 +126,36 @@ export function DriverSummaryView({ comparison, note }: { comparison: DriverComp
             {after && <td className="py-0.5 print:py-0">{after.duties.dutyCount}</td>}
             {after && dutyDiff !== null && <td className="py-0.5 font-semibold print:py-0">{formatDiff(dutyDiff)}</td>}
           </tr>
+          {need.basis === 'operatorRuns' && (
+            <tr className="border-b border-foreground/15">
+              <th scope="row" className="py-0.5 text-left font-normal print:py-0">
+                要る勤務の数(入力の運用番号の数から)
+              </th>
+              <td className="py-0.5 print:py-0">{need.before}</td>
+              {after && <td className="py-0.5 print:py-0">{need.after ?? '―'}</td>}
+              {after && (
+                <td className="py-0.5 font-semibold print:py-0">{need.after === null ? '―' : formatDiff(need.before - need.after)}</td>
+              )}
+            </tr>
+          )}
         </tbody>
       </table>
       {showVerdict && (
         <p className={verdict.kind === 'short' ? 'font-semibold' : 'font-medium'} data-testid="driver-summary-verdict">
-          {shortage !== null && <span className="mr-1">欠員 {shortage} 人:</span>}
           {verdict.kind === 'short' && <span aria-hidden="true">⚠ </span>}
           {verdictText(verdict, date)}
         </p>
       )}
-      {comparison.rosterCheck && (
-        <p data-testid="driver-summary-roster">
-          {rosterCheckText(comparison.rosterCheck)}
-          {rosterWarningText(comparison.rosterCheck) && (
+      {supply && (
+        <p data-testid="driver-summary-supply">
+          {supplyText(supply)}
+          {warning && (
             <span className="ml-1 font-semibold">
               <span aria-hidden="true">⚠ </span>
-              {rosterWarningText(comparison.rosterCheck)}
+              {warning}
             </span>
           )}
-          <span className="ml-1 text-muted-foreground print:text-black">{rosterCaveatText(comparison.operatorRuns)}</span>
+          {judged && <span className="ml-1 text-muted-foreground print:text-black">{needBasisText(need)}</span>}
         </p>
       )}
       <p className="text-muted-foreground print:text-black">{SERVICE_HOURS_NOTE}</p>
@@ -162,7 +178,7 @@ export function DriverSummaryView({ comparison, note }: { comparison: DriverComp
 }
 
 /**
- * 平日便を戻す手順の1行。勤務の数の目安の今の値(減便前 → 減便後)と、欠員との比較。
+ * 平日便を戻す手順の1行。勤務の数の目安の今の値(減便前 → 減便後)と、乗務できる運転士の数(目安)との比較。
  * 影響(到達圏)の手順の欄と同じ比較(useDriverComparison。地図の比較する日付と、下書きを含む減便後)なので、便を戻すたびに変わる。
  * GTFS か比較する日付が無ければ出さない
  */
@@ -172,24 +188,6 @@ export function DriverLine() {
   return <DriverLineView comparison={comparison} />
 }
 
-/** 1行に足す、在籍の運転士の数の参考(在籍を入れたときだけ) */
-function RosterLine({ comparison }: { comparison: DriverComparison }) {
-  const check = comparison.rosterCheck
-  if (!check) return null
-  const warning = rosterWarningText(check)
-  return (
-    <span className="block" data-testid="driver-line-roster">
-      {rosterCheckText(check)}
-      {warning && (
-        <span className="font-medium text-destructive">
-          <span aria-hidden="true">⚠ </span>
-          {warning}
-        </span>
-      )}
-    </span>
-  )
-}
-
 /** 1行の中身(store を使わない) */
 export function DriverLineView({ comparison }: { comparison: DriverComparison }) {
   const { before, after, dutyDiff, verdict, date } = comparison
@@ -197,13 +195,18 @@ export function DriverLineView({ comparison }: { comparison: DriverComparison })
     after && dutyDiff !== null
       ? `勤務の数(目安):減便前 ${before.duties.dutyCount} → 減便後${comparison.draft ? '(下書き)' : ''} ${after.duties.dutyCount}(${formatDiff(dutyDiff)}、${formatDateJa(date)})。`
       : `勤務の数(目安):減便前 ${before.duties.dutyCount}(${formatDateJa(date)})。`
+  // 運用番号の数から出したときは、判定に使う要る勤務の数も並べる(推定の数と違うため)
+  const { need } = comparison
+  const needed =
+    need.basis === 'operatorRuns' && need.after !== null
+      ? `要る勤務の数(入力の運用番号の数から):減便前 ${need.before} → 減便後 ${need.after}。`
+      : ''
   return (
     <p className={`text-xs ${verdict.kind === 'short' ? 'font-medium text-destructive' : ''}`} aria-live="polite" data-testid="driver-line">
       {verdict.kind === 'short' && <span aria-hidden="true">⚠ </span>}
       {counts}
-      {verdictText(verdict, date)}
-      {verdict.kind === 'noShortage' && SHORTAGE_WHERE}
-      {comparison.rosterCheck && <RosterLine comparison={comparison} />}
+      {needed}
+      {verdict.kind === 'noRoster' ? ROSTER_WHERE : verdictText(verdict, date)}
     </p>
   )
 }

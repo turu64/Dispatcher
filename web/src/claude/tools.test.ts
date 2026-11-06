@@ -1487,9 +1487,9 @@ WK1700,17:10:00,17:10:00,A,2`),
   })
 
   describe('要る運転士の数(drivers。D06)', () => {
-    it('減便の前後の営業運行時間と勤務の数(目安)、欠員との判定、使った仮定を返す', async () => {
+    it('減便の前後の営業運行時間と勤務の数(目安)、乗務できる運転士の数(目安)と要る勤務の数の判定、使った仮定を返す', async () => {
       const reach = fakeReach(snapshot)
-      const drivers = () => ({ params: { ...DUTY_DEFAULTS }, places: [], shortage: 1 })
+      const drivers = () => ({ params: { ...DUTY_DEFAULTS }, places: [], shortage: 1, roster: 14, workDays: 5 })
       const { store, deps } = setup({ reach: reach.access, drivers })
       await withPolicy(deps, store)
       const body = parse((await runTool('summarize_impact', { date: null, step_hours: null }, deps)).content)
@@ -1503,6 +1503,8 @@ WK1700,17:10:00,17:10:00,A,2`),
         params: { ...DUTY_DEFAULTS },
         places: [],
         shortage: 1,
+        roster: 14,
+        workDays: 5,
       })
       expect(d).toMatchObject({
         date: '20261110',
@@ -1514,23 +1516,38 @@ WK1700,17:10:00,17:10:00,A,2`),
         },
         duties: { before: expected.before.duties.dutyCount, after: expected.after!.duties.dutyCount, diff: expected.dutyDiff },
         shortage: 1,
+        // 運用番号の数が取れない GTFS なので、要る勤務の数は推定のまま
+        needed_duties: { basis: 'estimate', before: expected.before.duties.dutyCount, after: expected.after!.duties.dutyCount },
+        // 在籍 14 × 週5日 ÷ 7 = 10、欠員 1 を引いて 9
+        supply: { roster: 14, work_days_per_week: 5, on_duty: 10, available: 9, shortage_over_on_duty: false },
         places: 0,
       })
-      expect((d.verdict as { kind: string }).kind).toBe(expected.verdict.kind === 'enough' ? 'enough' : 'short')
+      const v = expected.verdict
+      if (v.kind !== 'enough' && v.kind !== 'short') throw new Error(v.kind)
+      expect(d.verdict).toEqual(
+        v.kind === 'enough'
+          ? { kind: 'enough', spare: v.spare, before_margin: v.beforeMargin }
+          : { kind: 'short', missing: v.missing, before_margin: v.beforeMargin },
+      )
+      expect(d).not.toHaveProperty('roster_check')
       expect(d.assumptions).toEqual(expected.assumptions)
-      expect((body.notes as string[]).some((n) => n.startsWith('drivers は') && n.includes('目安'))).toBe(true)
+      const note = (body.notes as string[]).find((n) => n.startsWith('drivers は')) ?? ''
+      expect(note).toContain('目安')
+      expect(note).toContain('在籍 × 週の出勤日数 ÷ 7 − 欠員')
+      expect(note).toContain('no_roster')
     })
 
-    it('比較する日付に平日ダイヤが走らなければ not_weekday、欠員を入れていなければ no_shortage', async () => {
+    it('比較する日付に平日ダイヤが走らなければ not_weekday、在籍の運転士の数を入れていなければ no_roster', async () => {
       const saturday = fakeReach({ ...snapshot, date: '20261114' } as ReachSnapshot)
-      const a = setup({ reach: saturday.access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places: [], shortage: 3 }) })
+      const a = setup({ reach: saturday.access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places: [], shortage: 3, roster: 100 }) })
       await withPolicy(a.deps, a.store)
       const d1 = parse((await runTool('summarize_impact', { date: null, step_hours: null }, a.deps)).content).drivers as { verdict: unknown }
       expect(d1.verdict).toEqual({ kind: 'not_weekday' })
-      const b = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places: [], shortage: null }) })
+      const b = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places: [], shortage: 3 }) })
       await withPolicy(b.deps, b.store)
-      const d2 = parse((await runTool('summarize_impact', { date: null, step_hours: null }, b.deps)).content).drivers as { verdict: { kind: string } }
-      expect(d2.verdict.kind).toBe('no_shortage')
+      const d2 = parse((await runTool('summarize_impact', { date: null, step_hours: null }, b.deps)).content).drivers as { verdict: unknown; supply: unknown }
+      expect(d2.verdict).toEqual({ kind: 'no_roster' })
+      expect(d2.supply).toBeNull()
     })
 
     it('営業所を置いたとき、places は数(営業所の数)だけにし、assumptions にも営業所の名前を入れない(F02)', async () => {
@@ -1551,31 +1568,16 @@ WK1700,17:10:00,17:10:00,A,2`),
       for (const name of NAMES) expect(r.content).not.toContain(name)
     })
 
-    it('在籍の運転士の数を入れたときだけ roster_check を足し、その意味を notes で伝える。場所の名前は送らない', async () => {
+    it('週の出勤日数を省けば 5 として数え、在籍・営業所を入れても場所の名前は送らない', async () => {
       const NAME = '秘匿の営業所R'
       const places: DutyPlace[] = [{ name: NAME, lat: 43.76, lon: 142.36 }]
-      const without = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places, shortage: 1 }) })
-      await withPolicy(without.deps, without.store)
-      const b0 = parse((await runTool('summarize_impact', { date: null, step_hours: null }, without.deps)).content)
-      expect((b0.drivers as Record<string, unknown>).roster_check).toBeUndefined()
-      expect((b0.notes as string[]).some((n) => n.startsWith('drivers.roster_check'))).toBe(false)
-
-      const { store, deps } = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places, shortage: 1, roster: 3 }) })
+      const { store, deps } = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places, shortage: 20, roster: 10 }) })
       await withPolicy(deps, store)
       const r = await runTool('summarize_impact', { date: null, step_hours: null }, deps)
-      const body = parse(r.content)
-      const d = body.drivers as { duties: { after: number }; verdict: unknown; roster_check: Record<string, unknown> }
-      expect(d.roster_check).toEqual({
-        roster: 3,
-        available: 2,
-        shortage_over_roster: false,
-        needed_duties: d.duties.after,
-        needed_basis: 'after',
-        over: Math.max(0, d.duties.after - 2),
-      })
-      // 主な判定は在籍に関係なく、減る勤務の数と欠員の比較のまま
-      expect(d.verdict).toEqual((b0.drivers as { verdict: unknown }).verdict)
-      expect((body.notes as string[]).some((n) => n.startsWith('drivers.roster_check') && n.includes('下限の目安'))).toBe(true)
+      const d = parse(r.content).drivers as { supply: Record<string, unknown>; verdict: Record<string, unknown> }
+      // 在籍 10 × 5 ÷ 7 = 7 より欠員が多いので 0 とし、入れ違いの疑いを立てる
+      expect(d.supply).toEqual({ roster: 10, work_days_per_week: 5, on_duty: 7, available: 0, shortage_over_on_duty: true })
+      expect(d.verdict.kind).toBe('short')
       expect(r.content).not.toContain(NAME)
     })
 

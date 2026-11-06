@@ -185,7 +185,7 @@ describe('ResearchStep', () => {
     expect(premise.compareDocumentPosition(research) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(within(premise).getByTestId('places-editor')).toBeTruthy()
     fireEvent.change(within(premise).getByLabelText('欠員(その日に乗務できない運転士の数)'), { target: { value: '20' } })
-    fireEvent.change(within(premise).getByLabelText('在籍の運転士の数(任意)'), { target: { value: '110' } })
+    fireEvent.change(within(premise).getByLabelText('在籍の運転士の数'), { target: { value: '110' } })
     expect(useDriversStore.getState()).toMatchObject({ shortage: 20, roster: 110 })
     act(() => useDriversStore.getState().reset())
   })

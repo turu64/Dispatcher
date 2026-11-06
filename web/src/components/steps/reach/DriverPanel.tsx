@@ -14,23 +14,23 @@ import {
   formatHours,
   formatHoursDiff,
   formatRatioDiff,
+  needBasisText,
+  ROSTER_HINT,
   OPERATOR_RUNS_NOTE,
   PREMISE_JUMP,
-  rosterCaveatText,
-  rosterCheckText,
-  rosterWarningText,
   SERVICE_HOURS_NOTE,
-  SHORTAGE_HINT,
+  supplyText,
+  supplyWarningText,
   verdictText,
 } from './driverText'
 import { placesEffectText } from './places'
 
 /**
  * 影響(到達圏)の手順の「要る運転士の数(目安)」の欄(指摘 24・18.1、docs/tasks-1105.md の D03)。結果だけを出す。
- * 比較する日付の、減便前・減便後の便の数・営業運行時間・勤務の数の目安と、入力の運用番号の数(参考)を表で出し、
- * 欠員を入れていれば、減便で減る勤務の数と比べた目安を出す。在籍の運転士の数を入れていれば、乗務できる運転士(在籍 − 欠員)と
- * 減便後に要る勤務の数を参考に並べる。置いた営業所があれば、置く前と後の勤務の数を表の下に出す。
- * 入力(欠員・在籍の運転士の数・営業所の位置・仮定)は、前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)で行い、
+ * 比較する日付の、減便前・減便後の便の数・営業運行時間・勤務の数の目安と、入力の運用番号の数から出した要る勤務の数を表で出し、
+ * 在籍の運転士の数を入れていれば、乗務できる運転士の数(目安。在籍 × 週の出勤日数 ÷ 7 − 欠員)と減便後に要る勤務の数を比べた
+ * 目安を出す(減便前のままでの過不足も並べる)。置いた営業所があれば、置く前と後の勤務の数を表の下に出す。
+ * 入力(欠員・在籍の運転士の数・週の出勤日数・営業所の位置・仮定)は、前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)で行い、
  * この欄の「前提情報で設定する」でそこへ移る。計算は store/drivers.ts(compareDrivers)
  */
 export default function DriverPanel() {
@@ -54,7 +54,7 @@ export function DriverView({
   /** 「前提情報で設定する」を押したとき */
   onOpenPremise: () => void
 }) {
-  const { verdict, rosterCheck } = comparison
+  const { verdict } = comparison
   const tone =
     verdict.kind === 'short' ? 'font-medium text-destructive' : verdict.kind === 'enough' ? 'font-medium' : 'text-muted-foreground'
   return (
@@ -80,12 +80,13 @@ export function DriverView({
         {verdict.kind === 'short' && <span aria-hidden="true">⚠ </span>}
         {verdictText(verdict, comparison.date)}
       </p>
-      {comparison.shortage === null && (
-        <p className="text-xs" data-testid="shortage-hint">
-          {SHORTAGE_HINT}
+      {/* 判定の文が案内のとき(noRoster)は重ねない。減便後が無い・平日でないときも、在籍を入れる案内は出す */}
+      {comparison.supply === null && verdict.kind !== 'noRoster' && (
+        <p className="text-xs" data-testid="roster-hint">
+          {ROSTER_HINT}
         </p>
       )}
-      {rosterCheck && <RosterReference comparison={comparison} />}
+      <SupplyDetails comparison={comparison} />
       <ul className="flex list-disc flex-col gap-0.5 pl-4 text-xs text-muted-foreground" aria-label="要る運転士の数の断り書き">
         {driverCaveats(params, places).map((line) => (
           <li key={line}>{line}</li>
@@ -95,7 +96,7 @@ export function DriverView({
       <Button type="button" variant="outline" size="sm" className="self-start" onClick={onOpenPremise}>
         {PREMISE_JUMP}
       </Button>
-      <p className="text-xs text-muted-foreground">欠員・在籍の運転士の数・営業所の位置・推定の仮定は、手順「前提情報」の「運行の前提」の欄で変えられます。</p>
+      <p className="text-xs text-muted-foreground">欠員・在籍の運転士の数・週の出勤日数・営業所の位置・推定の仮定は、手順「前提情報」の「運行の前提」の欄で変えられます。</p>
     </section>
   )
 }
@@ -158,7 +159,7 @@ function Hours({ text }: { text: string }) {
 
 /** 減便前・減便後(・差)の表。減便後が無ければ減便前だけ */
 export function DriverTable({ comparison }: { comparison: DriverComparison }) {
-  const { before, after, hours, dutyDiff, operatorRuns } = comparison
+  const { before, after, hours, dutyDiff, operatorRuns, need } = comparison
   const unknown = before.unknownTrips + (after?.unknownTrips ?? 0)
   return (
     <>
@@ -203,12 +204,14 @@ export function DriverTable({ comparison }: { comparison: DriverComparison }) {
             {after && <TableCell className={NUM}>{after.duties.dutyCount}</TableCell>}
             {after && dutyDiff !== null && <TableCell className={`${NUM} font-medium`}>{formatDiff(dutyDiff)}</TableCell>}
           </TableRow>
-          {operatorRuns !== null && (
+          {operatorRuns !== null && need.basis === 'operatorRuns' && (
             <TableRow>
-              <TableHead scope="row" className={ROW_HEAD}>入力の運用番号の数(参考)</TableHead>
-              <TableCell className={NUM}>{operatorRuns}</TableCell>
-              {after && <TableCell className={`${NUM} text-muted-foreground`}>―</TableCell>}
-              {after && <TableCell className={`${NUM} text-muted-foreground`}>―</TableCell>}
+              <TableHead scope="row" className={ROW_HEAD}>要る勤務の数(入力の運用番号の数から)</TableHead>
+              <TableCell className={NUM}>{need.before}</TableCell>
+              {after && <TableCell className={NUM}>{need.after ?? '―'}</TableCell>}
+              {after && (
+                <TableCell className={`${NUM} font-medium`}>{need.after === null ? '―' : formatDiff(need.before - need.after)}</TableCell>
+              )}
             </TableRow>
           )}
         </TableBody>
@@ -223,21 +226,21 @@ export function DriverTable({ comparison }: { comparison: DriverComparison }) {
   )
 }
 
-/** 在籍の運転士の数を入れたときの参考(乗務できる運転士と要る勤務の数)。要る勤務の数が上回れば注意にする */
-function RosterReference({ comparison }: { comparison: DriverComparison }) {
-  const check = comparison.rosterCheck
-  if (!check) return null
-  const warning = rosterWarningText(check)
+/** 乗務できる運転士の数(目安)の数え方と、要る勤務の数の出し方(判定の下)。在籍を入れていなければ数え方は出さない */
+function SupplyDetails({ comparison }: { comparison: DriverComparison }) {
+  const { supply, need, verdict } = comparison
+  const warning = supply ? supplyWarningText(supply) : null
+  const judged = verdict.kind === 'enough' || verdict.kind === 'short'
   return (
-    <div className="flex flex-col gap-0.5 text-xs" data-testid="roster-check">
-      <p>{rosterCheckText(check)}</p>
+    <div className="flex flex-col gap-0.5 text-xs" data-testid="driver-supply">
+      {supply && <p>{supplyText(supply)}</p>}
       {warning && (
-        <p className="font-medium text-destructive" data-testid="roster-warning">
+        <p className="font-medium text-destructive" data-testid="supply-warning">
           <span aria-hidden="true">⚠ </span>
           {warning}
         </p>
       )}
-      <p className="text-muted-foreground">{rosterCaveatText(comparison.operatorRuns)}</p>
+      {(judged || need.basis === 'operatorRuns') && <p className="text-muted-foreground">{needBasisText(need)}</p>}
     </div>
   )
 }

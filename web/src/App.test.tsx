@@ -285,7 +285,7 @@ describe('運行の前提(前提情報の手順)と要る運転士の数(影響�
     // 影響の手順の欄には欠員の入力が無い(描いてあって隠れている前提情報の手順の欄にだけある)
     const reach = screen.getByRole('heading', { name: '4. 影響(到達圏)' }).closest('[data-slot="card"]') as HTMLElement
     expect(within(reach).queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
-    expect(within(reach).getByTestId('shortage-hint')).toBeTruthy()
+    expect(within(reach).getByTestId('roster-hint').textContent).toBe('在籍の運転士の数を入れると、足りるかの目安を出します。')
     act(() => useSidePanelStore.getState().show('chat'))
     act(() => {
       fireEvent.click(within(reach).getByRole('button', { name: '前提情報で設定する', hidden: true }))
@@ -294,13 +294,14 @@ describe('運行の前提(前提情報の手順)と要る運転士の数(影響�
     expect(useSidePanelStore.getState().tab).toBe('edit')
     const premise = screen.getByRole('region', { name: '運行の前提(営業所・運転士の数)' })
     expect(document.activeElement).toBe(premise)
-    // そこで入れた欠員は、影響の手順の結果に出る
+    // そこで入れた在籍・欠員は、影響の手順の結果に出る
+    fireEvent.change(within(premise).getByLabelText('在籍の運転士の数'), { target: { value: '150' } })
     fireEvent.change(within(premise).getByLabelText('欠員(その日に乗務できない運転士の数)'), { target: { value: '1' } })
     act(() => {
       useStepStore.getState().go('reach')
     })
-    expect(within(reach).queryByTestId('shortage-hint')).toBeNull()
-    expect(within(reach).getByTestId('driver-verdict').textContent).not.toContain('欠員を入れると')
+    expect(within(reach).queryByTestId('roster-hint')).toBeNull()
+    expect(within(reach).getByTestId('driver-supply').textContent).toContain('在籍 150 × 週の出勤日数 5 ÷ 7 = 107(小数は切り捨て)から欠員 1 を引いた 106 です。')
   })
 })
 

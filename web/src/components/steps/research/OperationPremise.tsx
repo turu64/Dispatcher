@@ -9,9 +9,11 @@ import {
   parseDeadheadKmh,
   parseRoster,
   parseShortage,
+  parseWorkDays,
   PREMISE_TITLE,
   ROSTER_LABEL,
   SHORTAGE_LABEL,
+  WORK_DAYS_LABEL,
   type OptionalCountResult,
 } from '@/components/steps/reach/driverText'
 import { PREMISE_SECTION_ID } from '@/components/steps/stepIds'
@@ -21,12 +23,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { BOUND_LIMIT_MIN, dutyAssumptions, type DutyParams, type DutyPlace } from '@/gtfs/edit/duties'
-import { MAX_ROSTER, MAX_SHORTAGE, useDriversStore } from '@/store/drivers'
+import { DOHOKU_SAMPLE_BUTTON, DOHOKU_SAMPLE_OFFICE_COUNT, DOHOKU_SAMPLE_PLACES, DOHOKU_SAMPLE_ROSTER } from '@/lib/samplePlaces'
+import type { ParseResult } from '@/reach/input'
+import { MAX_ROSTER, MAX_SHORTAGE, WORK_DAYS_RANGE, useDriversStore } from '@/store/drivers'
+import { useGtfsStore } from '@/store/gtfs'
 
 /**
  * 前提情報の手順の「運行の前提(営業所・運転士の数)」の欄(利用者の指摘、11/5)。
  * 要る運転士の数(目安)の推定と判定に使う入力を、この欄にまとめる:
- * - 運転士の数:在籍の運転士の数(任意)と欠員(その日に乗務できない運転士の数)
+ * - 運転士の数:在籍の運転士の数(判定に要る)・1人あたりの週の出勤日数(既定 5)・欠員(その日に乗務できない運転士の数)
+ * - 道北バスのサンプル(営業所5か所と在籍 150 人)を入れるボタン(サンプルの GTFS を読み込んだときだけ。押したときだけ入れる)
  * - 営業所(reach/PlacesEditor.tsx。地図で置く操作は、この手順の地図で行う。map/PlacesLayer.tsx)
  * - 勤務の数の推定の仮定(拘束時間の上限・点呼・回送の速さ)。欄には今の値の短い要約だけを出し、「勤務時間の設定」の Dialog で変える
  *   (11/6 の利用者の指示。前は開閉(details)の中にあった)
@@ -36,17 +42,22 @@ import { MAX_ROSTER, MAX_SHORTAGE, useDriversStore } from '@/store/drivers'
 export default function OperationPremise() {
   const shortage = useDriversStore((s) => s.shortage)
   const roster = useDriversStore((s) => s.roster)
+  const workDays = useDriversStore((s) => s.workDays)
   const params = useDriversStore((s) => s.params)
   const places = useDriversStore((s) => s.places)
+  const sampleAvailable = useGtfsStore((s) => s.sample !== null)
   const store = useDriversStore.getState
   return (
     <OperationPremiseView
       shortage={shortage}
       roster={roster}
+      workDays={workDays}
       params={params}
       places={places}
       onShortage={(v) => store().setShortage(v)}
       onRoster={(v) => store().setRoster(v)}
+      onWorkDays={(v) => store().setWorkDays(v)}
+      onApplySample={sampleAvailable ? () => store().applyDohokuSample() : undefined}
       onParams={(patch) => store().setParams(patch)}
       onResetParams={() => store().resetParams()}
       placesEditor={<PlacesEditor />}
@@ -58,20 +69,27 @@ export default function OperationPremise() {
 export function OperationPremiseView({
   shortage,
   roster,
+  workDays,
   params,
   places,
   onShortage,
   onRoster,
+  onWorkDays,
+  onApplySample,
   onParams,
   onResetParams,
   placesEditor,
 }: {
   shortage: number | null
   roster: number | null
+  workDays: number
   params: DutyParams
   places: readonly DutyPlace[]
   onShortage: (value: number | null) => void
   onRoster: (value: number | null) => void
+  onWorkDays: (value: number) => void
+  /** 道北バスのサンプルを入れる(在籍を入れたら true)。サンプルの GTFS でなければ省く(ボタンを出さない) */
+  onApplySample?: () => boolean
   onParams: (patch: Partial<DutyParams>) => void
   onResetParams: () => void
   /** 営業所を置く欄(store を使うので外から渡す) */
@@ -89,34 +107,115 @@ export function OperationPremiseView({
       </h3>
       <p className="text-xs text-muted-foreground">
         手順「影響(到達圏)」の「要る運転士の数(目安)」の推定と判定に使います。値はこの画面の中だけに持ち、サーバーには送りません。GTFS
-        を読み込み直すと、運転士の数と置いた場所は消えます(仮定は残ります)。
+        を読み込み直すと、運転士の数と置いた場所は消えます(週の出勤日数と仮定は残ります)。
       </p>
+      {onApplySample && <SampleButton onApply={onApplySample} />}
       <div className="flex flex-col gap-2">
         <CountField
           id="driver-roster"
           label={ROSTER_LABEL}
           value={roster}
           max={MAX_ROSTER}
-          placeholder="例:110"
+          placeholder="例:150"
           parse={parseRoster}
           onCommit={onRoster}
         />
+        <WorkDaysField value={workDays} onCommit={onWorkDays} />
         <CountField
           id="driver-shortage"
           label={SHORTAGE_LABEL}
           value={shortage}
           max={MAX_SHORTAGE}
-          placeholder="例:20"
+          placeholder="例:19"
           parse={parseShortage}
           onCommit={onShortage}
         />
       </div>
       <p className="text-xs text-muted-foreground">
-        欠員は、減便で減る勤務の数(目安)と比べます。在籍の運転士の数を入れると、乗務できる運転士(在籍 − 欠員)と減便後に要る勤務の数(目安)も参考に並べます。
+        乗務できる運転士の数(目安)を、在籍 × 週の出勤日数 ÷ 7 − 欠員(小数は切り捨て)で数え、減便後に要る勤務の数と比べます。在籍の運転士の数を入れないと、足りるかの目安は出しません。
       </p>
       {placesEditor}
       <AssumptionFields params={params} places={places} onParams={onParams} onReset={onResetParams} />
     </section>
+  )
+}
+
+/**
+ * 道北バスのサンプルを入れるボタン。営業所の一覧を5か所に置き換え、在籍の運転士の数が空なら 150 を入れる
+ */
+function SampleButton({ onApply }: { onApply: () => boolean }) {
+  const [message, setMessage] = useState<string | null>(null)
+  const names = DOHOKU_SAMPLE_PLACES.map((p) => p.name).join('、')
+  return (
+    <div className="flex flex-col items-start gap-1 text-xs">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          const filled = onApply()
+          setMessage(
+            filled
+              ? `道北バスのサンプルの営業所を ${DOHOKU_SAMPLE_OFFICE_COUNT} か所置き、在籍の運転士の数に ${DOHOKU_SAMPLE_ROSTER} を入れました。`
+              : `道北バスのサンプルの営業所を ${DOHOKU_SAMPLE_OFFICE_COUNT} か所置きました。在籍の運転士の数は、入れてあった数のままです。`,
+          )
+        }}
+      >
+        {DOHOKU_SAMPLE_BUTTON}
+      </Button>
+      <span className="text-muted-foreground">
+        営業所({names})で今の一覧を置き換え、在籍の運転士の数が空なら {DOHOKU_SAMPLE_ROSTER} を入れます(道北バスの在籍は約 {DOHOKU_SAMPLE_ROSTER} 人)。
+      </span>
+      {message && <p role="status">{message}</p>}
+    </div>
+  )
+}
+
+/**
+ * 1人あたりの週の出勤日数の欄(1〜7 の整数。全角の数字も受け付ける)。空や読めない値は store に入れず、理由を出す。
+ * 全角の数字を打てるよう type="text" にする(NumberField は type="number")
+ */
+function WorkDaysField({ value, onCommit }: { value: number; onCommit: (value: number) => void }) {
+  const [text, setText] = useState(String(value))
+  const [committed, setCommitted] = useState(value)
+  const [error, setError] = useState<string | null>(null)
+  if (value !== committed) {
+    setCommitted(value)
+    setText(String(value))
+    setError(null)
+  }
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <Label htmlFor="driver-work-days" className="text-xs">
+        {WORK_DAYS_LABEL}
+      </Label>
+      <div className="flex items-center gap-1">
+        <Input
+          id="driver-work-days"
+          type="text"
+          inputMode="numeric"
+          value={text}
+          aria-invalid={error !== null}
+          className="h-7 w-24 tabular-nums"
+          onChange={(e) => {
+            const t = e.target.value
+            setText(t)
+            const r: ParseResult = parseWorkDays(t)
+            if (!r.ok) {
+              setError(r.message)
+              return
+            }
+            setError(null)
+            setCommitted(r.value)
+            onCommit(r.value)
+          }}
+        />
+        <span className="shrink-0 text-xs text-muted-foreground">
+          日({WORK_DAYS_RANGE.min}〜{WORK_DAYS_RANGE.max}。週休2日なら 5)
+        </span>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
   )
 }
 

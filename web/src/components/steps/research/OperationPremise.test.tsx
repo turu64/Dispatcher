@@ -3,13 +3,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it } from 'vitest'
 import { PREMISE_SECTION_ID } from '@/components/steps/stepIds'
 import { BOUND_LIMIT_MIN, DUTY_DEFAULTS } from '@/gtfs/edit/duties'
-import { useDriversStore } from '@/store/drivers'
+import { DOHOKU_SAMPLE_PLACES } from '@/lib/samplePlaces'
+import { DEFAULT_WORK_DAYS, useDriversStore } from '@/store/drivers'
 import { useGtfsStore } from '@/store/gtfs'
 import OperationPremise from './OperationPremise'
 
 afterEach(() => {
   cleanup()
-  useDriversStore.setState({ shortage: null, roster: null, params: { ...DUTY_DEFAULTS }, places: [], placing: null })
+  useDriversStore.setState({ shortage: null, roster: null, workDays: DEFAULT_WORK_DAYS, params: { ...DUTY_DEFAULTS }, places: [], placing: null })
   useGtfsStore.getState().clear()
 })
 
@@ -29,9 +30,12 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
     const s = section()
     expect(s.id).toBe(PREMISE_SECTION_ID)
     expect(s.tabIndex).toBe(-1)
-    expect(within(s).getByLabelText('在籍の運転士の数(任意)')).toBeTruthy()
+    expect(within(s).getByLabelText('在籍の運転士の数')).toBeTruthy()
     expect(within(s).getByLabelText('欠員(その日に乗務できない運転士の数)')).toBeTruthy()
+    expect((within(s).getByLabelText('1人あたりの週の出勤日数') as HTMLInputElement).value).toBe('5')
     expect(within(s).getByTestId('places-editor')).toBeTruthy()
+    // サンプルの GTFS でなければ、道北バスのサンプルのボタンは出さない
+    expect(within(s).queryByRole('button', { name: /道北バスのサンプル/ })).toBeNull()
     expect(within(s).getByTestId('duty-settings-summary').textContent).toBe('拘束 13 時間・点呼 30/15 分・回送 時速 30km')
     // 仮定の入力は Dialog の中だけ(閉じている間は出さない)
     expect(within(s).getByRole('button', { name: '勤務時間の設定' })).toBeTruthy()
@@ -55,7 +59,7 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
 
   it('在籍の運転士の数は 0〜9999 の整数か空', () => {
     render(<OperationPremise />)
-    const input = screen.getByLabelText('在籍の運転士の数(任意)')
+    const input = screen.getByLabelText('在籍の運転士の数')
     fireEvent.change(input, { target: { value: '110' } })
     expect(useDriversStore.getState().roster).toBe(110)
     fireEvent.change(input, { target: { value: '10000' } })
@@ -65,6 +69,40 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
     expect(useDriversStore.getState().roster).toBeNull()
   })
 
+  it('週の出勤日数は 1〜7 の整数で、全角の数字も受け付ける。読めない値(5.5・空・8)は入れない', () => {
+    render(<OperationPremise />)
+    const input = screen.getByLabelText('1人あたりの週の出勤日数')
+    fireEvent.change(input, { target: { value: '６' } })
+    expect(useDriversStore.getState().workDays).toBe(6)
+    fireEvent.change(input, { target: { value: '5.5' } })
+    expect(screen.getByText('1 以上の整数を入れてください')).toBeTruthy()
+    expect(useDriversStore.getState().workDays).toBe(6)
+    fireEvent.change(input, { target: { value: '' } })
+    expect(screen.getByText('数を入れてください')).toBeTruthy()
+    fireEvent.change(input, { target: { value: '8' } })
+    expect(screen.getByText('7日以下にしてください')).toBeTruthy()
+    expect(useDriversStore.getState().workDays).toBe(6)
+    fireEvent.change(input, { target: { value: '7' } })
+    expect(useDriversStore.getState().workDays).toBe(7)
+  })
+
+  it('サンプルの GTFS のときだけ、道北バスのサンプル(営業所5か所・在籍 150 人)を入れるボタンを出す。在籍は空のときだけ入れる', () => {
+    useGtfsStore.setState({ sample: { available: true, name: '道北バス', source: '北海道オープンデータプラットフォーム', license: 'CC BY 4.0' } })
+    render(<OperationPremise />)
+    const button = screen.getByRole('button', { name: '道北バスのサンプル(営業所5か所・在籍 150 人)を入れる' })
+    expect(section().textContent).toContain('在籍の運転士の数が空なら 150 を入れます')
+    fireEvent.click(button)
+    expect(useDriversStore.getState().roster).toBe(150)
+    expect(useDriversStore.getState().places.map((p) => p.name)).toEqual(DOHOKU_SAMPLE_PLACES.map((p) => p.name))
+    expect((screen.getByLabelText('在籍の運転士の数') as HTMLInputElement).value).toBe('150')
+    expect(screen.getByRole('status').textContent).toBe('道北バスのサンプルの営業所を 5 か所置き、在籍の運転士の数に 150 を入れました。')
+    // 入れてある在籍は変えない
+    fireEvent.change(screen.getByLabelText('在籍の運転士の数'), { target: { value: '120' } })
+    fireEvent.click(button)
+    expect(useDriversStore.getState().roster).toBe(120)
+    expect(screen.getByRole('status').textContent).toContain('在籍の運転士の数は、入れてあった数のままです。')
+  })
+
   it('store の値が外から変わると(GTFS の読み込み直しで消えると)、欄の文字も合わせる', () => {
     render(<OperationPremise />)
     act(() => {
@@ -72,10 +110,10 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
       useDriversStore.getState().setRoster(110)
     })
     expect((screen.getByLabelText('欠員(その日に乗務できない運転士の数)') as HTMLInputElement).value).toBe('20')
-    expect((screen.getByLabelText('在籍の運転士の数(任意)') as HTMLInputElement).value).toBe('110')
+    expect((screen.getByLabelText('在籍の運転士の数') as HTMLInputElement).value).toBe('110')
     act(() => useDriversStore.getState().reset())
     expect((screen.getByLabelText('欠員(その日に乗務できない運転士の数)') as HTMLInputElement).value).toBe('')
-    expect((screen.getByLabelText('在籍の運転士の数(任意)') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('在籍の運転士の数') as HTMLInputElement).value).toBe('')
   })
 
   it('「勤務時間の設定」で Dialog を開き、拘束 15 時間・点呼を変えると store に入り、仮定の文と欄の要約も変わる。既定値に戻せる', async () => {

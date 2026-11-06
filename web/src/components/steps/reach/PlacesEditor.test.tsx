@@ -10,7 +10,6 @@ import { compareDrivers, useDriversStore, type UserPlace } from '@/store/drivers
 import { useGtfsStore } from '@/store/gtfs'
 import { DriverView } from './DriverPanel'
 import { placesEffectText, searchStops } from './places'
-import { DOHOKU_SAMPLE_PLACES } from '@/lib/samplePlaces'
 import PlacesEditor, { PlacesEditorView, type PlacesEditorProps } from './PlacesEditor'
 
 afterEach(() => {
@@ -43,7 +42,6 @@ function renderView(overrides: Partial<PlacesEditorProps> = {}) {
     onAdd: vi.fn(),
     onRename: vi.fn(),
     onRemove: vi.fn(),
-    onReplace: vi.fn(),
     onStartPlacing: vi.fn(),
     onCancelPlacing: vi.fn(),
     ...overrides,
@@ -72,31 +70,20 @@ describe('searchStops(停留所の名前で探す)', () => {
 
 describe('PlacesEditorView(営業所を置く欄)', () => {
   it('見出しは「営業所を置く」で、折りたたまずに出す。種類の選択は無く、車庫・休憩施設の語を出さない', () => {
-    renderView({ places: [PLACE], sampleAvailable: true })
+    renderView({ places: [PLACE] })
     const editor = screen.getByRole('region', { name: /^営業所を置く/ })
     expect(editor).toBe(screen.getByTestId('places-editor'))
     expect(screen.getByRole('heading', { name: /^営業所を置く/ }).textContent).toBe('営業所を置く(1 か所)')
-    // 折りたたまない:地図で置く・停留所から選ぶ・一覧・サンプルのボタンが最初から見える
+    // 折りたたまない:地図で置く・停留所から選ぶ・一覧が最初から見える
     expect(editor.querySelector('details, summary')).toBeNull()
     expect(screen.getByRole('button', { name: '地図で営業所を置く' })).toBeTruthy()
     expect(screen.getByLabelText('停留所の名前で探して営業所を置く')).toBeTruthy()
     expect(screen.getByRole('list', { name: '置いた場所' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '道北バスの営業所(サンプル)を置く' })).toBeTruthy()
+    // 道北バスのサンプルのボタンは、運行の前提の欄の上(OperationPremise.tsx)にある
+    expect(screen.queryByRole('button', { name: /道北バスのサンプル/ })).toBeNull()
     expect(screen.queryByRole('radio')).toBeNull()
     expect(editor.textContent).not.toMatch(/車庫|休憩施設/)
     expect(editor.textContent).toContain('営業所を1つでも置くと、営業所の近くの停留所でのすき間だけを休憩に数えます。')
-  })
-
-  it('サンプルの GTFS のときだけ、道北バスのサンプルの営業所を置くボタンを出し、押すと今の一覧を置き換える', () => {
-    renderView()
-    expect(screen.queryByRole('button', { name: '道北バスの営業所(サンプル)を置く' })).toBeNull()
-    cleanup()
-    const props = renderView({ sampleAvailable: true })
-    fireEvent.click(screen.getByRole('button', { name: '道北バスの営業所(サンプル)を置く' }))
-    expect(props.onReplace).toHaveBeenCalledWith(DOHOKU_SAMPLE_PLACES)
-    expect(DOHOKU_SAMPLE_PLACES.map((p) => p.name)).toEqual(['本社・旭川営業所', '名寄出張所', '上川営業所', '層雲峡出張所', '永山出張所'])
-    expect(DOHOKU_SAMPLE_PLACES.every((p) => p.type === 'office')).toBe(true)
-    expect(screen.getByText('道北バスのサンプルの営業所を 5 か所置きました。')).toBeTruthy()
   })
 
   it('「地図で営業所を置く」を押すと、営業所を置き始める', () => {

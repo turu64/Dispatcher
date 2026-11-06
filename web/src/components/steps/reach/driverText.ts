@@ -1,7 +1,7 @@
 import type { DutyParams, DutyPlace } from '@/gtfs/edit/duties'
 import { formatDateJa } from '@/lib/dates'
 import type { ParseResult } from '@/reach/input'
-import { MAX_ROSTER, MAX_SHORTAGE, type DriverVerdict, type RosterCheck } from '@/store/drivers'
+import { MAX_ROSTER, MAX_SHORTAGE, WORK_DAYS_RANGE, type DriverNeed, type DriverSupply, type DriverVerdict } from '@/store/drivers'
 
 /**
  * 要る運転士の数(目安)の欄(DriverPanel.tsx)と、前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)の文。語は docs/wording.md に従い、「あなた」を使わない。
@@ -19,7 +19,10 @@ export const DRIVER_PANEL_LEAD =
 export const SHORTAGE_LABEL = '欠員(その日に乗務できない運転士の数)'
 
 /** 在籍の運転士の数の入力欄の名前 */
-export const ROSTER_LABEL = '在籍の運転士の数(任意)'
+export const ROSTER_LABEL = '在籍の運転士の数'
+
+/** 週の出勤日数の入力欄の名前 */
+export const WORK_DAYS_LABEL = '1人あたりの週の出勤日数'
 
 /** 前提情報の手順の「運行の前提」の欄の見出し */
 export const PREMISE_TITLE = '運行の前提(営業所・運転士の数)'
@@ -27,11 +30,11 @@ export const PREMISE_TITLE = '運行の前提(営業所・運転士の数)'
 /** 影響(到達圏)の手順の欄から、運行の前提の欄へ移るボタン */
 export const PREMISE_JUMP = '前提情報で設定する'
 
-/** 欠員を入れていないときに、結果の欄に出す文 */
-export const SHORTAGE_HINT = '前提情報で欠員を入れると、足りるかの目安を出します。'
+/** 在籍の運転士の数を入れていないときに、結果の欄に出す文 */
+export const ROSTER_HINT = '在籍の運転士の数を入れると、足りるかの目安を出します。'
 
-/** 欠員を入れていないときに、平日便を戻す手順の1行に添える文(入れる場所を示す) */
-export const SHORTAGE_WHERE = '手順「前提情報」の「運行の前提」の欄で欠員を入れると、足りるかの目安を出します。'
+/** 在籍の運転士の数を入れていないときに、平日便を戻す手順の1行に添える文(入れる場所を示す) */
+export const ROSTER_WHERE = '手順「前提情報」の「運行の前提」の欄で在籍の運転士の数を入れると、足りるかの目安を出します。'
 
 /** 分を「400時間42分」にする */
 export function formatHours(minutes: number): string {
@@ -57,29 +60,59 @@ export function formatRatioDiff(ratio: number): string {
   return `${ratio > 0 ? '−' : '+'}${(Math.abs(ratio) * 100).toFixed(1)}%`
 }
 
-/** 判定の文。判定は減る勤務の数と欠員の比較だけ */
+/**
+ * 判定の文。乗務できる運転士の数(目安)と減便後に要る勤務の数を比べ、減便前のままでの過不足も並べる。
+ * 「減便後に要る勤務の数 70 に対して、乗務できる運転士の数(目安)88 → 足りる目安です(余り 18)。減便前のままでは 13 足りない目安です。」
+ */
 export function verdictText(verdict: DriverVerdict, date: string): string {
   switch (verdict.kind) {
     case 'noEdited':
-      return '減便の方針を承認すると(承認待ちの下書きでも)、減便で減る勤務の数(目安)と欠員を比べます。'
+      return '減便の方針を承認すると(承認待ちの下書きでも)、乗務できる運転士の数(目安)と減便後に要る勤務の数を比べます。'
     case 'notWeekday':
       return notWeekdayText(date)
-    case 'noShortage':
-      if (verdict.reduced < 0) return `減便後のほうが、勤務の数(目安)が ${-verdict.reduced} 多くなります。`
-      if (verdict.reduced === 0) return '減便の前後で、勤務の数(目安)は変わりません。'
-      return `減便で減る勤務の数(目安)は ${verdict.reduced} です。`
+    case 'noRoster':
+      return ROSTER_HINT
     case 'enough':
-      return `減便で減る勤務の数(目安)${verdict.reduced} ≥ 欠員 ${verdict.shortage} → 足りる目安です。`
-    case 'short':
-      // 減便で勤務の数が減らない(増える・変わらない)ときは、負の数や 0 を「減る数」として出さない
-      if (verdict.reduced < 0) {
-        return `減便後のほうが、勤務の数(目安)が ${-verdict.reduced} 多くなります。欠員 ${verdict.shortage} に対して、あと ${verdict.missing} 足りない目安です。`
-      }
-      if (verdict.reduced === 0) {
-        return `減便の前後で、勤務の数(目安)は変わりません。欠員 ${verdict.shortage} に対して、あと ${verdict.missing} 足りない目安です。`
-      }
-      return `減便で減る勤務の数(目安)${verdict.reduced} < 欠員 ${verdict.shortage} → あと ${verdict.missing} 足りない目安です。`
+    case 'short': {
+      const head = `減便後に要る勤務の数 ${verdict.needed} に対して、乗務できる運転士の数(目安)${verdict.available} → `
+      const result = verdict.kind === 'enough' ? `足りる目安です(余り ${verdict.spare})。` : `あと ${verdict.missing} 足りない目安です。`
+      return head + result + beforeMarginText(verdict.beforeMargin)
+    }
   }
+}
+
+/** 減便前のままでの過不足の文 */
+function beforeMarginText(margin: number): string {
+  return margin >= 0 ? `減便前のままでも足りる目安です(余り ${margin})。` : `減便前のままでは ${-margin} 足りない目安です。`
+}
+
+/**
+ * 乗務できる運転士の数(目安)の数え方の文。
+ * 「乗務できる運転士の数(目安)は、在籍 150 × 週の出勤日数 5 ÷ 7 = 107(小数は切り捨て)から欠員 19 を引いた 88 です。」
+ */
+export function supplyText(supply: DriverSupply): string {
+  const head = `乗務できる運転士の数(目安)は、在籍 ${supply.roster} × 週の出勤日数 ${supply.workDays} ÷ 7 = ${supply.onDuty}(小数は切り捨て)`
+  if (supply.shortage === null) return `${head}です(欠員は未入力のため 0 として数えました)。`
+  return `${head}から欠員 ${supply.shortage} を引いた ${supply.available} です。`
+}
+
+/** 欠員がその日に出勤する運転士の数より多いときの注意。そうでなければ null */
+export function supplyWarningText(supply: DriverSupply): string | null {
+  return supply.shortageOverOnDuty
+    ? '注意:欠員が、その日に出勤する運転士の数(在籍 × 週の出勤日数 ÷ 7)より多くなっています。前提情報の数を確かめてください。'
+    : null
+}
+
+/**
+ * 要る勤務の数をどう出したかの1文。
+ * 「要る勤務の数は、減便前は入力の運用番号の数 101、減便後はそれに推定した勤務の数の比(55/79)を掛けた 70 です。」
+ */
+export function needBasisText(need: DriverNeed): string {
+  if (need.basis === 'operatorRuns') {
+    if (need.after === null || need.estimateAfter === null) return `要る勤務の数は、減便前は入力の運用番号の数 ${need.before} です。`
+    return `要る勤務の数は、減便前は入力の運用番号の数 ${need.before}、減便後はそれに推定した勤務の数の比(${need.estimateAfter}/${need.estimateBefore})を掛けた ${need.after} です(四捨五入)。`
+  }
+  return '入力の運用番号の数が取れないため、要る勤務の数は、推定した勤務の数(目安。下限の目安)をそのまま使っています。'
 }
 
 /** 比較する日付に平日ダイヤが走らないときの文 */
@@ -104,32 +137,6 @@ export function driverCaveats(params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivi
       ? '休憩は、前の便の終着か次の便の始発のどちらかが営業所の近くなら、そのすき間を休憩に数える甘めの数え方です。'
       : '営業所を置いていないため、どの停留所でのすき間も休憩に数える甘めの数え方です。',
   ]
-}
-
-/**
- * 在籍の運転士の数を入れたときの参考の文(主な判定とは別)。
- * 「参考:乗務できる運転士(在籍 110 − 欠員 20)90 人/減便後に要る勤務の数(目安)57。」
- */
-export function rosterCheckText(check: RosterCheck): string {
-  const minus = check.shortage === null ? '、欠員は未入力' : ` − 欠員 ${check.shortage}`
-  const side = check.basis === 'after' ? '減便後' : '減便前'
-  return `参考:乗務できる運転士(在籍 ${check.roster}${minus})${check.available} 人/${side}に要る勤務の数(目安)${check.needed}。`
-}
-
-/** 在籍の運転士の数の参考の注意(要る勤務の数が乗務できる運転士を上回る・欠員が在籍より多い)。どちらでもなければ null */
-export function rosterWarningText(check: RosterCheck): string | null {
-  if (check.shortageOverRoster) return '注意:欠員が在籍の運転士の数より多くなっています。前提情報の数を確かめてください。'
-  if (check.over > 0) {
-    return `注意:${check.basis === 'after' ? '減便後' : '減便前'}に要る勤務の数(目安)が、乗務できる運転士の数を ${check.over} 上回ります。`
-  }
-  return null
-}
-
-/** 在籍の運転士の数の参考に添える1文。勤務の数は下限の目安で、事業者の運用番号の数と差があること */
-export function rosterCaveatText(operatorRuns: number | null): string {
-  return operatorRuns === null
-    ? '勤務の数の推定は下限の目安のため、事業者の運用番号の数(実際の勤務の数)とは差があります。'
-    : `勤務の数の推定は下限の目安のため、事業者の運用番号の数とは差があります。入力の運用番号の数(参考)は減便前 ${operatorRuns} です。`
 }
 
 /** 使った仮定の短い一覧(拘束・点呼・回送の速さ・置いた場所の数) */
@@ -174,6 +181,11 @@ export function parseShortage(text: string): OptionalCountResult {
 /** 在籍の運転士の数の入力。空なら null(入れていない)。0〜9999 の整数 */
 export function parseRoster(text: string): OptionalCountResult {
   return parseOptionalCount(text, MAX_ROSTER)
+}
+
+/** 1人あたりの週の出勤日数の入力。1〜7 の整数(空は受け付けない) */
+export function parseWorkDays(text: string): ParseResult {
+  return parseIntegerIn(text, WORK_DAYS_RANGE.min, WORK_DAYS_RANGE.max, '日')
 }
 
 function parseIntegerIn(text: string, min: number, max: number, unit: string): ParseResult {

@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { Stop } from '@/gtfs/parse'
-import { DOHOKU_SAMPLE_OFFICE_COUNT, DOHOKU_SAMPLE_PLACES } from '@/lib/samplePlaces'
 import { MAX_PLACE_NAME, MAX_PLACES, PLACE_TYPE_LABELS, type PlaceInput, type PlaceType } from '@/lib/userPlaces'
 import { PlaceSymbol } from '@/map/PlacesLayer'
 import { useDriversStore, type UserPlace } from '@/store/drivers'
@@ -16,7 +15,8 @@ import { searchStops } from './places'
  * 折りたたまずに出すようにし、JSON の書き出し・読み込みをなくした。どれも利用者の指示)。
  * 足し方は2つ:「地図で営業所を置く」を押して地図を1回押す(地図は map/PlacesLayer.tsx)か、停留所の名前で探して選ぶ。
  * 名前を変える・消すができる。場所はメモリだけに持ち(store/drivers.ts)、サーバーにもブラウザの保存にも入れない。
- * GTFS を読み込み直すと消える。推定(gtfs/edit/duties.ts)に渡す
+ * GTFS を読み込み直すと消える。推定(gtfs/edit/duties.ts)に渡す。
+ * 道北バスのサンプルの営業所を入れるボタンは、在籍の運転士の数も入れるので、11/6 に運行の前提の欄の上(OperationPremise.tsx)へ移した
  */
 
 export interface PlacesEditorProps {
@@ -26,12 +26,8 @@ export interface PlacesEditorProps {
   onAdd: (place: PlaceInput) => void
   onRename: (id: string, name: string) => void
   onRemove: (id: string) => void
-  /** 一覧を置き換える(道北バスのサンプルの営業所を置く) */
-  onReplace: (places: readonly PlaceInput[]) => void
   onStartPlacing: (type: PlaceType) => void
   onCancelPlacing: () => void
-  /** 道北バスのサンプルの営業所を置けるか(サンプルの GTFS を読み込んだときだけ true) */
-  sampleAvailable?: boolean
 }
 
 /** 欄(store を使う) */
@@ -39,7 +35,6 @@ export default function PlacesEditor() {
   const places = useDriversStore((s) => s.places)
   const placing = useDriversStore((s) => s.placing)
   const stops = useGtfsStore((s) => s.stops)
-  const sampleAvailable = useGtfsStore((s) => s.sample !== null)
   const store = useDriversStore.getState
   return (
     <PlacesEditorView
@@ -49,10 +44,8 @@ export default function PlacesEditor() {
       onAdd={(p) => store().addPlace(p)}
       onRename={(id, name) => store().renamePlace(id, name)}
       onRemove={(id) => store().removePlace(id)}
-      onReplace={(list) => store().replacePlaces(list)}
       onStartPlacing={(t) => store().startPlacing(t)}
       onCancelPlacing={() => store().cancelPlacing()}
-      sampleAvailable={sampleAvailable}
     />
   )
 }
@@ -65,15 +58,12 @@ export function PlacesEditorView({
   onAdd,
   onRename,
   onRemove,
-  onReplace,
   onStartPlacing,
   onCancelPlacing,
-  sampleAvailable = false,
 }: PlacesEditorProps) {
   const type: PlaceType = 'office'
   const label = PLACE_TYPE_LABELS[type]
   const [query, setQuery] = useState('')
-  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
   const full = places.length >= MAX_PLACES
   const matches = searchStops(stops, query)
 
@@ -92,27 +82,6 @@ export function PlacesEditorView({
         <p className="text-muted-foreground">
           場所はこの画面の中だけに持ち、サーバーには送りません。GTFS を読み込み直すと一覧は空になります。
         </p>
-        {sampleAvailable && (
-          <div className="flex flex-col items-start gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                onReplace(DOHOKU_SAMPLE_PLACES)
-                setMessage({
-                  text: `道北バスのサンプルの営業所を ${DOHOKU_SAMPLE_OFFICE_COUNT} か所置きました。`,
-                  error: false,
-                })
-              }}
-            >
-              道北バスの営業所(サンプル)を置く
-            </Button>
-            <span className="text-muted-foreground">
-              本社・旭川営業所、名寄出張所、上川営業所、層雲峡出張所、永山出張所。今の一覧を置き換えます。
-            </span>
-          </div>
-        )}
         <div className="flex flex-col gap-1">
           {placing ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -170,11 +139,6 @@ export function PlacesEditorView({
               <PlaceRow key={p.id} place={p} onRename={onRename} onRemove={onRemove} />
             ))}
           </ul>
-        )}
-        {message && (
-          <p className={message.error ? 'text-destructive' : ''} role={message.error ? 'alert' : 'status'}>
-            {message.text}
-          </p>
         )}
       </div>
     </section>

@@ -7,36 +7,33 @@ import {
   formatHours,
   formatHoursDiff,
   formatRatioDiff,
+  needBasisText,
   parseCheckMinutes,
   parseDeadheadKmh,
   parseRoster,
   parseShortage,
-  rosterCaveatText,
-  rosterCheckText,
-  rosterWarningText,
+  parseWorkDays,
+  ROSTER_HINT,
+  supplyText,
+  supplyWarningText,
   verdictText,
 } from './driverText'
-import type { RosterCheck } from '@/store/drivers'
+import { driverNeedOf, driverSupplyOf, driverVerdictOf, type DriverVerdict } from '@/store/drivers'
 
-describe('verdictText(欠員との比較の文)', () => {
-  it('足りる・足りないは「目安」と書き、数は判定から入れる', () => {
-    expect(verdictText({ kind: 'enough', reduced: 25, shortage: 20 }, '20261104')).toBe(
-      '減便で減る勤務の数(目安)25 ≥ 欠員 20 → 足りる目安です。',
+describe('verdictText(乗務できる運転士の数(目安)と減便後に要る勤務の数の比較の文)', () => {
+  it('足りる・足りないは「目安」と書き、減便前のままでの過不足も並べる', () => {
+    const enough: DriverVerdict = { kind: 'enough', available: 88, needed: 70, spare: 18, beforeNeeded: 101, beforeMargin: -13 }
+    expect(verdictText(enough, '20261104')).toBe(
+      '減便後に要る勤務の数 70 に対して、乗務できる運転士の数(目安)88 → 足りる目安です(余り 18)。減便前のままでは 13 足りない目安です。',
     )
-    expect(verdictText({ kind: 'short', reduced: 14, shortage: 20, missing: 6 }, '20261104')).toBe(
-      '減便で減る勤務の数(目安)14 < 欠員 20 → あと 6 足りない目安です。',
+    const short: DriverVerdict = { kind: 'short', available: 60, needed: 70, missing: 10, beforeNeeded: 101, beforeMargin: -41 }
+    expect(verdictText(short, '20261104')).toBe(
+      '減便後に要る勤務の数 70 に対して、乗務できる運転士の数(目安)60 → あと 10 足りない目安です。減便前のままでは 41 足りない目安です。',
     )
-  })
-
-  it('減便で勤務の数が増える・変わらないときは、負の数や 0 を「減る数」として書かない', () => {
-    expect(verdictText({ kind: 'short', reduced: -1, shortage: 5, missing: 6 }, '20261104')).toBe(
-      '減便後のほうが、勤務の数(目安)が 1 多くなります。欠員 5 に対して、あと 6 足りない目安です。',
-    )
-    expect(verdictText({ kind: 'short', reduced: 0, shortage: 5, missing: 5 }, '20261104')).toBe(
-      '減便の前後で、勤務の数(目安)は変わりません。欠員 5 に対して、あと 5 足りない目安です。',
-    )
-    expect(verdictText({ kind: 'noShortage', reduced: -2 }, '20261104')).toBe('減便後のほうが、勤務の数(目安)が 2 多くなります。')
-    expect(verdictText({ kind: 'noShortage', reduced: 0 }, '20261104')).toBe('減便の前後で、勤務の数(目安)は変わりません。')
+    const both: DriverVerdict = { kind: 'enough', available: 110, needed: 70, spare: 40, beforeNeeded: 101, beforeMargin: 9 }
+    expect(verdictText(both, '20261104')).toContain('減便前のままでも足りる目安です(余り 9)。')
+    const zero: DriverVerdict = { kind: 'enough', available: 101, needed: 70, spare: 31, beforeNeeded: 101, beforeMargin: 0 }
+    expect(verdictText(zero, '20261104')).toContain('減便前のままでも足りる目安です(余り 0)。')
   })
 
   it('平日でない日は、前後で差が無いことと、平日の日付の選び方を書く', () => {
@@ -46,20 +43,25 @@ describe('verdictText(欠員との比較の文)', () => {
     expect(text).toContain('地図の下の操作盤')
   })
 
-  it('減便後が無いとき・欠員が無いときの文', () => {
+  it('減便後が無いとき・在籍の運転士の数が無いときの文', () => {
     expect(verdictText({ kind: 'noEdited' }, '20261104')).toContain('減便の方針を承認すると')
-    expect(verdictText({ kind: 'noShortage', reduced: 25 }, '20261104')).toBe(
-      '減便で減る勤務の数(目安)は 25 です。',
-    )
+    expect(verdictText({ kind: 'noRoster' }, '20261104')).toBe('在籍の運転士の数を入れると、足りるかの目安を出します。')
+    expect(ROSTER_HINT).toBe('在籍の運転士の数を入れると、足りるかの目安を出します。')
   })
 
   it('どの文も「あなた」を使わない', () => {
+    const supply = driverSupplyOf(150, 5, 19)!
     const all = [
       verdictText({ kind: 'noEdited' }, '20261104'),
       verdictText({ kind: 'notWeekday' }, '20261107'),
-      verdictText({ kind: 'noShortage', reduced: 1 }, '20261104'),
-      verdictText({ kind: 'enough', reduced: 1, shortage: 1 }, '20261104'),
-      verdictText({ kind: 'short', reduced: 1, shortage: 2, missing: 1 }, '20261104'),
+      verdictText({ kind: 'noRoster' }, '20261104'),
+      verdictText(driverVerdictOf(supply, driverNeedOf(101, 79, 55), true), '20261104'),
+      verdictText(driverVerdictOf(supply, driverNeedOf(null, 79, 99), true), '20261104'),
+      supplyText(supply),
+      supplyText(driverSupplyOf(150, 5, null)!),
+      supplyWarningText(driverSupplyOf(1, 5, 20)!)!,
+      needBasisText(driverNeedOf(101, 79, 55)),
+      needBasisText(driverNeedOf(null, 79, 55)),
       ...driverCaveats(DUTY_DEFAULTS),
       ...driverCaveats(DUTY_DEFAULTS, [{ name: '営業所', lat: 0, lon: 0 }]),
     ]
@@ -67,38 +69,24 @@ describe('verdictText(欠員との比較の文)', () => {
   })
 })
 
-describe('在籍の運転士の数の参考の文', () => {
-  const check = (patch: Partial<RosterCheck> = {}): RosterCheck => ({
-    roster: 110,
-    shortage: 20,
-    available: 90,
-    shortageOverRoster: false,
-    needed: 57,
-    basis: 'after',
-    over: 0,
-    ...patch,
-  })
-
-  it('乗務できる運転士(在籍 − 欠員)と、減便後に要る勤務の数を並べる', () => {
-    expect(rosterCheckText(check())).toBe('参考:乗務できる運転士(在籍 110 − 欠員 20)90 人/減便後に要る勤務の数(目安)57。')
-    expect(rosterCheckText(check({ shortage: null, available: 110, basis: 'before', needed: 82 }))).toBe(
-      '参考:乗務できる運転士(在籍 110、欠員は未入力)110 人/減便前に要る勤務の数(目安)82。',
+describe('乗務できる運転士の数(目安)と要る勤務の数の文', () => {
+  it('在籍 × 週の出勤日数 ÷ 7(切り捨て)から欠員を引いた数を、式つきで書く', () => {
+    expect(supplyText(driverSupplyOf(150, 5, 19)!)).toBe(
+      '乗務できる運転士の数(目安)は、在籍 150 × 週の出勤日数 5 ÷ 7 = 107(小数は切り捨て)から欠員 19 を引いた 88 です。',
     )
-    expect(rosterWarningText(check())).toBeNull()
-  })
-
-  it('要る勤務の数が乗務できる運転士を上回るとき・欠員が在籍より多いときは注意にする', () => {
-    expect(rosterWarningText(check({ available: 50, over: 7 }))).toBe('注意:減便後に要る勤務の数(目安)が、乗務できる運転士の数を 7 上回ります。')
-    expect(rosterWarningText(check({ roster: 10, shortage: 20, available: 0, shortageOverRoster: true, over: 57 }))).toContain(
-      '欠員が在籍の運転士の数より多く',
+    expect(supplyText(driverSupplyOf(150, 5, null)!)).toBe(
+      '乗務できる運転士の数(目安)は、在籍 150 × 週の出勤日数 5 ÷ 7 = 107(小数は切り捨て)です(欠員は未入力のため 0 として数えました)。',
     )
+    expect(supplyWarningText(driverSupplyOf(150, 5, 19)!)).toBeNull()
+    expect(supplyWarningText(driverSupplyOf(10, 5, 20)!)).toContain('欠員が、その日に出勤する運転士の数')
   })
 
-  it('勤務の数は下限の目安で、事業者の運用番号の数と差があることを1文で添える', () => {
-    expect(rosterCaveatText(null)).toContain('下限の目安')
-    expect(rosterCaveatText(null)).toContain('事業者の運用番号の数')
-    expect(rosterCaveatText(64)).toContain('入力の運用番号の数(参考)は減便前 64')
-    for (const t of [rosterCheckText(check()), rosterCaveatText(null), rosterCaveatText(3)]) expect(t).not.toContain('あなた')
+  it('運用番号の数から出したか、推定をそのまま使ったかを1文で書く', () => {
+    expect(needBasisText(driverNeedOf(101, 79, 55))).toBe(
+      '要る勤務の数は、減便前は入力の運用番号の数 101、減便後はそれに推定した勤務の数の比(55/79)を掛けた 70 です(四捨五入)。',
+    )
+    expect(needBasisText(driverNeedOf(101, 79, null))).toBe('要る勤務の数は、減便前は入力の運用番号の数 101 です。')
+    expect(needBasisText(driverNeedOf(null, 79, 55))).toContain('推定した勤務の数(目安。下限の目安)をそのまま使っています')
   })
 })
 
@@ -164,6 +152,18 @@ describe('入力の読み取り', () => {
     expect(parseShortage('2.5').ok).toBe(false)
     expect(parseShortage('-1').ok).toBe(false)
     expect(parseShortage('abc').ok).toBe(false)
+  })
+
+  it('週の出勤日数は 1〜7 の整数で、空は受け付けない。全角の数字も受け付ける', () => {
+    expect(parseWorkDays('5')).toEqual({ ok: true, value: 5 })
+    expect(parseWorkDays('５')).toEqual({ ok: true, value: 5 })
+    expect(parseWorkDays(' 7 ')).toEqual({ ok: true, value: 7 })
+    expect(parseWorkDays('1')).toEqual({ ok: true, value: 1 })
+    expect(parseWorkDays('0')).toEqual({ ok: false, message: '1日以上にしてください' })
+    expect(parseWorkDays('8')).toEqual({ ok: false, message: '7日以下にしてください' })
+    expect(parseWorkDays('5.5').ok).toBe(false)
+    expect(parseWorkDays('５．５').ok).toBe(false)
+    expect(parseWorkDays('').ok).toBe(false)
   })
 
   it('在籍の運転士の数は空なら null、0〜9999 の整数', () => {

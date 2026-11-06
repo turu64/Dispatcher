@@ -19,6 +19,7 @@ import {
   type ServiceHoursComparison,
 } from '@/gtfs/edit/serviceHours'
 import type { GtfsFeed } from '@/gtfs/load'
+import { DOHOKU_SAMPLE_PLACES, DOHOKU_SAMPLE_ROSTER } from '@/lib/samplePlaces'
 import { MAX_PLACES, normalizePlaceName, roundCoord, validCoords, type PlaceInput, type PlaceType } from '@/lib/userPlaces'
 import { describeServiceDay } from '@/lib/serviceDay'
 import { lastVersion, useEditStore, type EditState } from './edit'
@@ -30,23 +31,32 @@ import { useReachStore } from './reach'
  * 入力は前提情報の手順の「運行の前提」の欄(components/steps/research/OperationPremise.tsx)、結果は影響(到達圏)の手順の
  * components/steps/reach/DriverPanel.tsx。値はメモリだけに持ち、ブラウザにもサーバーにも保存しない。
  *
- * - 欠員:その日に乗務できない運転士の数(0〜999 の整数。空なら null)
- * - 在籍の運転士の数(任意。0〜9999 の整数。空なら null)。入れたときだけ、乗務できる運転士(在籍 − 欠員)と減便後に要る勤務の数を
- *   参考に並べる(rosterCheck)。主な判定(減便で減る勤務の数と欠員の比較)には使わない
+ * - 欠員:その日に乗務できない運転士の数(0〜999 の整数。空なら null。判定では 0 として数える)
+ * - 在籍の運転士の数(0〜9999 の整数。空なら null)。判定に要る。空なら判定を出さない
+ * - 1人あたりの週の出勤日数(1〜7 の整数。既定 5 = 週休2日)
+ * - 判定(2026-11-06 に利用者が承認。driverVerdictOf):乗務できる運転士の数(目安)= 在籍 × 週の出勤日数 ÷ 7 − 欠員(小数は切り捨て)と、
+ *   減便後に要る勤務の数を比べる。要る勤務の数は、減便前の入力の運用番号の数が取れれば、減便前 = 運用番号の数、
+ *   減便後 = 運用番号の数 × 減便後の推定 ÷ 減便前の推定(四捨五入)。取れなければ推定(勤務の数(目安))をそのまま使う。
+ *   前は「減便で減る勤務の数 ≥ 欠員」で判定していたが、道北バスが在籍 約150 人・欠員 19 人で 10/29 版を運行できたのに
+ *   「足りない」になったため改めた(現場は休日の運転士などの余裕も使う)
  * - 仮定:勤務の数の推定(gtfs/edit/duties.ts の estimateDuties)に渡す値。画面で変えるのは拘束の上限(13/15 時間)・点呼の分・回送の速さ
  * - 営業所:利用者が地図で置くか停留所から選んだ場所(D05。画面は reach/PlacesEditor.tsx、地図は map/PlacesLayer.tsx)。
  *   種類は 2026-11-06 に営業所1つにまとめた。duties.ts は、営業所を出庫・入庫の回送と点呼の場所とし、営業所が1つでもあれば
  *   営業所の近くのすき間だけを休憩に数え、無ければどこでも休憩に数える
  * - 地図で置いている途中の種類(placing)
  *
- * GTFS を読み込み直すと(削除しても)、欠員・在籍の運転士の数と施設は消える(store/gtfs の feed を見張る。store/research.ts と同じ)。仮定は残す
- * (到達圏の条件と同じく、利用者の設定として別の GTFS でも使う)。
+ * GTFS を読み込み直すと(削除しても)、欠員・在籍の運転士の数と施設は消える(store/gtfs の feed を見張る。store/research.ts と同じ)。
+ * 仮定と週の出勤日数は残す(到達圏の条件と同じく、利用者の設定として別の GTFS でも使う)。
  */
 
 /** 欠員の人数の上限 */
 export const MAX_SHORTAGE = 999
 /** 在籍の運転士の数の上限 */
 export const MAX_ROSTER = 9999
+/** 1人あたりの週の出勤日数の既定(週休2日) */
+export const DEFAULT_WORK_DAYS = 5
+/** 1人あたりの週の出勤日数の範囲 */
+export const WORK_DAYS_RANGE = { min: 1, max: 7 } as const
 
 /**
  * 利用者が置いた場所(営業所)。DutyPlace(推定に渡す形)を広げたもの。
@@ -62,6 +72,8 @@ interface DriverState {
   shortage: number | null
   /** 在籍の運転士の数。入れていなければ null */
   roster: number | null
+  /** 1人あたりの週の出勤日数(1〜7) */
+  workDays: number
   /** 勤務の数の推定の仮定(DUTY_DEFAULTS から始める) */
   params: DutyParams
   /** 営業所(利用者が置いた順) */
@@ -70,6 +82,7 @@ interface DriverState {
   placing: PlaceType | null
   setShortage: (value: number | null) => void
   setRoster: (value: number | null) => void
+  setWorkDays: (value: number) => void
   setParams: (patch: Partial<DutyParams>) => void
   /** 仮定を既定に戻す */
   resetParams: () => void
@@ -80,6 +93,11 @@ interface DriverState {
   removePlace: (id: string) => void
   /** 一覧を置き換える(道北バスのサンプルの営業所を置く)。読めない行と上限を超えた分は入れない */
   replacePlaces: (places: readonly PlaceInput[]) => void
+  /**
+   * 道北バスのサンプルを入れる:営業所の一覧をサンプルの5か所に置き換え、在籍の運転士の数が空なら 150 を入れる。
+   * 在籍を入れたら true(入れてあった値は変えない)
+   */
+  applyDohokuSample: () => boolean
   /** 地図で置き始める */
   startPlacing: (type: PlaceType) => void
   /** 地図で置くのをやめる */
@@ -110,6 +128,7 @@ export function defaultPlaceName(label: string, places: readonly Pick<UserPlace,
 export const useDriversStore = create<DriverState>()((set, get) => ({
   shortage: null,
   roster: null,
+  workDays: DEFAULT_WORK_DAYS,
   params: { ...DUTY_DEFAULTS },
   places: [],
   placing: null,
@@ -120,6 +139,10 @@ export const useDriversStore = create<DriverState>()((set, get) => ({
   setRoster: (value) => {
     if (value !== null && (!Number.isInteger(value) || value < 0 || value > MAX_ROSTER)) return
     set({ roster: value })
+  },
+  setWorkDays: (value) => {
+    if (!Number.isInteger(value) || value < WORK_DAYS_RANGE.min || value > WORK_DAYS_RANGE.max) return
+    set({ workDays: value })
   },
   setParams: (patch) => set((s) => ({ params: { ...s.params, ...patch } })),
   resetParams: () => set({ params: { ...DUTY_DEFAULTS } }),
@@ -147,6 +170,12 @@ export const useDriversStore = create<DriverState>()((set, get) => ({
     }
     set({ places, placing: null })
   },
+  applyDohokuSample: () => {
+    get().replacePlaces(DOHOKU_SAMPLE_PLACES)
+    if (get().roster !== null) return false
+    set({ roster: DOHOKU_SAMPLE_ROSTER })
+    return true
+  },
   startPlacing: (type) => {
     if (get().places.length < MAX_PLACES) set({ placing: type })
   },
@@ -168,19 +197,50 @@ export interface DriverSide {
 }
 
 /**
- * 欠員に対する判定。判定は「減便で減る勤務の数(前 − 後)」と欠員の比較だけ
+ * 乗務できる運転士の数(目安)。在籍 × 週の出勤日数 ÷ 7 − 欠員(小数は切り捨て。0 を下回れば 0)
+ */
+export interface DriverSupply {
+  roster: number
+  workDays: number
+  /** 欠員(入れていなければ null。0 として数える) */
+  shortage: number | null
+  /** その日に出勤する運転士の数(在籍 × 週の出勤日数 ÷ 7。小数は切り捨て) */
+  onDuty: number
+  /** 乗務できる運転士の数(目安)。onDuty − 欠員。0 を下回れば 0 */
+  available: number
+  /** 欠員がその日に出勤する運転士の数より多い(数の入れ違いの疑い) */
+  shortageOverOnDuty: boolean
+}
+
+/**
+ * 要る勤務の数。basis が operatorRuns なら、減便前 = 入力の運用番号の数、減便後 = 運用番号の数 × 減便後の推定 ÷ 減便前の推定(四捨五入)。
+ * estimate なら推定(勤務の数(目安))のまま
+ */
+export interface DriverNeed {
+  basis: 'operatorRuns' | 'estimate'
+  before: number
+  /** 減便後の GTFS が無ければ null */
+  after: number | null
+  /** 推定した勤務の数(減便前・減便後) */
+  estimateBefore: number
+  estimateAfter: number | null
+}
+
+/**
+ * 判定(driverVerdictOf)
  * - noEdited:減便後の GTFS が無い
  * - notWeekday:比較する日付に、減便前の平日ダイヤ(減便の方針で入れ替える平日の service)が走らない
- * - noShortage:欠員を入れていない
- * - enough:減る勤務の数 ≥ 欠員
- * - short:減る勤務の数 < 欠員。missing は 欠員 − 減る勤務の数
+ * - noRoster:在籍の運転士の数を入れていない
+ * - enough:乗務できる運転士の数 ≥ 減便後に要る勤務の数。spare は余り
+ * - short:乗務できる運転士の数 < 減便後に要る勤務の数。missing は足りない数
+ * enough・short の beforeMargin は、減便前のままでの過不足(乗務できる運転士の数 − 減便前に要る勤務の数。足りなければ負)
  */
 export type DriverVerdict =
   | { kind: 'noEdited' }
   | { kind: 'notWeekday' }
-  | { kind: 'noShortage'; reduced: number }
-  | { kind: 'enough'; reduced: number; shortage: number }
-  | { kind: 'short'; reduced: number; shortage: number; missing: number }
+  | { kind: 'noRoster' }
+  | { kind: 'enough'; available: number; needed: number; spare: number; beforeNeeded: number; beforeMargin: number }
+  | { kind: 'short'; available: number; needed: number; missing: number; beforeNeeded: number; beforeMargin: number }
 
 export interface DriverComparison {
   /** 比較する日付('YYYYMMDD') */
@@ -202,32 +262,14 @@ export interface DriverComparison {
   weekday: boolean | null
   shortage: number | null
   verdict: DriverVerdict
+  /** 乗務できる運転士の数(目安)。在籍を入れていなければ null */
+  supply: DriverSupply | null
+  /** 要る勤務の数(判定に使う数) */
+  need: DriverNeed
   /** 使った仮定の文(duties.ts の dutyAssumptions) */
   assumptions: string[]
   /** 営業所を置く前と後の勤務の数。置いていなければ null */
   placesEffect: PlacesEffect | null
-  /** 在籍の運転士の数を入れたときの参考の数。入れていなければ null */
-  rosterCheck: RosterCheck | null
-}
-
-/**
- * 在籍の運転士の数を入れたときの参考(主な判定には使わない)。
- * 乗務できる運転士(在籍 − 欠員。欠員を入れていなければ在籍のまま)と、要る勤務の数(目安。減便後、減便後が無ければ減便前)を並べる
- */
-export interface RosterCheck {
-  roster: number
-  /** 欠員(入れていなければ null) */
-  shortage: number | null
-  /** 乗務できる運転士の数(在籍 − 欠員)。欠員が在籍より多ければ 0 */
-  available: number
-  /** 欠員が在籍より多い(数の入れ違いの疑い) */
-  shortageOverRoster: boolean
-  /** 比べる勤務の数(目安) */
-  needed: number
-  /** needed が減便後の数か、減便後が無いため減便前の数か */
-  basis: 'after' | 'before'
-  /** 要る勤務の数が乗務できる運転士の数を上回る数(上回らなければ 0) */
-  over: number
 }
 
 /** 営業所を置く前(without)と後(with)の勤務の数 */
@@ -252,6 +294,8 @@ export interface DriverInput {
   shortage: number | null
   /** 在籍の運転士の数(省けば null) */
   roster?: number | null
+  /** 1人あたりの週の出勤日数(省けば DEFAULT_WORK_DAYS) */
+  workDays?: number
 }
 
 // 同じ GTFS・日付・仮定なら計算し直さない(手順を移ったり欠員を打ったりするたびに推定し直さないため)
@@ -307,39 +351,45 @@ function operatorRunsOn(feed: GtfsFeed, date: string): number | null {
   return services.length === 1 ? operatorRunsOf(feed, services[0]) : null
 }
 
-function verdictOf(
-  after: DriverSide | null,
-  weekday: boolean | null,
-  dutyDiff: number | null,
-  shortage: number | null,
-): DriverVerdict {
-  if (!after || dutyDiff === null) return { kind: 'noEdited' }
-  if (weekday === false) return { kind: 'notWeekday' }
-  if (shortage === null) return { kind: 'noShortage', reduced: dutyDiff }
-  if (dutyDiff >= shortage) return { kind: 'enough', reduced: dutyDiff, shortage }
-  return { kind: 'short', reduced: dutyDiff, shortage, missing: shortage - dutyDiff }
+/** 乗務できる運転士の数(目安)。在籍を入れていなければ null */
+export function driverSupplyOf(roster: number | null, workDays: number, shortage: number | null): DriverSupply | null {
+  if (roster === null) return null
+  const onDuty = Math.floor((roster * workDays) / 7)
+  const off = shortage ?? 0
+  return { roster, workDays, shortage, onDuty, available: Math.max(0, onDuty - off), shortageOverOnDuty: off > onDuty }
 }
 
-/** 在籍の運転士の数の参考(在籍を入れていなければ null) */
-function rosterCheckOf(roster: number | null, shortage: number | null, before: DriverSide, after: DriverSide | null): RosterCheck | null {
-  if (roster === null) return null
-  const needed = after ? after.duties.dutyCount : before.duties.dutyCount
-  const available = Math.max(0, roster - (shortage ?? 0))
-  return {
-    roster,
-    shortage,
-    available,
-    shortageOverRoster: shortage !== null && shortage > roster,
-    needed,
-    basis: after ? 'after' : 'before',
-    over: Math.max(0, needed - available),
+/** 要る勤務の数。運用番号の数が取れて減便前の推定が 0 でなければ、運用番号の数を推定の比で減便後に当てはめる */
+export function driverNeedOf(operatorRuns: number | null, estimateBefore: number, estimateAfter: number | null): DriverNeed {
+  if (operatorRuns !== null && estimateBefore > 0) {
+    return {
+      basis: 'operatorRuns',
+      before: operatorRuns,
+      after: estimateAfter === null ? null : Math.round((operatorRuns * estimateAfter) / estimateBefore),
+      estimateBefore,
+      estimateAfter,
+    }
   }
+  return { basis: 'estimate', before: estimateBefore, after: estimateAfter, estimateBefore, estimateAfter }
+}
+
+/** 判定。乗務できる運転士の数(目安)と、減便後に要る勤務の数を比べる */
+export function driverVerdictOf(supply: DriverSupply | null, need: DriverNeed, weekday: boolean | null): DriverVerdict {
+  if (need.after === null) return { kind: 'noEdited' }
+  if (weekday === false) return { kind: 'notWeekday' }
+  if (supply === null) return { kind: 'noRoster' }
+  const { available } = supply
+  const common = { available, needed: need.after, beforeNeeded: need.before, beforeMargin: available - need.before }
+  return available >= need.after
+    ? { kind: 'enough', ...common, spare: available - need.after }
+    : { kind: 'short', ...common, missing: need.after - available }
 }
 
 /** 減便の前後の便・営業運行時間・勤務の数を比べ、欠員と照らす */
 export function compareDrivers(input: DriverInput): DriverComparison {
   const { base, edited, date, weekdayServices, params, places, shortage } = input
   const roster = input.roster ?? null
+  const workDays = input.workDays ?? DEFAULT_WORK_DAYS
   const before = driverSide(base, date, params, places)
   const after = edited ? driverSide(edited.feed, date, params, places) : null
   const weekday =
@@ -354,6 +404,9 @@ export function compareDrivers(input: DriverInput): DriverComparison {
           before: { without: driverSide(base, date, params).duties.dutyCount, with: before.duties.dutyCount },
           after: after && edited ? { without: driverSide(edited.feed, date, params).duties.dutyCount, with: after.duties.dutyCount } : null,
         }
+  const operatorRuns = operatorRunsOn(base, date)
+  const supply = driverSupplyOf(roster, workDays, shortage)
+  const need = driverNeedOf(operatorRuns, before.duties.dutyCount, after?.duties.dutyCount ?? null)
   return {
     date,
     before,
@@ -361,13 +414,14 @@ export function compareDrivers(input: DriverInput): DriverComparison {
     draft: edited?.draft ?? false,
     hours: after ? compareServiceHours(before.hours, after.hours) : null,
     dutyDiff,
-    operatorRuns: operatorRunsOn(base, date),
+    operatorRuns,
     weekday,
     shortage,
-    verdict: verdictOf(after, weekday, dutyDiff, shortage),
+    verdict: driverVerdictOf(supply, need, weekday),
+    supply,
+    need,
     assumptions: before.duties.assumptions,
     placesEffect,
-    rosterCheck: rosterCheckOf(roster, shortage, before, after),
   }
 }
 
@@ -389,7 +443,7 @@ export function weekdayServicesOfEdit(state: Pick<EditState, 'draft' | 'versions
 }
 
 /**
- * 画面の今の状態(減便前の GTFS・減便後の GTFS・比較する日付・欠員・在籍の運転士の数・仮定)での比較。
+ * 画面の今の状態(減便前の GTFS・減便後の GTFS・比較する日付・欠員・在籍の運転士の数・週の出勤日数・仮定)での比較。
  * GTFS か比較する日付が無ければ null。影響(到達圏)の手順の DriverPanel が使う。
  * 計算は描画の中(useMemo)で行う。道北バスで比較する日付を変えたときの計算は、場所なしで 13〜25ms、営業所・車庫・休憩施設を
  * 置いて 32〜42ms(Node、11/5 に測定。最初の1回は 83ms のことがある)で 100ms を下回るため、Web Worker には移していない
@@ -402,6 +456,7 @@ export function useDriverComparison(): DriverComparison | null {
   const versions = useEditStore((s) => s.versions)
   const shortage = useDriversStore((s) => s.shortage)
   const roster = useDriversStore((s) => s.roster)
+  const workDays = useDriversStore((s) => s.workDays)
   const params = useDriversStore((s) => s.params)
   const places = useDriversStore((s) => s.places)
   const weekdayServices = useMemo(() => weekdayServicesOfEdit({ draft, versions }), [draft, versions])
@@ -416,6 +471,7 @@ export function useDriverComparison(): DriverComparison | null {
       places,
       shortage,
       roster,
+      workDays,
     })
-  }, [base, edited, date, weekdayServices, params, places, shortage, roster])
+  }, [base, edited, date, weekdayServices, params, places, shortage, roster, workDays])
 }

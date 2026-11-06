@@ -227,6 +227,8 @@ export interface DriverSettings {
   shortage: number | null
   /** 在籍の運転士の数。入れていなければ null(省けば null) */
   roster?: number | null
+  /** 1人あたりの週の出勤日数(省けば既定の 5) */
+  workDays?: number
 }
 
 export interface ToolOutcome {
@@ -1070,7 +1072,6 @@ async function summarizeImpact(input: unknown, deps: ToolDeps, signal?: AbortSig
       ROUND_TRIP_NOTE,
       FACILITY_ACCESS_TOOL_NOTE,
       DRIVERS_NOTE,
-      ...(drivers.roster_check ? [DRIVERS_ROSTER_NOTE] : []),
     ],
   }
   return ok(fitImpactLists(body), ['zero_service_routes'])
@@ -1086,10 +1087,7 @@ const FACILITY_ACCESS_TOOL_NOTE =
   'facility_access は、学校・病院ごとに、徒歩圏の停留所で降りられて着く窓の中に着く便と、乗れて出る窓の中に出る便を、比較する日付に走る便だけ減便前と減便後で数えたものです。facilities は、着く便か出る便が減便後に 0 便になる施設だけを、重要拠点の優先順位(priority_rank)・距離の順に上位 20 件まで(省いた数は facilities_omitted)。窓は始業・外来の受付などに間に合う時間帯の目安で、source が research なら調べた結果(basis に読んだ時刻、source_url に出典)、default なら既定の窓です。乗車人数・混み具合・鉄道との乗り継ぎは判定していません。'
 
 const DRIVERS_NOTE =
-  'drivers は、比較する日付の便を時刻順に勤務へつなぎ、改善基準告示の上限で区切った勤務の数(要る運転士の数の下限の目安)と営業運行時間を、減便前と減便後で比べたものです(画面の手順4「影響(到達圏)」の「要る運転士の数(目安)」と同じ計算)。欠員・在籍の運転士の数・営業所の位置・仮定は、利用者が画面の手順2「前提情報」の「運行の前提」の欄で入れた値です。判定(verdict)は「減便で減る勤務の数(前 − 後)」と欠員の比較だけです。目安であって、休息期間・休日・予備の要員・実際の仕業と交番は事業者が判断します。'
-
-const DRIVERS_ROSTER_NOTE =
-  'drivers.roster_check は、利用者が在籍の運転士の数(roster)を入れたときだけの参考です。available は乗務できる運転士の数(在籍 − 欠員。欠員を入れていなければ在籍のまま。欠員が在籍より多いときは 0 で、shortage_over_roster が true)、needed_duties は比べた勤務の数(目安。needed_basis が after なら減便後、before なら減便後の GTFS がないため減便前)、over は needed_duties が available を上回る数(上回らなければ 0)です。勤務の数は下限の目安のため、事業者の運用番号の数(operator_runs_before は入力の運用番号の数(参考))とは差があります。主な判定は verdict で、roster_check は判定を変えません。'
+  'drivers は、比較する日付の便を時刻順に勤務へつなぎ、改善基準告示の上限で区切った勤務の数(duties。要る運転士の数の下限の目安)と営業運行時間を、減便前と減便後で比べたものです(画面の手順4「影響(到達圏)」の「要る運転士の数(目安)」と同じ計算)。欠員・在籍の運転士の数・週の出勤日数・営業所の位置・仮定は、利用者が画面の手順2「前提情報」の「運行の前提」の欄で入れた値です。判定(verdict)は、乗務できる運転士の数(目安。supply.available = 在籍 × 週の出勤日数 ÷ 7 − 欠員。小数は切り捨て。欠員が未入力なら 0 として数える)と、減便後に要る勤務の数(needed_duties.after)の比較です。needed_duties.basis が operator_runs なら、減便前は入力の運用番号の数、減便後はそれに推定した勤務の数の比(duties.after / duties.before)を掛けた数(四捨五入)、estimate なら推定した勤務の数のままです。verdict の kind は enough(足りる目安。spare が余り)・short(足りない目安。missing が足りない数)・no_roster(在籍の運転士の数が未入力で判定なし)・not_weekday(比較する日付に平日ダイヤが走らない)・no_edited(減便後の GTFS がない)で、before_margin は減便前のままでの過不足(負なら足りない数)です。目安であって、休息期間・休日・予備の要員・実際の仕業と交番は事業者が判断します。'
 
 function sideJson(s: RoundTripSide): Record<string, unknown> {
   return { trips: s.trips, first: s.first, last: s.last }
@@ -1211,17 +1209,18 @@ function facilityAccessJson(
 /** 要る運転士の数の欄の今の値(ToolDeps.drivers を省いたとき) */
 function defaultDriverSettings(): DriverSettings {
   const s = useDriversStore.getState()
-  return { params: s.params, places: s.places, shortage: s.shortage, roster: s.roster }
+  return { params: s.params, places: s.places, shortage: s.shortage, roster: s.roster, workDays: s.workDays }
 }
 
 /**
  * summarize_impact の drivers(D06。指摘24)。数は store/drivers.ts の compareDrivers(画面の DriverPanel と同じ計算)。
- * verdict の kind は、no_edited(減便後の GTFS がない)・not_weekday(比較する日付に平日ダイヤが走らない)・no_shortage(欠員を
- * 入れていない)・enough(減る勤務の数 ≥ 欠員)・short(減る勤務の数 < 欠員。missing が足りない数)
+ * verdict の kind は、no_edited(減便後の GTFS がない)・not_weekday(比較する日付に平日ダイヤが走らない)・no_roster(在籍の
+ * 運転士の数を入れていない)・enough(乗務できる運転士の数 ≥ 減便後に要る勤務の数。spare が余り)・short(足りない。missing が
+ * 足りない数)。意味は notes の DRIVERS_NOTE で伝える
  */
 function driversJson(c: DriverComparison): Record<string, unknown> {
   const v = c.verdict
-  const kind = { noEdited: 'no_edited', notWeekday: 'not_weekday', noShortage: 'no_shortage', enough: 'enough', short: 'short' }[v.kind]
+  const kind = { noEdited: 'no_edited', notWeekday: 'not_weekday', noRoster: 'no_roster', enough: 'enough', short: 'short' }[v.kind]
   return {
     date: c.date,
     draft: c.draft,
@@ -1235,26 +1234,28 @@ function driversJson(c: DriverComparison): Record<string, unknown> {
     duties: { before: c.before.duties.dutyCount, after: c.after?.duties.dutyCount ?? null, diff: c.dutyDiff },
     operator_runs_before: c.operatorRuns,
     shortage: c.shortage,
+    needed_duties: {
+      basis: c.need.basis === 'operatorRuns' ? 'operator_runs' : 'estimate',
+      before: c.need.before,
+      after: c.need.after,
+    },
+    supply: c.supply
+      ? {
+          roster: c.supply.roster,
+          work_days_per_week: c.supply.workDays,
+          on_duty: c.supply.onDuty,
+          available: c.supply.available,
+          shortage_over_on_duty: c.supply.shortageOverOnDuty,
+        }
+      : null,
     verdict: {
       kind,
-      ...('reduced' in v ? { reduced: v.reduced } : {}),
-      ...('missing' in v ? { missing: v.missing } : {}),
+      ...(v.kind === 'enough' ? { spare: v.spare } : {}),
+      ...(v.kind === 'short' ? { missing: v.missing } : {}),
+      ...(v.kind === 'enough' || v.kind === 'short' ? { before_margin: v.beforeMargin } : {}),
     },
     places: c.placesEffect?.count ?? 0,
     assumptions: c.assumptions,
-    // 在籍の運転士の数を入れたときだけ足す(意味は notes の DRIVERS_ROSTER_NOTE)
-    ...(c.rosterCheck
-      ? {
-          roster_check: {
-            roster: c.rosterCheck.roster,
-            available: c.rosterCheck.available,
-            shortage_over_roster: c.rosterCheck.shortageOverRoster,
-            needed_duties: c.rosterCheck.needed,
-            needed_basis: c.rosterCheck.basis,
-            over: c.rosterCheck.over,
-          },
-        }
-      : {}),
   }
 }
 

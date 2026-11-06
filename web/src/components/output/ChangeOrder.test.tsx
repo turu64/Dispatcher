@@ -48,7 +48,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   act(() => useResearchStore.getState().reset())
-  act(() => useDriversStore.setState({ shortage: null, params: { ...DUTY_DEFAULTS }, places: [] }))
+  act(() => useDriversStore.setState({ shortage: null, roster: null, params: { ...DUTY_DEFAULTS }, places: [] }))
   act(() => useEditStore.getState().setBase(null))
   act(() => useReachStore.setState({ date: null }))
   vi.useRealTimers()
@@ -161,7 +161,10 @@ describe('ChangeOrder', () => {
 
   it('4. の欄に、要る運転士の数(目安)を承認済みの最後の版と期間の中の平日で比べて出す。平日に戻した便が無くても出し、下書きは反映しない(D04)', () => {
     commit(policy({ category: 'temporaryShortage', note: '' }))
-    act(() => useDriversStore.getState().setShortage(30))
+    act(() => {
+      useDriversStore.getState().setShortage(30)
+      useDriversStore.getState().setRoster(140)
+    })
     const base = useEditStore.getState().base!
     const expectedRow = () => {
       const version = lastVersion(useEditStore.getState())!
@@ -174,6 +177,7 @@ describe('ChangeOrder', () => {
         params: { ...DUTY_DEFAULTS },
         places: [],
         shortage: 30,
+        roster: 140,
       })
       return { date, c, row: `勤務の数(目安)${c.before.duties.dutyCount}${c.after!.duties.dutyCount}` }
     }
@@ -191,7 +195,9 @@ describe('ChangeOrder', () => {
     expect(summary.className).toContain('break-inside-avoid')
     expect(summary.textContent).toContain(`(${formatDateJa(first.date)}の便で比べた数)`)
     expect(summaryRow().startsWith(first.row)).toBe(true)
-    expect(within(summary).getByTestId('driver-summary-verdict').textContent).toContain('欠員 30 人:')
+    // 在籍 140 × 5 ÷ 7 = 100 から欠員 30 を引いた 70 と比べる
+    expect(within(summary).getByTestId('driver-summary-verdict').textContent).toContain('乗務できる運転士の数(目安)70 → ')
+    expect(within(summary).getByTestId('driver-summary-supply').textContent).toContain('欠員 30 を引いた 70 です。')
     expect(within(summary).getByRole('list', { name: '要る運転士の数の仮定' }).textContent).toContain('拘束時間は 13 時間以内')
 
     // 承認待ちの下書きは数に入れない

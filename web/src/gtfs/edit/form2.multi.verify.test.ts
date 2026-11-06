@@ -148,7 +148,8 @@ function errorsOf(base: GtfsFeed, result: Form2Result, holidays: HolidayList) {
   return validateEdit(base, result, holidays).filter((i) => i.severity === 'error')
 }
 
-describe.skipIf(!hasData(KYOTO))('京都市営バス:形2の複数 service', () => {
+// 京都・北海道中央バスは便が多く、テストを並べて走らせると 5 秒を超えることがあるので、1件の時間の上限を 60 秒にする
+describe.skipIf(!hasData(KYOTO))('京都市営バス:形2の複数 service', { timeout: 60_000 }, () => {
   let feed: GtfsFeed
   let holidays: HolidayList
   let services: PolicyServices
@@ -303,7 +304,7 @@ describe.skipIf(!hasData(KYOTO))('京都市営バス:形2の複数 service', () 
   })
 })
 
-describe.skipIf(!hasData(CHUO))('北海道中央バス:形2の複数 service', () => {
+describe.skipIf(!hasData(CHUO))('北海道中央バス:形2の複数 service', { timeout: 60_000 }, () => {
   let feed: GtfsFeed
   let holidays: HolidayList
 

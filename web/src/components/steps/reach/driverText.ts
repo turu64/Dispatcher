@@ -65,10 +65,19 @@ export function verdictText(verdict: DriverVerdict, date: string): string {
     case 'notWeekday':
       return notWeekdayText(date)
     case 'noShortage':
+      if (verdict.reduced < 0) return `減便後のほうが、勤務の数(目安)が ${-verdict.reduced} 多くなります。`
+      if (verdict.reduced === 0) return '減便の前後で、勤務の数(目安)は変わりません。'
       return `減便で減る勤務の数(目安)は ${verdict.reduced} です。`
     case 'enough':
       return `減便で減る勤務の数(目安)${verdict.reduced} ≥ 欠員 ${verdict.shortage} → 足りる目安です。`
     case 'short':
+      // 減便で勤務の数が減らない(増える・変わらない)ときは、負の数や 0 を「減る数」として出さない
+      if (verdict.reduced < 0) {
+        return `減便後のほうが、勤務の数(目安)が ${-verdict.reduced} 多くなります。欠員 ${verdict.shortage} に対して、あと ${verdict.missing} 足りない目安です。`
+      }
+      if (verdict.reduced === 0) {
+        return `減便の前後で、勤務の数(目安)は変わりません。欠員 ${verdict.shortage} に対して、あと ${verdict.missing} 足りない目安です。`
+      }
       return `減便で減る勤務の数(目安)${verdict.reduced} < 欠員 ${verdict.shortage} → あと ${verdict.missing} 足りない目安です。`
   }
 }

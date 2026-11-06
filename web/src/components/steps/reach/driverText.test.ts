@@ -28,6 +28,17 @@ describe('verdictText(欠員との比較の文)', () => {
     )
   })
 
+  it('減便で勤務の数が増える・変わらないときは、負の数や 0 を「減る数」として書かない', () => {
+    expect(verdictText({ kind: 'short', reduced: -1, shortage: 5, missing: 6 }, '20261104')).toBe(
+      '減便後のほうが、勤務の数(目安)が 1 多くなります。欠員 5 に対して、あと 6 足りない目安です。',
+    )
+    expect(verdictText({ kind: 'short', reduced: 0, shortage: 5, missing: 5 }, '20261104')).toBe(
+      '減便の前後で、勤務の数(目安)は変わりません。欠員 5 に対して、あと 5 足りない目安です。',
+    )
+    expect(verdictText({ kind: 'noShortage', reduced: -2 }, '20261104')).toBe('減便後のほうが、勤務の数(目安)が 2 多くなります。')
+    expect(verdictText({ kind: 'noShortage', reduced: 0 }, '20261104')).toBe('減便の前後で、勤務の数(目安)は変わりません。')
+  })
+
   it('平日でない日は、前後で差が無いことと、平日の日付の選び方を書く', () => {
     const text = verdictText({ kind: 'notWeekday' }, '20261107')
     expect(text).toContain('2026年11月7日(土)')

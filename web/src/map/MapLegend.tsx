@@ -131,7 +131,7 @@ export default function MapLegend({
         {showStations && (
           <li className="flex items-center gap-2">
             <StationMark />
-            鉄道駅(すべての時間帯で使えるとみなす)
+            鉄道駅
           </li>
         )}
       </ul>

@@ -279,7 +279,7 @@ docker compose ps
 
 ## 7. デモの調査結果を取り込む
 
-画面の前提情報の手順にある「保存済みの結果(デモ)を使う」は、サーバーの SQLite に入れた結果を読みます。`data/demo/research_dohoku.json`(道北バスの周辺の 30 件。コミット済み)を取り込みます。
+画面の前提情報の手順にある「保存済みの結果(デモ)を使う」は、サーバーの SQLite に入れた結果を読みます。`data/demo/research_dohoku.json`(道北バスの周辺の 25 件。コミット済み)を取り込みます。
 
 `data/` はイメージに入っていないので、ファイルをコンテナにコピーしてから、server のコンテナの中で取り込みます。
 
@@ -293,9 +293,9 @@ docker compose exec server dispatcher-research-seed /tmp/research_dohoku.json
 
 確かめる点:
 
-- 出力が「デモ用の調査の結果を 30 件入れました(origin: demo。…)」
+- 出力が「デモ用の調査の結果を 25 件入れました(origin: demo。…)」
 - 「取り込めませんでした」と出たときは、参照データ(`data/out/ref/facilities/`)が `/data/ref` にあるか確かめる。取り込みは参照データに無い対象を断ります
-- `curl -s http://127.0.0.1:8080/api/research/demo | jq '.results | length'` が 30
+- `curl -s http://127.0.0.1:8080/api/research/demo | jq '.results | length'` が 25
 
 ## 8. 外側の nginx と HTTPS
 
@@ -414,7 +414,7 @@ docker compose exec server sh -c 'test -n "$TYPESAFE_AI_VERCEL_KEY" && echo jev-
 ブラウザで `https://dispatcher.turutaru.com/` を開いて確かめます。
 
 1. 「サンプルを読み込む」で道北バスが読み込まれ、出典が出る
-2. 前提情報の手順で、保存済みの結果(デモ)が選べて、30 件が出る
+2. 前提情報の手順で、保存済みの結果(デモ)が選べて、25 件が出る
 3. 減便の方針(平日を土曜ダイヤに)を適用し、地図に到達圏が出る
 4. 出力の手順で ZIP を出力でき、検証に error が出ない
 5. **AI が使える状態になる**(AI の欄に「AI は使えません」が出ない)。最初の発言の後に「AI を準備しています…(最初は 15 秒ほどかかります)」が出て、そのあと会話できる

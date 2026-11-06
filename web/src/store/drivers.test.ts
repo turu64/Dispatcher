@@ -352,8 +352,8 @@ describe('compareDrivers(減便の前後と乗務できる運転士の数の比�
     expect(extended.verdict).toMatchObject({ kind: 'enough', needed: 1, beforeNeeded: 1, beforeMargin: 0 })
     // 場所を置かなければ、置く前と後の比較は出さない
     expect(c1.placesEffect).toBeNull()
-    // 停留所から約 50km 離れた営業所を置くと、出庫・入庫の回送(片道 2 時間 10 分)が拘束と運転に加わり、勤務が分かれる
-    const far = [{ id: 'p1', type: 'office' as const, name: '営業所', lat: 44.21, lon: 142.36 }]
+    // 停留所から約 100km 離れた営業所を置くと、出庫の回送(片道 約 4 時間 20 分)だけで連続運転の上限を超え、どの便も1便だけの勤務になる
+    const far = [{ id: 'p1', type: 'office' as const, name: '営業所', lat: 44.66, lon: 142.36 }]
     const placed = compareDrivers({ ...input(4), places: far })
     expect(placed.placesEffect).toEqual({
       count: 1,
@@ -489,11 +489,11 @@ describe.skipIf(!existsSync(BEFORE_ZIP) || !existsSync(AFTER_ZIP))('compareDrive
     expect(count([office])).toBeGreaterThanOrEqual(count([]))
   })
 
-  it('網から遠い営業所を置くと勤務の数が跳ね上がり、上限を超えた勤務と回送が長すぎる勤務を数える', () => {
+  it('網から遠い営業所を置くと勤務の数が増え、どの勤務も回送が長すぎる勤務に数える', () => {
+    // 旭川駅前から約 50km 北の営業所。2026-11-06 につなぎ方を作り直した後は 114(作り直す前は 400 超。終点で休んでから入庫するので上限は超えない)
     const far = { id: 'p1', type: 'office' as const, name: '遠い営業所', lat: 44.21, lon: 142.36 }
     const c = compareDrivers(inputOf(base, null, WEDNESDAY, { places: [far] }))
-    expect(c.before.duties.dutyCount).toBeGreaterThan(400)
-    expect(c.before.duties.overLimitDuties).toBeGreaterThan(0)
+    expect(c.before.duties.dutyCount).toBeGreaterThan(100)
     expect(c.before.duties.longDeadheadDuties).toBe(c.before.duties.dutyCount)
   })
 })

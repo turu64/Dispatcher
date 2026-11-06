@@ -22,14 +22,25 @@ import { compareStrings } from './signature'
  * - 拘束時間:出庫前の点呼(30 分)から入庫後の点呼(15 分)まで 13 時間以内(延長の上限の 15 時間に切り替えられる)。
  *   places に営業所があれば、最初の停留所・最後の停留所と最寄りの営業所の間の回送を足す(運転時間と連続運転にも入れる)
  * - 運転時間:9 時間以内(2日平均で1日9時間の基準を、その日だけに当てはめた目安)
- * - 連続運転:4 時間以内。10 分以上のすき間を合わせて 30 分になったら、連続運転を数え直す
- * - 休憩の場所:places に営業所(休憩施設もある)が1つでもあれば、営業所の params.placeRadiusM 以内の停留所(前の便の終着か
- *   次の便の始発)でのすき間だけを休憩に数える。営業所が無ければ、どの停留所のすき間も休憩に数える
+ * - 連続運転:4 時間以内。10 分以上のすき間を合わせて 30 分になったら、連続運転を数え直す。すき間はどの停留所でも休憩
+ *   (運転の中断)に数える(終点での折り返しの待ちで中断を取る形。改善基準告示は中断の場所を決めていない)
+ * - 営業所があるとき(2026-11-06 に作り直した。前は営業所の近くのすき間だけを休憩に数え、勤務が細切れになっていた):
+ *   - 待つ場所:営業所の params.placeRadiusM 以内でない停留所(前の便の終着も次の便の始発も遠い)で待つのは
+ *     params.maxRemoteWaitMin 分までとする。それより長いすき間(中休)は、営業所へ回送して休み、また回送して次の便に乗る
+ *     (往復の合計が最も短い営業所。往復の回送は運転時間と連続運転に入れ、すき間から往復の回送を除いた残りが
+ *     params.minBreakMin 分以上のときだけつなぐ。残りは休憩に数える)。待つ時間の上限の中でも、営業所で休むほうが連続運転が
+ *     短くなる(数え直せる)なら営業所で休む
+ *   - 入庫できるか:その便で終えると入庫の回送で上限を超える便(営業所から遠い終点へ行く便。道北バスの旭川駅前 → 留萌十字街など)も
+ *     勤務の始まりにでき、入庫まで含めて条件を満たす便(営業所の近くへ戻る便)をつなげば上限の中に収まる。便を足すのは、
+ *     足した後に入庫まで含めて条件を満たすときだけ
+ *   - 出庫・入庫の回送と便を合わせて連続運転の上限を超えるときは、最初の停留所に params.breakResetMin 分早く着いて休むか、
+ *     最後の停留所で params.breakResetMin 分休んでから入庫するとみなす(拘束時間に入れる。休んでも回送だけで上限を超えるなら上限超え)
  * - 事業場外の休憩(営業所の外での休憩)の合計の上限(3 時間)は任意の条件で、既定は使わない
- * - どの勤務も、その便で終えても条件を満たすように足す(入庫の回送と点呼まで含めて確かめる)。1便だけで条件を超える便は、
- *   その便だけの勤務にして overLimit に印を付ける
+ * - 入庫の回送と点呼まで含めて条件の中で終えられなかった勤務(1便だけで入庫を除いた条件を超える便は、その便だけの勤務にする)に
+ *   overLimit の印を付ける
  * - 出庫か入庫の回送が片道 LONG_DEPOT_DEADHEAD_MIN 分を超える勤務を数える(longDeadheadDuties)。営業所が路線から遠いと、
- *   回送だけで上限に近づいて勤務が細かく分かれ、数が跳ね上がる(道北バスで遠い営業所を1つ置くと 79 → 400 超。回送 30km/h)。画面で注意に出す
+ *   回送だけで上限に近づいて勤務が細かく分かれ、数が跳ね上がる。画面で注意に出す
+ * - 営業所なしの数は作り直しの前と同じ(営業所が無ければ、どの停留所でも待つ時間の上限なしに休め、入庫の回送は 0)
  *
  * 車両の数の下限の目安:法令の条件を外し、折り返しと回送だけで同じ手順でつないだ数(chained)と、同時に営業運行中の便の
  * 最大(maxConcurrent)。
@@ -65,6 +76,11 @@ export interface DutyParams {
   placeRadiusM: number
   /** 事業場外の休憩の合計の上限(分)。null なら使わない */
   offSiteBreakMaxMin: number | null
+  /**
+   * 営業所が1つでもあるとき、営業所の近くでない停留所で待つすき間の上限(分)。これより長いすき間は営業所へ回送して休む。
+   * null なら上限なし。営業所が無ければ使わない
+   */
+  maxRemoteWaitMin: number | null
 }
 
 export const DUTY_DEFAULTS: DutyParams = {
@@ -81,6 +97,7 @@ export const DUTY_DEFAULTS: DutyParams = {
   deadheadKmh: 30,
   placeRadiusM: 300,
   offSiteBreakMaxMin: null,
+  maxRemoteWaitMin: 90,
 }
 
 /** 事業場外の休憩の上限の目安(分。通達。任意の条件で使うときの値) */
@@ -91,7 +108,7 @@ export const LONG_DEPOT_DEADHEAD_MIN = 60
 
 /**
  * 利用者が足す営業所(2026-11-06 に種類を営業所1つにまとめた)。出庫・入庫と点呼の場所で、休憩施設もある。
- * 1つでも置くと、出庫・入庫の回送をその場所との間で数え、休憩はその近くのすき間だけに数える
+ * 1つでも置くと、出庫・入庫の回送をその場所との間で数え、営業所から遠い停留所で長く待つすき間は営業所へ戻って休むとみなす
  */
 export interface DutyPlace {
   name: string
@@ -130,7 +147,7 @@ export interface Duty {
   lastStopName: string
   /** つないだ便(出発の順) */
   tripIds: string[]
-  /** 1便だけで条件を超える便の勤務 */
+  /** 入庫の回送と点呼まで含めて条件の中で終えられなかった勤務。便を足すのは条件を満たすときだけなので、いつも1便だけの勤務 */
   overLimit: boolean
 }
 
@@ -139,7 +156,7 @@ export interface DutyEstimate {
   dutyCount: number
   /** 勤務(最初の便の出発の順) */
   duties: Duty[]
-  /** 1便だけで条件を超えた勤務の数 */
+  /** 入庫の回送と点呼まで含めて条件の中で終えられなかった勤務の数 */
   overLimitDuties: number
   /** 出庫か入庫の回送が片道 LONG_DEPOT_DEADHEAD_MIN 分を超える勤務の数 */
   longDeadheadDuties: number
@@ -211,8 +228,8 @@ interface Stop {
   point: { lat: number; lon: number } | null
   /** 最寄りの営業所との回送(秒)。営業所が無いか座標が無ければ 0 */
   depotSec: number
-  /** 休憩に数える停留所か(営業所の近く。営業所が無ければどこでも) */
-  breakOk: boolean
+  /** 待つ時間の上限なしに待てる停留所か(営業所の近く。営業所が無ければどこでも) */
+  waitOk: boolean
   /** 営業所の近くか(事業場外の休憩の判定) */
   nearDepot: boolean
 }
@@ -238,6 +255,14 @@ interface State {
   overLimit: boolean
 }
 
+/** 営業所へ戻って休むときの回送(秒) */
+interface Via {
+  /** 前の便の終着から営業所 */
+  to: number
+  /** 営業所から次の便の始発 */
+  from: number
+}
+
 interface ChainOptions {
   /** 法令の条件を確かめるか(false なら折り返しと回送だけ) */
   limits: boolean
@@ -249,10 +274,10 @@ class Chainer {
   private readonly turnSec: number
   private readonly sameStopM: number
   private readonly metersPerSec: number
-  /** 出庫・入庫の場所(営業所) */
+  /** 出庫・入庫と、長いすき間に休む場所(営業所) */
   private readonly depots: readonly DutyPlace[]
-  /** 休憩の場所(営業所)。営業所が無ければ null(どこでも休憩に数える) */
-  private readonly breakPlaces: readonly DutyPlace[] | null
+  /** 停留所の組ごとの、営業所へ戻って休むときの回送(viaDepot) */
+  private readonly viaCache = new Map<string, Via | null>()
   private readonly stopPoints: ReadonlyMap<string, StopPoint>
   private readonly p: DutyParams
   stopsWithoutPoint = 0
@@ -264,7 +289,6 @@ class Chainer {
     this.sameStopM = p.sameStopM
     this.metersPerSec = (p.deadheadKmh * 1000) / 3600
     this.depots = places
-    this.breakPlaces = places.length > 0 ? places : null
   }
 
   stop(id: string): Stop {
@@ -284,7 +308,7 @@ class Chainer {
       key: nameKey(sp?.name ?? ''),
       point,
       depotSec,
-      breakOk: this.breakPlaces === null || near(this.breakPlaces),
+      waitOk: this.depots.length === 0 || near(this.depots),
       nearDepot: near(this.depots),
     }
     this.stops.set(id, stop)
@@ -309,8 +333,10 @@ class Chainer {
     const last = this.stop(leg.lastStopId)
     const out = opts.limits ? first.depotSec : 0
     const run = leg.arr - leg.dep
+    // 出庫の回送と便で連続運転の上限を超えるなら、最初の停留所に早めに着いて休む(休憩で連続運転を数え直す)
+    const restFirst = out > 0 && out + run > this.p.maxContinuousMin * 60 && out <= this.p.maxContinuousMin * 60
     const state: State = {
-      startSec: leg.dep - out - (opts.limits ? this.p.preCheckMin * 60 : 0),
+      startSec: leg.dep - out - (opts.limits ? this.p.preCheckMin * 60 : 0) - (restFirst ? this.p.breakResetMin * 60 : 0),
       firstDep: leg.dep,
       lastArr: leg.arr,
       firstStop: first,
@@ -318,14 +344,15 @@ class Chainer {
       driving: out + run,
       deadhead: out,
       pullOut: out,
-      continuous: out + run,
+      continuous: restFirst ? run : out + run,
       breakSum: 0,
-      maxContinuous: out + run,
+      maxContinuous: restFirst ? Math.max(out, run) : out + run,
       offSite: 0,
       tripIds: [leg.tripId],
       overLimit: false,
     }
-    if (opts.limits) state.overLimit = !this.withinLimits(state)
+    // 入庫を除いた条件を1便だけで超える便には、ほかの便を足さない。入庫まで含めた条件は勤務を終えるとき(finish)に確かめる
+    if (opts.limits) state.overLimit = !this.running(state)
     return state
   }
 
@@ -335,18 +362,30 @@ class Chainer {
     const dh = this.between(s.lastStop, first)
     if (dh === null) return null
     const gap = leg.dep - s.lastArr
-    if (gap < this.turnSec + dh) return null
     const last = this.stop(leg.lastStopId)
-    if (!opts.limits) return { ...s, lastArr: leg.arr, lastStop: last, tripIds: [...s.tripIds, leg.tripId] }
+    if (!opts.limits) {
+      if (gap < this.turnSec + dh) return null
+      return { ...s, lastArr: leg.arr, lastStop: last, tripIds: [...s.tripIds, leg.tripId] }
+    }
     // 1便だけで条件を超えた勤務には、ほかの便を足さない
     if (s.overLimit) return null
+    const run = leg.arr - leg.dep
+    const waitOk = s.lastStop.waitOk || first.waitOk
+    const direct = gap < this.turnSec + dh ? null : this.waitThere(s, first, last, leg, gap, dh, run, waitOk)
+    // 営業所へ戻って休むのは、営業所があり、前の便の終着も次の便の始発も営業所から遠いときだけ
+    const depot = waitOk ? null : this.restAtDepot(s, first, last, leg, gap, run)
+    if (direct && depot) return depot.continuous < direct.continuous ? depot : direct
+    return direct ?? depot
+  }
 
+  /** すき間を停留所で待つ(別の停留所なら、すき間 → 回送 → 次の便) */
+  private waitThere(s: State, first: Stop, last: Stop, leg: TripLeg, gap: number, dh: number, run: number, waitOk: boolean): State | null {
     const idle = gap - dh
+    if (!waitOk && this.p.maxRemoteWaitMin !== null && idle > this.p.maxRemoteWaitMin * 60) return null
     let continuous = s.continuous
     let breakSum = s.breakSum
     let offSite = s.offSite
-    const isBreak = idle >= this.p.minBreakMin * 60 && (s.lastStop.breakOk || first.breakOk)
-    if (isBreak) {
+    if (idle >= this.p.minBreakMin * 60) {
       breakSum += idle
       if (!(s.lastStop.nearDepot || first.nearDepot)) offSite += idle
       if (breakSum >= this.p.breakResetMin * 60) {
@@ -354,7 +393,6 @@ class Chainer {
         breakSum = 0
       }
     }
-    const run = leg.arr - leg.dep
     continuous += dh + run
     const next: State = {
       ...s,
@@ -368,18 +406,93 @@ class Chainer {
       offSite,
       tripIds: [...s.tripIds, leg.tripId],
     }
-    return this.withinLimits(next) ? next : null
+    return this.accepts(next) ? next : null
+  }
+
+  /** 営業所へ回送して休み、また回送して次の便に乗る。すき間から往復の回送を除いた残りが休憩の最小に満たなければ null */
+  private restAtDepot(s: State, first: Stop, last: Stop, leg: TripLeg, gap: number, run: number): State | null {
+    const via = this.viaDepot(s.lastStop, first)
+    if (via === null) return null
+    const idle = gap - via.to - via.from
+    if (idle < Math.max(this.p.minBreakMin * 60, this.turnSec)) return null
+    // 営業所に着くまでの連続運転
+    const before = s.continuous + via.to
+    if (before > this.p.maxContinuousMin * 60) return null
+    let continuous = before
+    let breakSum = s.breakSum + idle
+    if (breakSum >= this.p.breakResetMin * 60) {
+      continuous = 0
+      breakSum = 0
+    }
+    continuous += via.from + run
+    const next: State = {
+      ...s,
+      lastArr: leg.arr,
+      lastStop: last,
+      driving: s.driving + via.to + via.from + run,
+      deadhead: s.deadhead + via.to + via.from,
+      continuous,
+      breakSum,
+      maxContinuous: Math.max(s.maxContinuous, before, continuous),
+      tripIds: [...s.tripIds, leg.tripId],
+    }
+    return this.accepts(next) ? next : null
+  }
+
+  /** 停留所 a から営業所へ回送し、営業所から停留所 b へ回送する時間。往復の合計が最も短い営業所。座標が無ければ null */
+  private viaDepot(a: Stop, b: Stop): Via | null {
+    const key = `${a.id}\u0000${b.id}`
+    const cached = this.viaCache.get(key)
+    if (cached !== undefined) return cached
+    let best: Via | null = null
+    if (a.point && b.point) {
+      for (const d of this.depots) {
+        const to = this.deadheadSec(distanceM(a.point, d))
+        const from = this.deadheadSec(distanceM(d, b.point))
+        if (!best || to + from < best.to + best.from || (to + from === best.to + best.from && to < best.to)) best = { to, from }
+      }
+    }
+    this.viaCache.set(key, best)
+    return best
+  }
+
+  /**
+   * 便を足した状態 next を受け入れるか。入庫の回送と点呼まで含めて条件を満たすときだけ受け入れる。足す前の勤務は満たして
+   * いなくてもよい(営業所から遠い終点へ行った便の後に、営業所の近くへ戻る便をつなぐ)
+   */
+  private accepts(next: State): boolean {
+    return this.withinLimits(next)
+  }
+
+  /** 入庫の回送を除いて(点呼は含めて)条件を満たすか。営業所が無ければ withinLimits と同じ */
+  private running(s: State): boolean {
+    return this.satisfies(s, 0)
   }
 
   /** この便で勤務を終えても(入庫の回送と点呼まで)条件を満たすか */
   private withinLimits(s: State): boolean {
-    const back = s.lastStop.depotSec
-    const end = s.lastArr + back + this.p.postCheckMin * 60
+    return this.satisfies(s, s.lastStop.depotSec)
+  }
+
+  private satisfies(s: State, back: number): boolean {
+    const rest = this.restBeforeIn(s, back)
+    if (rest === null) return false
+    const end = s.lastArr + rest + back + this.p.postCheckMin * 60
     if (end - s.startSec > this.p.maxBoundMin * 60) return false
     if (s.driving + back > this.p.maxDrivingMin * 60) return false
-    if (s.continuous + back > this.p.maxContinuousMin * 60) return false
-    if (this.p.offSiteBreakMaxMin !== null && s.offSite > this.p.offSiteBreakMaxMin * 60) return false
+    if (this.p.offSiteBreakMaxMin !== null && s.offSite + (s.lastStop.nearDepot ? 0 : rest) > this.p.offSiteBreakMaxMin * 60) return false
     return true
+  }
+
+  /**
+   * 入庫の前に最後の停留所で休む時間(秒)。連続運転に入庫の回送を足して上限を超えるなら、休憩で数え直してから入庫する。
+   * 休んでも入庫の回送だけで上限を超えるなら null
+   */
+  private restBeforeIn(s: State, back: number): number | null {
+    const max = this.p.maxContinuousMin * 60
+    if (s.continuous > max) return null
+    if (s.continuous + back <= max) return 0
+    return back <= max ? this.p.breakResetMin * 60 : null
   }
 
   /** 区間を出発の順につなぐ(入力の順にはよらない) */
@@ -403,14 +516,15 @@ class Chainer {
 
   finish(s: State): Duty {
     const back = s.lastStop.depotSec
-    const end = s.lastArr + back + this.p.postCheckMin * 60
+    const rest = this.restBeforeIn(s, back) ?? 0
+    const end = s.lastArr + rest + back + this.p.postCheckMin * 60
     return {
       boundMin: Math.round((end - s.startSec) / 60),
       drivingMin: Math.round((s.driving + back) / 60),
       deadheadMin: Math.round((s.deadhead + back) / 60),
       pullOutMin: Math.round(s.pullOut / 60),
       pullInMin: Math.round(back / 60),
-      maxContinuousMin: Math.round(Math.max(s.maxContinuous, s.continuous + back) / 60),
+      maxContinuousMin: Math.round(Math.max(s.maxContinuous, rest > 0 ? back : s.continuous + back) / 60),
       trips: s.tripIds.length,
       start: clock(s.startSec),
       end: clock(end),
@@ -419,7 +533,7 @@ class Chainer {
       lastStopId: s.lastStop.id,
       lastStopName: s.lastStop.name,
       tripIds: s.tripIds,
-      overLimit: s.overLimit,
+      overLimit: s.overLimit || !this.withinLimits(s),
     }
   }
 }
@@ -470,9 +584,18 @@ export function dutyAssumptions(p: DutyParams, places: readonly DutyPlace[] = []
     `運転時間は ${hoursText(p.maxDrivingMin)}以内(改善基準告示 第5条の「2日平均で1日 9 時間以内」を、この日だけに当てはめた目安)`,
     `連続運転は ${hoursText(p.maxContinuousMin)}以内とし、${p.minBreakMin} 分以上のすき間を合わせて ${p.breakResetMin} 分になったら数え直します(改善基準告示 第5条)`,
     offices > 0
-      ? `休憩は、営業所の ${p.placeRadiusM}m 以内の停留所でのすき間だけに数えます`
+      ? p.maxRemoteWaitMin === null
+        ? 'どの停留所でのすき間も休憩に数え、営業所から遠い停留所で待つ時間の上限は使いません'
+        : `どの停留所でのすき間も休憩に数えます。ただし営業所の ${p.placeRadiusM}m 以内でない停留所で待つのは ${hoursText(p.maxRemoteWaitMin)}までとし、` +
+          `それより長いすき間は、営業所へ回送して休み、また回送して次の便に乗るとみなします(往復の回送は運転時間に入れ、残りが ${p.minBreakMin} 分以上のときだけつなぎます)`
       : '営業所の位置がないため、どの停留所でのすき間も休憩に数えます',
   ]
+  if (offices > 0) {
+    lines.push(
+      'その便で終えると入庫の回送で上限を超える勤務(営業所から遠い終点へ行く便)は、上限の中で入庫できる便までつなぎます。' +
+        `出庫・入庫の回送と便を合わせて連続運転の上限を超えるときは、最初の停留所に早めに着くか、最後の停留所で ${p.breakResetMin} 分休んでから入庫するとみなします`,
+    )
+  }
   if (p.offSiteBreakMaxMin !== null) {
     lines.push(`営業所の外での休憩は、合わせて ${hoursText(p.offSiteBreakMaxMin)}以内とします`)
   }

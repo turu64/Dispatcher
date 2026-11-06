@@ -83,7 +83,7 @@ describe('PlacesEditorView(営業所を置く欄)', () => {
     expect(screen.queryByRole('button', { name: /道北バスのサンプル/ })).toBeNull()
     expect(screen.queryByRole('radio')).toBeNull()
     expect(editor.textContent).not.toMatch(/車庫|休憩施設/)
-    expect(editor.textContent).toContain('営業所を1つでも置くと、営業所の近くの停留所でのすき間だけを休憩に数えます。')
+    expect(editor.textContent).toContain('営業所を1つでも置くと、営業所から遠い停留所で 1 時間 30 分より長く待つすき間は、営業所へ戻って休むとみなします。')
   })
 
   it('「地図で営業所を置く」を押すと、営業所を置き始める', () => {
@@ -187,8 +187,8 @@ describe('DriverView の、置く前と後の勤務の数', () => {
 
   it('場所を置くと、表の下に置く前と後の勤務の数を出す(置かなければ出さない)', () => {
     const base = shuttle()
-    // 約 50km 離れた営業所:出庫・入庫の回送が加わり、運転時間 9 時間を超えるので勤務が分かれる
-    const far: UserPlace = { id: 'g', type: 'office', name: '遠い営業所', lat: 44.21, lon: 142.36 }
+    // 約 100km 離れた営業所:出庫の回送(約 4 時間 20 分)だけで連続運転の上限を超えるので、どの便も1便だけの勤務になる
+    const far: UserPlace = { id: 'g', type: 'office', name: '遠い営業所', lat: 44.66, lon: 142.36 }
     const input = { base, edited: null, date: '20261104', weekdayServices: null, params: { ...DUTY_DEFAULTS }, shortage: null }
     const without = compareDrivers({ ...input, places: [] })
     const placed = compareDrivers({ ...input, places: [far] })

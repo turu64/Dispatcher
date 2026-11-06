@@ -107,7 +107,7 @@ describe('driverCaveats(断り書き)', () => {
     ]).join('\n')
     expect(text).toContain('拘束 15 時間')
     expect(text).toContain('最寄りの営業所との直線距離')
-    expect(text).toContain('前の便の終着か次の便の始発のどちらかが営業所の近くなら')
+    expect(text).toContain('営業所から遠い停留所で 1 時間 30 分より長く待つすき間は営業所へ戻って休む')
     // 車庫・休憩施設の語は使わない
     expect(text).not.toMatch(/車庫|休憩施設/)
     expect(driverCaveats(DUTY_DEFAULTS).join('\n')).not.toMatch(/車庫|休憩施設/)

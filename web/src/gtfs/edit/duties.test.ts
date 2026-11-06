@@ -14,13 +14,17 @@ import { feedOf } from './form2.fixture'
 import type { TripLeg } from './serviceHours'
 
 const A = { lat: 43.77, lon: 142.36 }
-/** 停留所。A2 は A と名前が同じ(空白と全角の違いだけ)で 500m 離れる。N は A から 200m。B は A から約 2km(回送 約 5.2 分) */
+/**
+ * 停留所。A2 は A と名前が同じ(空白と全角の違いだけ)で 500m 離れる。N は A から 200m。B は A から約 2km(回送 約 5.2 分)。
+ * F は A から約 60km(回送 約 156 分。道北バスの留萌十字街のような、営業所から遠い終点)
+ */
 const STOPS = new Map<string, StopPoint>([
   ['A', { name: '駅前', point: A }],
   ['A2', { name: '駅 前', point: { lat: A.lat + 0.0045, lon: A.lon } }],
   ['N', { name: '近く', point: { lat: A.lat + 0.0018, lon: A.lon } }],
   ['B', { name: '団地', point: { lat: A.lat + 0.018, lon: A.lon } }],
   ['X', { name: '座標なし', point: null }],
+  ['F', { name: '遠い終点', point: { lat: A.lat + 0.54, lon: A.lon } }],
 ])
 
 /** 'HH:MM' を秒に */
@@ -141,12 +145,94 @@ describe('estimateDuties:営業所', () => {
     expect(tripsPerDuty(legs)).toEqual([5])
   })
 
-  it('営業所があれば、その 300m 以内の停留所でのすき間だけを休憩に数える', () => {
+  it('営業所があっても、どの停留所でのすき間も休憩に数える', () => {
+    // 営業所は団地(B)だけで、駅前(A)は営業所から遠い。30 分のすき間は待つ時間の上限(90 分)の中なので、駅前で休む
     const far: DutyPlace[] = [{ name: '団地の営業所', ...STOPS.get('B')!.point! }]
-    expect(tripsPerDuty(legs, {}, far)).toEqual([4, 1])
-    const near: DutyPlace[] = [...far, { name: '駅の営業所', lat: A.lat + 0.001, lon: A.lon }]
-    expect(tripsPerDuty(legs, {}, near)).toEqual([5])
-    expect(dutyAssumptions(DUTY_DEFAULTS, far).join('\n')).toContain('休憩は、営業所の 300m 以内の停留所でのすき間だけに数えます')
+    expect(tripsPerDuty(legs, {}, far)).toEqual([5])
+    const lines = dutyAssumptions(DUTY_DEFAULTS, far).join('\n')
+    expect(lines).toContain('どの停留所でのすき間も休憩に数えます。ただし営業所の 300m 以内でない停留所で待つのは 1 時間 30 分までとし')
+    expect(lines).toContain('営業所へ回送して休み、また回送して次の便に乗るとみなします(往復の回送は運転時間に入れ、残りが 10 分以上のときだけつなぎます)')
+    expect(lines).toContain('上限の中で入庫できる便までつなぎます')
+    expect(dutyAssumptions({ ...DUTY_DEFAULTS, maxRemoteWaitMin: null }, far).join('\n')).toContain('待つ時間の上限は使いません')
+  })
+
+  it('営業所から遠い停留所で 90 分より長く待つすき間は、営業所へ回送して休み、往復の回送を運転時間に入れる', () => {
+    // 駅前で 2 時間のすき間。営業所は団地(片道 約 5.2 分)
+    const pair = [leg('a', '06:00', '07:00'), leg('b', '09:00', '10:00')]
+    const office: DutyPlace[] = [{ name: '団地の営業所', ...STOPS.get('B')!.point! }]
+    const est = estimateDuties(pair, STOPS, {}, office)
+    expect(est.dutyCount).toBe(1)
+    // 出庫・入庫の 約 5.2 分ずつと、営業所への往復の 約 10.4 分(秒で切り上げ)
+    expect(est.duties[0].deadheadMin).toBe(21)
+    expect(est.duties[0].drivingMin).toBe(120 + 21)
+    // 待つ時間の上限を使わなければ、駅前で待つ(回送は出庫・入庫だけ)
+    expect(estimateDuties(pair, STOPS, { maxRemoteWaitMin: null }, office).duties[0].deadheadMin).toBe(10)
+    // 営業所が駅前の近くなら、営業所の近くで待つ
+    const near: DutyPlace[] = [{ name: '駅の営業所', ...A }]
+    expect(estimateDuties(pair, STOPS, {}, near).duties[0].deadheadMin).toBe(0)
+    // 営業所が遠く(片道 約 72 分)、往復の回送がすき間に収まらなければ、つながない
+    const far: DutyPlace[] = [{ name: '遠い営業所', lat: A.lat + 0.25, lon: A.lon }]
+    expect(tripsPerDuty(pair, {}, far)).toEqual([1, 1])
+    // 営業所が無ければ、待つ時間の上限は使わない
+    expect(tripsPerDuty(pair)).toEqual([2])
+  })
+
+  it('営業所で休むと、往復の回送の後に連続運転を数え直す', () => {
+    // 55 分の便を 9 分の折り返しで 4 便(連続運転 220 分)の後、駅前で 100 分のすき間を空けて 55 分の便。
+    // 駅前で待つのは上限の 90 分を超えるので、団地の営業所へ往復して休む(往復 約 10.4 分)。
+    // 営業所に着くまでの連続運転は、出庫 約 5.2 分 + 220 分 + 約 5.2 分で 約 230 分
+    const legs5 = [...shuttle(4, '06:00', 55, 9), leg('t04', '11:47', '12:42')]
+    const office: DutyPlace[] = [{ name: '団地の営業所', ...STOPS.get('B')!.point! }]
+    const est = estimateDuties(legs5, STOPS, {}, office)
+    expect(est.dutyCount).toBe(1)
+    expect(est.duties[0].maxContinuousMin).toBe(230)
+    expect(est.overLimitDuties).toBe(0)
+  })
+
+  it('営業所から遠い終点へ行く便は、最後の停留所で休んでから入庫するか、営業所の近くへ戻る便をつなぐ', () => {
+    // 駅前(営業所)→ 遠い終点 140 分、終点で 60 分休んで 遠い終点 → 駅前 140 分(道北バスの旭川駅前 ↔ 留萌十字街の形)
+    const office: DutyPlace[] = [{ name: '駅の営業所', ...A }]
+    const out = leg('out', '06:00', '08:20', 'A', 'F')
+    const back = leg('back', '09:20', '11:40', 'F', 'A')
+    // 行きの便だけなら、入庫の回送(約 156 分)の前に終点で 30 分休む(休まないと連続運転 4 時間を超える)
+    const alone = estimateDuties([out], STOPS, {}, office)
+    expect(alone.overLimitDuties).toBe(0)
+    expect(alone.duties[0].pullInMin).toBe(156)
+    expect(alone.duties[0].end).toBe('11:41')
+    expect(alone.duties[0].maxContinuousMin).toBe(156)
+    const both = estimateDuties([out, back], STOPS, {}, office)
+    expect(both.dutyCount).toBe(1)
+    expect(both.overLimitDuties).toBe(0)
+    expect(both.duties[0].maxContinuousMin).toBe(140)
+    expect(both.duties[0].pullInMin).toBe(0)
+    expect(both.assumptions.join('\n')).toContain('最後の停留所で 30 分休んでから入庫するとみなします')
+  })
+
+  it('入庫の回送だけで上限を超える終点へ行く便は、営業所の近くへ戻る便をつなげば上限の中に収まる', () => {
+    // 駅前(営業所)から約 100km の終点(回送 約 260 分。休んでも入庫の回送だけで連続運転 4 時間を超える)
+    const stops = new Map(STOPS).set('G', { name: 'とても遠い終点', point: { lat: A.lat + 0.9, lon: A.lon } })
+    const office: DutyPlace[] = [{ name: '駅の営業所', ...A }]
+    const out = leg('out', '06:00', '09:00', 'A', 'G')
+    const alone = estimateDuties([out], stops, {}, office)
+    expect(alone.overLimitDuties).toBe(1)
+    const both = estimateDuties([out, leg('back', '10:00', '13:00', 'G', 'A')], stops, {}, office)
+    expect(both.dutyCount).toBe(1)
+    expect(both.overLimitDuties).toBe(0)
+    // 終点に留まる便は、入庫まで含めて上限に収まらないので、つながない
+    const stay = estimateDuties([out, leg('stay', '10:00', '10:30', 'G', 'G')], stops, {}, office)
+    expect(stay.dutyCount).toBe(2)
+    expect(stay.overLimitDuties).toBe(2)
+  })
+
+  it('出庫の回送と便で連続運転の上限を超えるなら、最初の停留所に 30 分早く着いて休む', () => {
+    // 営業所は遠い終点(片道 約 156 分)。駅前の 120 分の便
+    const office: DutyPlace[] = [{ name: '遠い営業所', ...STOPS.get('F')!.point! }]
+    const est = estimateDuties([leg('a', '06:00', '08:00')], STOPS, {}, office)
+    expect(est.overLimitDuties).toBe(0)
+    // 点呼 30 分 + 休憩 30 分 + 出庫 156 分 前に始まり、休んでから入庫する
+    expect(est.duties[0].start).toBe('02:23')
+    expect(est.duties[0].end).toBe('11:21')
+    expect(est.duties[0].maxContinuousMin).toBe(156)
   })
 
   it('営業所があれば、最寄りの営業所との回送を拘束時間と運転時間に足す', () => {

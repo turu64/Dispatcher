@@ -125,7 +125,7 @@ describe('DriverSummaryView(変更指示書のまとまり)', () => {
     render(<DriverSummaryView comparison={comparisonOf({ places })} />)
     const list = screen.getByRole('list', { name: '要る運転士の数の仮定' }).textContent ?? ''
     expect(list).toContain('営業所(3 か所)と最初・最後の停留所の間の回送を、拘束時間と運転時間に入れます')
-    expect(list).toContain('休憩は、営業所の 300m 以内の停留所でのすき間だけに数えます')
+    expect(list).toContain('どの停留所でのすき間も休憩に数えます。ただし営業所の 300m 以内でない停留所で待つのは 1 時間 30 分までとし')
     expect(list).not.toContain('営業所の位置がないため')
     expect(list).not.toMatch(/車庫|休憩施設/)
     const block = screen.getByTestId('driver-summary').textContent ?? ''

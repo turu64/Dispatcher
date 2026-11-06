@@ -180,8 +180,9 @@ describe('DriverView(上限を超えた勤務・回送が長すぎる勤務の�
   })
 
   it('路線から遠い営業所を置くと、上限を超えた勤務と回送が長すぎる勤務の数を減便の前後で出す', () => {
-    // 停留所から約 50km 北の営業所(出庫・入庫の回送が片道 2 時間 10 分)。どの便も1便だけで連続運転の上限を超える
-    const far = { name: '営業所', lat: 44.21, lon: 142.36 }
+    // 停留所から約 100km 北の営業所(出庫・入庫の回送が片道 約 4 時間 20 分)。出庫の回送だけで連続運転の上限を超えるので、
+    // どの便も1便だけの勤務で上限を超える(約 50km なら、終点で休んでから入庫すれば上限の中に収まる)
+    const far = { name: '営業所', lat: 44.66, lon: 142.36 }
     viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), places: [far] })
     const warning = screen.getByTestId('duty-warning')
     expect(warning.textContent).toContain('1便だけで改善基準告示の上限を超える勤務 減便前 14・減便後 6')
@@ -193,7 +194,7 @@ describe('DriverView(上限を超えた勤務・回送が長すぎる勤務の�
   })
 
   it('減便後が無ければ、減便前の数だけを出す', () => {
-    const far = { name: '営業所', lat: 44.21, lon: 142.36 }
+    const far = { name: '営業所', lat: 44.66, lon: 142.36 }
     viewOf({ base: shuttleFeed(14), places: [far] })
     expect(screen.getByTestId('duty-warning').textContent).toContain('出庫か入庫の回送が片道 60 分を超える勤務 14')
   })

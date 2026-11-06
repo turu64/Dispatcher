@@ -72,7 +72,13 @@ function bboxOf(v: unknown): Bounds | undefined {
   return { south, west, north, east }
 }
 
-/** 施設の1件。形が合わなければ null(読み飛ばす) */
+/**
+ * 小学校より前の学校(幼稚園・幼保連携型認定こども園)。前提情報の調査の対象にしないので、読み込みで外す(2026-11-06 に利用者が決定)。
+ * 参照データの作り直し(data/src/dispatcher_data/facilities.py)でも外しているが、作り直す前のデータでも外れるようにここでも外す
+ */
+export const PRE_ELEMENTARY_SCHOOL_TYPES: ReadonlySet<string> = new Set(['幼稚園', '幼保連携型認定こども園'])
+
+/** 施設の1件。形が合わなければ null(読み飛ばす)。幼稚園・認定こども園も null */
 export function parseFacility(v: unknown): Facility | null {
   if (!isObj(v)) return null
   const { target_id: targetId, kind, name, municipality } = v
@@ -93,6 +99,7 @@ export function parseFacility(v: unknown): Facility | null {
   const detail = isObj(v.detail) ? v.detail : {}
   if (f.kind === 'school') {
     if (typeof detail.school_type === 'string') f.schoolType = detail.school_type
+    if (f.schoolType && PRE_ELEMENTARY_SCHOOL_TYPES.has(f.schoolType)) return null
     if (typeof detail.open_status === 'string') f.openStatus = detail.open_status
   } else if (f.kind === 'hospital' || f.kind === 'clinic') {
     const beds = finite(detail.beds)
@@ -256,7 +263,7 @@ const HIGHER_EDUCATION_TYPES = new Set(['大学', '短期大学', '高等専門�
 const JUNIOR_HIGH_TYPES = new Set(['中学校', '義務教育学校'])
 
 /**
- * 施設の重要拠点の種類。優先順位の10段階に入らないもの(事業者、小学校・幼稚園・認定こども園など)は null
+ * 施設の重要拠点の種類。優先順位の10段階に入らないもの(事業者、小学校など)は null
  * (事業者は別にまとめる。小学校などは手で選べるが、既定では選ばない)
  */
 export function facilityCategory(f: Facility): PriorityKey | null {
@@ -378,7 +385,7 @@ export const DEFAULT_SELECT_WALK_M = 1200
  * 既定で選ぶ対象(target_id の並び)。種類ごとの列を、重要拠点の優先順位の順に並べ、その後ろに周辺のバス事業者
  * (読み込んだ GTFS の事業者を除く。こちらの停留所との重なりの多い順。compareOperators)の列を置く。列の先頭から1件ずつ順に取る巡回を、max 件になるまで繰り返す
  * (優先順位の高い種類ほど先に、多く選ばれる。病院の多い市街地で上限が病院だけで埋まらないようにするため)。
- * 種類の中は compareWithinCategory の順。休校中などの学校、優先順位の外の施設(小学校・幼稚園など)、
+ * 種類の中は compareWithinCategory の順。休校中などの学校、優先順位の外の施設(小学校など)、
  * 停留所から DEFAULT_SELECT_WALK_M より遠い施設は選ばない
  */
 export function defaultSelection(candidates: readonly ResearchCandidate[], order: readonly PriorityKey[], max: number): string[] {
@@ -406,7 +413,7 @@ export function defaultSelection(candidates: readonly ResearchCandidate[], order
 // ---- 一覧のまとまり ----
 
 export const OPERATOR_GROUP = '周辺のバス事業者'
-export const OTHER_GROUP = 'そのほかの学校(優先順位の外。小学校・幼稚園など)'
+export const OTHER_GROUP = 'そのほかの学校(優先順位の外。小学校など)'
 
 /** 候補のまとまり(種類ごと) */
 export interface CandidateGroup {

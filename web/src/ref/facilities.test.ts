@@ -67,6 +67,12 @@ function merged(): Facility[] {
 }
 
 describe('parseFacility', () => {
+  it('幼稚園・幼保連携型認定こども園は読み飛ばす(小学校は読む)', () => {
+    expect(parseFacility(item('P29:k', 'school', '幼稚園', 43, 142, { school_type: '幼稚園' }))).toBeNull()
+    expect(parseFacility(item('P29:n', 'school', 'こども園', 43, 142, { school_type: '幼保連携型認定こども園' }))).toBeNull()
+    expect(parseFacility(item('P29:e', 'school', '小学校', 43, 142, { school_type: '小学校' }))).not.toBeNull()
+  })
+
   it('学校・病院・事業者の詳しいことを読む', () => {
     expect(parseFacility(item('P29:x', 'school', ' 高校 ', 43, 142, { school_type: '高等学校', open_status: '開校中' }))).toEqual({
       targetId: 'P29:x',

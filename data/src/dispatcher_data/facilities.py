@@ -108,6 +108,8 @@ SCHOOL_TYPES = {
     "16015": "各種学校",
     "16016": "専修学校",
 }
+# 小学校より前の学校(幼稚園・幼保連携型認定こども園)。前提情報の調査の対象にしないので、施設に入れない(2026-11-06 に利用者が決定)
+PRE_ELEMENTARY_SCHOOL_CODES = {"16011", "16013"}
 # 管理者コード(AdminCd)
 MANAGEMENTS = {"0": "その他", "1": "国", "2": "都道府県", "3": "市区町村", "4": "民間"}
 # 休校コード(ClosedSchoolCode)。2 は休校中。9 は定義に無いが、廃校になった学校(森町立石谷小学校など)に付いている
@@ -302,6 +304,9 @@ def load_schools(path: Path, municipalities: Municipalities) -> LoadResult:
         code, name = _str(p.get("P29_002")), _str(p.get("P29_004"))
         if not code or not name:
             result.skip("学校コードか名称が空")
+            continue
+        if _str(p.get("P29_003")) in PRE_ELEMENTARY_SCHOOL_CODES:
+            result.skip("小学校より前(幼稚園・認定こども園)")
             continue
         if _str(p.get("P29_007")) == CLOSED_CODE:
             result.skip("休校中")

@@ -187,7 +187,7 @@ describe('ResearchStep', () => {
     setup()
     const list = screen.getByRole('group', { name: '調べる対象の候補' })
     const groups = within(list).getAllByRole('group', { hidden: true }).map((g) => g.getAttribute('aria-label'))
-    expect(groups).toEqual(['周辺のバス事業者', '入院設備のある病院', '高校・特別支援学校', '診療所', 'そのほかの学校(優先順位の外。小学校・幼稚園など)'])
+    expect(groups).toEqual(['周辺のバス事業者', '入院設備のある病院', '高校・特別支援学校', '診療所', 'そのほかの学校(優先順位の外。小学校など)'])
     // 範囲の外の施設は出ない
     expect(screen.queryByText('遠くの高校')).toBeNull()
     expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト内科'])
@@ -224,7 +224,7 @@ describe('ResearchStep', () => {
       el.open = open
       fireEvent(el, new Event('toggle'))
     }
-    const others = 'そのほかの学校(優先順位の外。小学校・幼稚園など)'
+    const others = 'そのほかの学校(優先順位の外。小学校など)'
     // 選んだ対象の無いまとまりは閉じ、あるまとまりは開いている
     expect(group(others).open).toBe(false)
     expect(group('診療所').open).toBe(true)
@@ -514,7 +514,7 @@ describe('ResearchStep の一覧の畳み方', () => {
     return Array.from({ length: 8 }, (_, k) => item(`${prefix}${k + 1}`, kind, `${kind === 'clinic' ? '診療所' : '小学校'}${k + 1}`, 43.76 + 0.0005 * k, 142.34 - 0.0005 * k, detail))
   }
   const LONG_FILE = { facilities: [...many('P04:c', 'clinic', { beds: 0 }), ...many('P29:e', 'school', { school_type: '小学校' })] }
-  const OTHERS = 'そのほかの学校(優先順位の外。小学校・幼稚園など)'
+  const OTHERS = 'そのほかの学校(優先順位の外。小学校など)'
 
   function names(group: string): string[] {
     return within(screen.getByRole('group', { name: group, hidden: true }))

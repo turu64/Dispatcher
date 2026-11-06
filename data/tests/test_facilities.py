@@ -89,6 +89,27 @@ def test_行政区域コードの一覧(muni: facilities.Municipalities):
 # --- 学校 --------------------------------------------------------------------
 
 
+def test_幼稚園と認定こども園は入れない(muni: facilities.Municipalities, tmp_path):
+    def feature(code: str, type_code: str, name: str) -> dict:
+        return {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [142.36, 43.77]},
+            "properties": {"P29_001": "01204", "P29_002": code, "P29_003": type_code, "P29_004": name, "P29_005": "旭川市1条通1丁目", "P29_006": "3", "P29_007": "1", "P29_008": "00", "P29_009": ""},
+        }
+    path = tmp_path / "P29-test.geojson"
+    path.write_text(
+        json.dumps({"type": "FeatureCollection", "features": [
+            feature("B101220400001", "16001", "旭川テスト小学校"),
+            feature("A101220400002", "16011", "旭川テスト幼稚園"),
+            feature("A101220400003", "16013", "旭川テストこども園"),
+        ]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    res = load_schools(path, muni)
+    assert [f.name for f in res.facilities] == ["旭川テスト小学校"]
+    assert res.skipped == {"小学校より前(幼稚園・認定こども園)": 2}
+
+
 def test_学校(muni: facilities.Municipalities):
     res = load_schools(FIXTURE_FAC / "school/P29-23_01_GML/P29-23_01.geojson", muni)
     by_id = _by_id(res.facilities)
@@ -433,7 +454,9 @@ def test_実データの件数(real_report):
         by_kind[f["kind"]] = by_kind.get(f["kind"], 0) + 1
     assert by_kind["hospital"] == 550
     assert by_kind["clinic"] == 3464
-    assert by_kind["school"] == 2824 - report.skipped["P29"].get("休校中", 0)
+    assert by_kind["school"] == 2824 - report.skipped["P29"].get("休校中", 0) - report.skipped["P29"].get("小学校より前(幼稚園・認定こども園)", 0)
+    # 幼稚園・認定こども園は入らない(2026-11-06)
+    assert not any(f["detail"].get("school_type_code") in ("16011", "16013") for f in items if f["kind"] == "school")
     assert len({f["target_id"] for f in items if f["kind"] == "operator"}) == 67
     assert report.skipped["P04"]["歯科診療所"] == 2889
     # 行政区域コードは全部引ける。医療機関の所在地が市町村名で始まらないものだけ空

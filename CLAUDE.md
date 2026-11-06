@@ -148,6 +148,7 @@ cd data && uv run pytest -q
 | 鉄道(N02、2025年度)、学校(P29)、医療機関(P04)、バス停留所(P11) | 国土数値情報。加工した旨も書く | CC BY 4.0 |
 | 祝日 | 内閣府「国民の祝日について」の祝日一覧(CSV)。加工した旨も書く | 公共データ利用規約(第1.0版)(内閣府ホームページ利用規約による。CC BY 4.0 互換) |
 | 背景地図 | OpenStreetMap Japan のベクトルタイル | ©OpenStreetMap Contributors |
+| 地図の住所検索 | OpenStreetMap の Nominatim(入れた文字だけを「検索」を押したときに送る。1秒に1回まで。2026-11-06 に利用者が選んだ) | © OpenStreetMap contributors(ODbL)。運営情報のページと検索の結果に出す |
 
 最初は北海道のみ。参照データは 1次メッシュごとに分け、必要な範囲だけブラウザに読み込む。運営情報のページ(`web/src/pages/AboutPage.tsx`)の「データの出典」欄(`web/src/components/DataSources.tsx`)には、実際に使っているデータだけを出す(学校・医療機関・バス停留所は、前提情報の手順で施設を読み込んだときに足す)。
 

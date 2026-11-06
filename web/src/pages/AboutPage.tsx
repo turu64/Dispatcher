@@ -71,6 +71,13 @@ export default function AboutPage() {
           </ul>
         </Section>
 
+        <Section id="about-geocode" title="地図の住所検索">
+          <p>
+            地図の住所検索では、入れた文字だけを OpenStreetMap の Nominatim(nominatim.openstreetmap.org)に送ります。「検索」を押したときだけ送り、入力の途中では送りません。GTFS
+            の中身は送りません。結果の地名と位置は © OpenStreetMap contributors(ODbL)のデータです。
+          </p>
+        </Section>
+
         <Section id="about-hackathon" title="ハッカソンの作品です">
           <p>ハッカソン「Built with Claude: Japan 2026」の応募作品として、期間中に新しく作りました。</p>
         </Section>

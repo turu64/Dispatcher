@@ -5,6 +5,7 @@ import { stepOf, STEPS } from '@/components/steps/registry'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import BaseMap from '@/map/BaseMap'
 import MapEmptyNotice from '@/map/MapEmptyNotice'
+import AddressSearch from '@/map/AddressSearch'
 import AboutPage, { ABOUT_HASH } from '@/pages/AboutPage'
 import { useHolidayStore } from '@/store/holidays'
 import { useStepStore } from '@/store/steps'
@@ -69,6 +70,8 @@ export default function App() {
                 {Overlay && <Overlay />}
                 {/* GTFS を読み込む前は、地図の中央に読み込みの案内を出す */}
                 <MapEmptyNotice />
+                {/* 住所・地名で地図を動かす検索欄(右上、拡大・縮小のボタンの左)。入れた文字だけを Nominatim に送る */}
+                <AddressSearch visible={showMap && !about} />
               </main>
             }
           />

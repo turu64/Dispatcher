@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { Badge } from '@/components/ui/badge'
 import { activeWeekdayServicesOf, type Form2Result } from '@/gtfs/edit/form2'
 import type { GtfsFeed } from '@/gtfs/load'
 import { formatDateJa } from '@/lib/dates'
@@ -188,9 +189,26 @@ export function DriverLine() {
   return <DriverLineView comparison={comparison} />
 }
 
-/** 1行の中身(store を使わない) */
+/** 判定の短い名前(平日便を戻す手順の1行の先頭に出す)。在籍を入れていない・減便後が無い・平日でないときは「判定なし」 */
+function verdictBadgeText(verdict: DriverComparison['verdict']): string {
+  if (verdict.kind === 'enough') return `足りる目安(余り ${verdict.spare})`
+  if (verdict.kind === 'short') return `あと ${verdict.missing} 足りない目安`
+  return '判定なし'
+}
+
+const BADGE_TONE = {
+  enough: 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200',
+  short: '',
+  none: 'text-muted-foreground',
+} as const
+
+/**
+ * 1行の中身(store を使わない)。先頭に見出しと判定のバッジ(足りる目安は緑系、足りない目安は警告色、判定なしは中立)を出し、
+ * 勤務の数の前後・要る勤務の数・判定の文(または在籍を入れる場所)はその下に小さな文字で出す
+ */
 export function DriverLineView({ comparison }: { comparison: DriverComparison }) {
   const { before, after, dutyDiff, verdict, date } = comparison
+  const tone = verdict.kind === 'enough' ? 'enough' : verdict.kind === 'short' ? 'short' : 'none'
   const counts =
     after && dutyDiff !== null
       ? `勤務の数(目安):減便前 ${before.duties.dutyCount} → 減便後${comparison.draft ? '(下書き)' : ''} ${after.duties.dutyCount}(${formatDiff(dutyDiff)}、${formatDateJa(date)})。`
@@ -202,11 +220,23 @@ export function DriverLineView({ comparison }: { comparison: DriverComparison })
       ? `要る勤務の数(入力の運用番号の数から):減便前 ${need.before} → 減便後 ${need.after}。`
       : ''
   return (
-    <p className={`text-xs ${verdict.kind === 'short' ? 'font-medium text-destructive' : ''}`} aria-live="polite" data-testid="driver-line">
-      {verdict.kind === 'short' && <span aria-hidden="true">⚠ </span>}
-      {counts}
-      {needed}
-      {verdict.kind === 'noRoster' ? ROSTER_WHERE : verdictText(verdict, date)}
-    </p>
+    <div className="flex flex-col gap-1 rounded-md border px-2 py-1.5" aria-live="polite" data-testid="driver-line">
+      <p className="flex flex-wrap items-center gap-1.5 text-sm">
+        <span className="font-medium">{DRIVER_SUMMARY_TITLE}</span>
+        <Badge
+          variant={tone === 'short' ? 'destructive' : 'outline'}
+          className={BADGE_TONE[tone]}
+          data-testid="driver-line-badge"
+          data-tone={tone}
+        >
+          {verdictBadgeText(verdict)}
+        </Badge>
+      </p>
+      <p className="text-xs text-muted-foreground" data-testid="driver-line-details">
+        {counts}
+        {needed}
+        {verdict.kind === 'noRoster' ? ROSTER_WHERE : verdictText(verdict, date)}
+      </p>
+    </div>
   )
 }

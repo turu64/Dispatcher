@@ -1,4 +1,6 @@
+import { CircleCheck, Info, TriangleAlert } from 'lucide-react'
 import { jumpToPremise } from '@/components/steps/stepIds'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -55,8 +57,6 @@ export function DriverView({
   onOpenPremise: () => void
 }) {
   const { verdict } = comparison
-  const tone =
-    verdict.kind === 'short' ? 'font-medium text-destructive' : verdict.kind === 'enough' ? 'font-medium' : 'text-muted-foreground'
   return (
     <section className="flex flex-col gap-2 rounded-lg border px-3 py-2 text-sm" aria-labelledby="driver-panel-title">
       <h3 id="driver-panel-title" className="font-medium">
@@ -68,6 +68,13 @@ export function DriverView({
         )}
       </h3>
       <p className="text-xs text-muted-foreground">{DRIVER_PANEL_LEAD}</p>
+      <VerdictAlert comparison={comparison} />
+      {/* 判定の文が案内のとき(noRoster)は重ねない。減便後が無い・平日でないときも、在籍を入れる案内は出す */}
+      {comparison.supply === null && verdict.kind !== 'noRoster' && (
+        <p className="text-xs" data-testid="roster-hint">
+          {ROSTER_HINT}
+        </p>
+      )}
       <p className="text-xs">比較する日付:{formatDateJa(comparison.date)}</p>
       <DriverTable comparison={comparison} />
       {comparison.placesEffect && (
@@ -76,16 +83,6 @@ export function DriverView({
         </p>
       )}
       <DutyWarning comparison={comparison} />
-      <p className={tone} role="status" data-testid="driver-verdict">
-        {verdict.kind === 'short' && <span aria-hidden="true">⚠ </span>}
-        {verdictText(verdict, comparison.date)}
-      </p>
-      {/* 判定の文が案内のとき(noRoster)は重ねない。減便後が無い・平日でないときも、在籍を入れる案内は出す */}
-      {comparison.supply === null && verdict.kind !== 'noRoster' && (
-        <p className="text-xs" data-testid="roster-hint">
-          {ROSTER_HINT}
-        </p>
-      )}
       <SupplyDetails comparison={comparison} />
       <ul className="flex list-disc flex-col gap-0.5 pl-4 text-xs text-muted-foreground" aria-label="要る運転士の数の断り書き">
         {driverCaveats(params, places).map((line) => (
@@ -101,12 +98,40 @@ export function DriverView({
   )
 }
 
+/** 判定の囲みの色。足りる目安は落ち着いた緑、足りない目安は警告色、判定なし(案内)は中立 */
+const VERDICT_TONE = {
+  enough: 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200',
+  short: 'border-destructive/40 bg-destructive/5',
+  none: '',
+} as const
+
+/** 判定の文の囲み(見出しと説明のすぐ下、表より上)。data-tone は enough・short・none */
+function VerdictAlert({ comparison }: { comparison: DriverComparison }) {
+  const { verdict } = comparison
+  const tone = verdict.kind === 'enough' ? 'enough' : verdict.kind === 'short' ? 'short' : 'none'
+  const Icon = tone === 'enough' ? CircleCheck : tone === 'short' ? TriangleAlert : Info
+  return (
+    <Alert
+      role="status"
+      variant={tone === 'short' ? 'destructive' : 'default'}
+      className={VERDICT_TONE[tone]}
+      data-testid="driver-verdict"
+      data-tone={tone}
+    >
+      <Icon aria-hidden="true" />
+      <AlertDescription className={tone === 'none' ? 'text-foreground' : tone === 'enough' ? 'font-medium text-current' : 'font-medium'}>
+        {verdictText(verdict, comparison.date)}
+      </AlertDescription>
+    </Alert>
+  )
+}
+
 /**
  * 上限を超えた勤務・回送が長すぎる勤務の注意の文。どちらも無ければ null。
  * 営業所が路線から遠いと、回送だけで上限に近づいて勤務が細かく分かれ、勤務の数が跳ね上がる
  * (道北バスで遠い営業所を1つ置くと 79 → 400 超。回送 30km/h)ので、数を出して置いた場所を確かめてもらう
  */
-function dutyWarningText(comparison: DriverComparison): string | null {
+function dutyWarningText(comparison: DriverComparison): { text: string; overLimit: boolean } | null {
   const { before, after, placesEffect } = comparison
   const counts = (pick: (d: DriverComparison['before']['duties']) => number) => {
     const b = pick(before.duties)
@@ -123,17 +148,28 @@ function dutyWarningText(comparison: DriverComparison): string | null {
     placesEffect || long.any
       ? '営業所が路線から遠いと、回送だけで上限に近づいて勤務が細かく分かれ、勤務の数が大きく増えます。置いた場所が正しいか、ほかの営業所も置いたかを確かめてください。'
       : '長い便は途中の交代を数えていないため、勤務の数が多めに出ることがあります。'
-  return `注意:${parts.join('、')}。${hint}`
+  // 回送が長い勤務だけなら(営業所を置くとふつうに出る)補足にとどめ、上限を超える勤務があるときだけ注意にする
+  return { text: `${over.any ? '注意' : '補足'}:${parts.join('、')}。${hint}`, overLimit: over.any }
 }
 
-/** 上限を超えた勤務・回送が長すぎる勤務の注意(どちらも無ければ出さない) */
+/**
+ * 上限を超えた勤務・回送が長すぎる勤務の文(どちらも無ければ出さない)。
+ * 上限を超える勤務があるときだけ警告色にし、回送が長い勤務だけのときは目立たない補足の文にする
+ */
 function DutyWarning({ comparison }: { comparison: DriverComparison }) {
-  const text = dutyWarningText(comparison)
-  if (text === null) return null
+  const warning = dutyWarningText(comparison)
+  if (warning === null) return null
+  if (!warning.overLimit) {
+    return (
+      <p className="text-xs text-muted-foreground" data-testid="duty-warning">
+        {warning.text}
+      </p>
+    )
+  }
   return (
     <p className="text-xs font-medium text-destructive" data-testid="duty-warning">
       <span aria-hidden="true">⚠ </span>
-      {text}
+      {warning.text}
     </p>
   )
 }

@@ -90,6 +90,10 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
     useGtfsStore.setState({ sample: { available: true, name: '道北バス', source: '北海道オープンデータプラットフォーム', license: 'CC BY 4.0' } })
     render(<OperationPremise />)
     const button = screen.getByRole('button', { name: '道北バスのサンプル(営業所5か所・在籍 150 人)を入れる' })
+    // 左の欄が狭くても名前を切らずに折り返す
+    expect(button.className).toContain('whitespace-normal')
+    expect(button.className).toContain('h-auto')
+    expect(button.className).not.toContain('whitespace-nowrap')
     expect(section().textContent).toContain('在籍の運転士の数が空なら 150 を入れます')
     fireEvent.click(button)
     expect(useDriversStore.getState().roster).toBe(150)

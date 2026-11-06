@@ -148,10 +148,12 @@ function SampleButton({ onApply }: { onApply: () => boolean }) {
   const names = DOHOKU_SAMPLE_PLACES.map((p) => p.name).join('、')
   return (
     <div className="flex flex-col items-start gap-1 text-xs">
+      {/* 左の欄が狭くても名前を切らずに折り返す */}
       <Button
         type="button"
         variant="outline"
         size="sm"
+        className="h-auto max-w-full py-1 text-left whitespace-normal"
         onClick={() => {
           const filled = onApply()
           setMessage(

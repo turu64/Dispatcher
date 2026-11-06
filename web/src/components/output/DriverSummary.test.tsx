@@ -190,13 +190,29 @@ describe('DriverSummary(変更指示書に差し込む。承認済みの最後�
 })
 
 describe('DriverLine(平日便を戻す手順の1行)', () => {
-  it('勤務の数の前後と差、比較する日付、乗務できる運転士の数(目安)との比較を1行で出す', () => {
+  it('先頭に判定のバッジを短く出し、勤務の数の前後と差、比較する日付、乗務できる運転士の数(目安)との比較は下の小さな文字で出す', () => {
     render(<DriverLineView comparison={comparisonOf({ shortage: 20, roster: 7 })} />)
-    const line = screen.getByTestId('driver-line')
-    expect(line.textContent).toBe(
-      '⚠ 勤務の数(目安):減便前 2 → 減便後 1(−1、2026年11月4日(水))。減便後に要る勤務の数 1 に対して、乗務できる運転士の数(目安)0 → あと 1 足りない目安です。減便前のままでは 2 足りない目安です。',
+    const badge = screen.getByTestId('driver-line-badge')
+    expect(badge.textContent).toBe('あと 1 足りない目安')
+    expect(badge.dataset.tone).toBe('short')
+    expect(badge.className).toContain('text-destructive')
+    const details = screen.getByTestId('driver-line-details')
+    expect(details.textContent).toBe(
+      '勤務の数(目安):減便前 2 → 減便後 1(−1、2026年11月4日(水))。減便後に要る勤務の数 1 に対して、乗務できる運転士の数(目安)0 → あと 1 足りない目安です。減便前のままでは 2 足りない目安です。',
     )
-    expect(line.className).toContain('text-destructive')
+    expect(details.className).toContain('text-xs')
+    // バッジは詳しい数字より前
+    expect(badge.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByTestId('driver-line').textContent).toBe(`要る運転士の数(目安)あと 1 足りない目安${details.textContent}`)
+  })
+
+  it('足りる目安なら緑系のバッジに余りを出す', () => {
+    render(<DriverLineView comparison={comparisonOf({ shortage: 4, roster: 7 })} />)
+    const badge = screen.getByTestId('driver-line-badge')
+    expect(badge.textContent).toBe('足りる目安(余り 0)')
+    expect(badge.dataset.tone).toBe('enough')
+    expect(badge.className).toContain('bg-emerald-50')
+    expect(badge.className).not.toContain('text-destructive')
   })
 
   it('在籍の運転士の数を入れていなければ、入れる場所を示す。下書きなら減便後に(下書き)と添える', () => {
@@ -205,6 +221,8 @@ describe('DriverLine(平日便を戻す手順の1行)', () => {
     expect(text).toContain('減便後(下書き) 1')
     expect(text).toContain(ROSTER_WHERE)
     expect(text).not.toMatch(/足りる目安です|足りない目安です/)
+    expect(screen.getByTestId('driver-line-badge').textContent).toBe('判定なし')
+    expect(screen.getByTestId('driver-line-badge').dataset.tone).toBe('none')
   })
 
   it('入力の運用番号の数が取れれば、そこから出した要る勤務の数も並べる', () => {
@@ -226,6 +244,7 @@ describe('DriverLine(平日便を戻す手順の1行)', () => {
   it('比較する日付が平日でなければ、前後で差が無い旨を出す', () => {
     render(<DriverLineView comparison={comparisonOf({ date: SATURDAY, shortage: 3, roster: 10 })} />)
     expect(screen.getByTestId('driver-line').textContent).toContain('減便前の平日ダイヤが走らない日のため')
+    expect(screen.getByTestId('driver-line-badge').textContent).toBe('判定なし')
   })
 
   it('store の比較(到達圏の減便前・減便後・比較する日付)を使い、GTFS か日付が無ければ何も出さない', () => {

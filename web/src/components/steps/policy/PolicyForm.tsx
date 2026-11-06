@@ -673,7 +673,7 @@ function ReasonHole({
             aria-describedby={noteHintId}
             // 「その他」の欄と同じく、書いた文の長さに合わせて広げる
             className="h-7 w-auto min-w-32 max-w-full text-sm field-sizing-content md:text-sm"
-            placeholder="補足(任意)例:インフルエンザ 20 人"
+            placeholder="補足(任意)例:インフルエンザ 19 人"
             value={note}
             onChange={(e) => onNoteChange(e.target.value)}
           />

@@ -109,13 +109,23 @@ describe('DriverView(前後の表と判定)', () => {
     expect(supply.textContent).toContain('在籍 7 × 週の出勤日数 5 ÷ 7 = 5(小数は切り捨て)から欠員 4 を引いた 1 です。')
     expect(supply.textContent).toContain('推定した勤務の数(目安。下限の目安)をそのまま使っています')
     expect(screen.getByTestId('driver-verdict').compareDocumentPosition(supply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 判定は囲み(緑系)にして、見出しと説明のすぐ下、表より上に出す
+    const verdict = screen.getByTestId('driver-verdict')
+    expect(verdict.getAttribute('role')).toBe('status')
+    expect(verdict.dataset.tone).toBe('enough')
+    expect(verdict.className).toContain('bg-emerald-50')
+    expect(verdict.compareDocumentPosition(table()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText(/^比較する日付:/).compareDocumentPosition(verdict) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
   })
 
   it('乗務できる運転士の数が減便後に要る勤務の数より少なければ、あと何人足りない目安かを出す', () => {
     viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: true }, weekdayServices: new Set(['WK']), shortage: 20, roster: 7 })
     expect(screen.getByTestId('driver-verdict').textContent).toBe(
-      '⚠ 減便後に要る勤務の数 1 に対して、乗務できる運転士の数(目安)0 → あと 1 足りない目安です。減便前のままでは 2 足りない目安です。',
+      '減便後に要る勤務の数 1 に対して、乗務できる運転士の数(目安)0 → あと 1 足りない目安です。減便前のままでは 2 足りない目安です。',
     )
+    // 足りない目安は警告色の囲みにする
+    expect(screen.getByTestId('driver-verdict').dataset.tone).toBe('short')
+    expect(screen.getByTestId('driver-verdict').className).toContain('text-destructive')
     expect(screen.getByRole('columnheader', { name: '減便後(下書き)' })).toBeTruthy()
   })
 
@@ -134,6 +144,9 @@ describe('DriverView(前後の表と判定)', () => {
     const verdict = screen.getByTestId('driver-verdict').textContent ?? ''
     expect(verdict).toContain('比較する日付(2026年11月7日(土))は減便前の平日ダイヤが走らない日のため、減便の前後で便と勤務の数は変わりません')
     expect(verdict).not.toContain('足りる')
+    // 判定なしは中立の囲み
+    expect(screen.getByTestId('driver-verdict').dataset.tone).toBe('none')
+    expect(screen.getByTestId('driver-verdict').className).not.toMatch(/emerald|destructive/)
     expect(rowText('勤務の数(目安)')).toMatch(/±0$/)
   })
 
@@ -185,12 +198,25 @@ describe('DriverView(上限を超えた勤務・回送が長すぎる勤務の�
     const far = { name: '営業所', lat: 44.66, lon: 142.36 }
     viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), places: [far] })
     const warning = screen.getByTestId('duty-warning')
-    expect(warning.textContent).toContain('1便だけで改善基準告示の上限を超える勤務 減便前 14・減便後 6')
+    expect(warning.textContent).toMatch(/^⚠ 注意:1便だけで改善基準告示の上限を超える勤務 減便前 14・減便後 6/)
     expect(warning.textContent).toContain('出庫か入庫の回送が片道 60 分を超える勤務 減便前 14・減便後 6')
     expect(warning.textContent).toContain('置いた場所が正しいか、ほかの営業所も置いたか')
     expect(warning.textContent).not.toMatch(/車庫|休憩施設/)
     expect(warning.className).toContain('text-destructive')
     expect(warning.textContent).not.toContain('あなた')
+  })
+
+  it('回送が長い勤務だけで上限を超える勤務が無ければ、警告色にせず目立たない補足の文にする', () => {
+    // 停留所から約 50km 北の営業所(出庫・入庫の回送が片道 約 1 時間 40 分)。終点で休んでから入庫すれば上限の中に収まる
+    const near = { name: '営業所', lat: 44.21, lon: 142.36 }
+    viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), places: [near] })
+    const warning = screen.getByTestId('duty-warning')
+    expect(warning.textContent).toMatch(/^補足:出庫か入庫の回送が片道 60 分を超える勤務 減便前 \d+・減便後 \d+。/)
+    expect(warning.textContent).not.toContain('改善基準告示の上限を超える勤務')
+    expect(warning.textContent).toContain('置いた場所が正しいか、ほかの営業所も置いたか')
+    expect(warning.textContent).not.toContain('⚠')
+    expect(warning.className).toContain('text-muted-foreground')
+    expect(warning.className).not.toContain('text-destructive')
   })
 
   it('減便後が無ければ、減便前の数だけを出す', () => {

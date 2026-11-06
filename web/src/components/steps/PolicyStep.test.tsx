@@ -214,7 +214,7 @@ describe('PolicyStep', () => {
     expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('運転士の一時的な欠員')
     // 「[運転士の一時的な欠員](補足)のため、」。補足の欄は文の中で、理由の穴の直後
     const note = within(sentence()).getByRole('textbox', { name: '減便の理由の補足' })
-    expect(note.getAttribute('placeholder')).toBe('補足(任意)例:インフルエンザ 20 人')
+    expect(note.getAttribute('placeholder')).toBe('補足(任意)例:インフルエンザ 19 人')
     expect(note.className).toContain('field-sizing-content')
     expect(sentenceText()).toContain('運転士の一時的な欠員()のため、')
     const focusables = [...sentence().querySelectorAll<HTMLElement>('button, input, [role="combobox"]')].filter(
@@ -223,12 +223,12 @@ describe('PolicyStep', () => {
     expect(focusables.slice(0, 2).map((el) => el.getAttribute('aria-label'))).toEqual(['減便の理由', '減便の理由の補足'])
     // 文の下に別の補足の欄は出さない
     expect(screen.getAllByRole('textbox', { name: /補足/ })).toEqual([note])
-    fireEvent.change(note, { target: { value: ' インフルエンザ 20 人 ' } })
+    fireEvent.change(note, { target: { value: ' インフルエンザ 19 人 ' } })
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
     let draft = useEditStore.getState().draft
     expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({
       category: 'temporaryShortage',
-      note: 'インフルエンザ 20 人',
+      note: 'インフルエンザ 19 人',
     })
     act(() => useEditStore.getState().discard())
     // 「選ばない」に戻すと、書いた補足が残っていても理由は空(区分もメモも無い)
@@ -414,19 +414,19 @@ describe('PolicyStep', () => {
   it('AI の方針の下書きの区分と補足は、理由の穴と括弧の中に入って開く', () => {
     act(() => {
       const { addBackTripIds: _a, ...settings } = basePlan()
-      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: 'temporaryShortage', note: 'インフルエンザ 20 人' } }, 'claude')
+      useEditStore.getState().propose({ type: 'applyPolicy', settings, reason: { category: 'temporaryShortage', note: 'インフルエンザ 19 人' } }, 'claude')
     })
     render(<PolicyStep />)
     fireEvent.click(within(screen.getByRole('region', { name: '対象便の確認' })).getByRole('button', { name: 'やめる' }))
     expect(within(sentence()).getByRole('combobox', { name: '減便の理由' }).textContent).toBe('運転士の一時的な欠員')
-    expect(within(sentence()).getByRole('textbox', { name: '減便の理由の補足' })).toHaveProperty('value', 'インフルエンザ 20 人')
+    expect(within(sentence()).getByRole('textbox', { name: '減便の理由の補足' })).toHaveProperty('value', 'インフルエンザ 19 人')
     expect(within(sentence()).queryByRole('textbox', { name: '減便の理由(その他)' })).toBeNull()
     // そのまま確かめると、同じ区分と補足が理由になる
     fireEvent.click(screen.getByRole('button', { name: '対象便を確かめる' }))
     const draft = useEditStore.getState().draft
     expect(draft?.kind === 'op' && draft.record.op.type === 'applyPolicy' && draft.record.op.reason).toEqual({
       category: 'temporaryShortage',
-      note: 'インフルエンザ 20 人',
+      note: 'インフルエンザ 19 人',
     })
   })
 

@@ -10,6 +10,7 @@ import { compareDrivers, dutyKindOf, useDriversStore, type UserPlace } from '@/s
 import { useGtfsStore } from '@/store/gtfs'
 import { DriverView } from './DriverPanel'
 import { placesEffectText, searchStops } from './places'
+import { DOHOKU_SAMPLE_PLACES } from '@/lib/samplePlaces'
 import PlacesEditor, { PlacesEditorView, type PlacesEditorProps } from './PlacesEditor'
 
 afterEach(() => {
@@ -72,6 +73,24 @@ describe('searchStops(停留所の名前で探す)', () => {
 })
 
 describe('PlacesEditorView(営業所・車庫・休憩施設を置く欄)', () => {
+  it('サンプルの GTFS のときだけ、道北バスのサンプルの営業所・車庫・休憩施設を置くボタンを出し、押すと今の一覧を置き換える', () => {
+    renderView()
+    expect(screen.queryByRole('button', { name: '道北バスの営業所・車庫・休憩施設(サンプル)を置く' })).toBeNull()
+    cleanup()
+    const props = renderView({ sampleAvailable: true })
+    fireEvent.click(screen.getByRole('button', { name: '道北バスの営業所・車庫・休憩施設(サンプル)を置く' }))
+    expect(props.onReplace).toHaveBeenCalledWith(DOHOKU_SAMPLE_PLACES)
+    expect(DOHOKU_SAMPLE_PLACES).toHaveLength(15)
+    expect(new Set(DOHOKU_SAMPLE_PLACES.map((p) => p.name))).toEqual(
+      new Set(['本社・旭川営業所', '名寄出張所', '上川営業所', '層雲峡出張所', '永山出張所']),
+    )
+    // どの拠点も営業所・車庫・休憩施設の3つ
+    for (const name of new Set(DOHOKU_SAMPLE_PLACES.map((p) => p.name))) {
+      expect(DOHOKU_SAMPLE_PLACES.filter((p) => p.name === name).map((p) => p.type).sort()).toEqual(['garage', 'office', 'rest'])
+    }
+    expect(screen.getByText('道北バスのサンプルの 5 拠点(営業所・車庫・休憩施設、15 件)を置きました。')).toBeTruthy()
+  })
+
   it('種類を選んで「地図で置く」を押すと、その種類で置き始める', () => {
     const props = renderView()
     fireEvent.click(screen.getByRole('radio', { name: '車庫' }))

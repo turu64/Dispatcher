@@ -84,3 +84,26 @@ describe.skipIf(!existsSync(BEFORE_ZIP) || !existsSync(AFTER_ZIP))('estimateDuti
     expect(operatorRunsOf(edited, '01')).toBe(86)
   })
 })
+
+// 道北バスのサンプルの営業所・車庫・休憩施設(lib/samplePlaces.ts。2026-11-06 に利用者が入力した5拠点)を置いたときの数。
+// 2026-11-06 に測った値(既定の仮定。回送 20km/h):平日 140(回送が片道 60 分を超える勤務 32・上限を超える勤務 32)、土曜 118、差 22。
+// どの勤務も最初と最後の停留所から最寄りの営業所・車庫へ回送するとみなすので、営業所から遠い終点の便は回送が長くなり、勤務の数が増える。
+// 回送の速さを 30km/h にすると平日 117(上限超え 4)・土曜 100、40km/h で平日 115(上限超え 4)・土曜 91
+describe.skipIf(!existsSync(BEFORE_ZIP))('estimateDuties(道北バス、サンプルの営業所・車庫・休憩施設を置いたとき)', () => {
+  it('平日を土曜ダイヤにすると勤務の数が減り、置かないときより勤務の数は多い', async () => {
+    const { DOHOKU_SAMPLE_PLACES } = await import('@/lib/samplePlaces')
+    const { dutyKindOf } = await import('@/store/drivers')
+    const base = await load(BEFORE_ZIP)
+    const places = DOHOKU_SAMPLE_PLACES.map((p) => ({ kind: dutyKindOf(p.type), name: p.name, lat: p.lat, lon: p.lon }))
+    const on = (date: string, withPlaces: boolean) =>
+      estimateDuties(tripLegs(base, describeServiceDay(base, date).serviceIds).legs, stopPointsOf(base), {}, withPlaces ? places : [])
+    const weekday = on(WEEKDAY, true)
+    const saturday = on(SATURDAY, true)
+    console.info(
+      `[道北バス・サンプルの営業所あり] 平日 ${weekday.dutyCount}(回送が長い ${weekday.longDeadheadDuties}・上限超え ${weekday.overLimitDuties})、` +
+        `土曜 ${saturday.dutyCount}、差 ${weekday.dutyCount - saturday.dutyCount}`,
+    )
+    expect(weekday.dutyCount).toBeGreaterThan(saturday.dutyCount)
+    expect(weekday.dutyCount).toBeGreaterThan(on(WEEKDAY, false).dutyCount)
+  })
+})

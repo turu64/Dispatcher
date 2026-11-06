@@ -1,6 +1,6 @@
 import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
 import { MapPin, Search, X } from 'lucide-react'
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type SubmitEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
@@ -101,7 +101,7 @@ export default function AddressSearch({ visible = true }: { visible?: boolean })
 
   if (!map || !visible) return null
 
-  const onSubmit = (e: FormEvent) => {
+  const onSubmit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     const q = query.trim()
     if (q === '' || status.kind === 'searching') return
@@ -168,7 +168,7 @@ export default function AddressSearch({ visible = true }: { visible?: boolean })
           maxLength={MAX_QUERY_LENGTH}
           aria-label="住所・地名"
           aria-controls={showPanel ? listId : undefined}
-          placeholder="住所・地名で探す(例:旭川市宮下通8丁目)"
+          placeholder="住所・地名で検索"
           className="h-7 min-w-0 flex-1 border-0 bg-transparent px-2 text-xs shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
         {(query !== '' || picked) && (
@@ -206,7 +206,7 @@ export default function AddressSearch({ visible = true }: { visible?: boolean })
                       className="flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none aria-[current=location]:bg-muted"
                     >
                       <MapPin className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                      <span className="min-w-0 break-words">{r.label}</span>
+                      <span className="min-w-0 wrap-break-word">{r.label}</span>
                     </button>
                   </li>
                 )

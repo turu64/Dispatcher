@@ -19,6 +19,7 @@ import {
   type PlaceInput,
   type PlaceType,
 } from '@/lib/placesFile'
+import { DOHOKU_SAMPLE_PLACES, DOHOKU_SAMPLE_SITE_COUNT } from '@/lib/samplePlaces'
 import { PlaceSymbol } from '@/map/PlacesLayer'
 import { useDriversStore, type UserPlace } from '@/store/drivers'
 import { useGtfsStore } from '@/store/gtfs'
@@ -64,6 +65,8 @@ export interface PlacesEditorProps {
   onReplace: (places: readonly PlaceInput[]) => void
   onStartPlacing: (type: PlaceType) => void
   onCancelPlacing: () => void
+  /** 道北バスのサンプルの営業所などを置けるか(サンプルの GTFS を読み込んだときだけ true) */
+  sampleAvailable?: boolean
   /** 書き出し(テストで差し替える) */
   download?: (fileName: string, text: string) => void
   /** 書き出しの日時(テストで差し替える) */
@@ -75,6 +78,7 @@ export default function PlacesEditor() {
   const places = useDriversStore((s) => s.places)
   const placing = useDriversStore((s) => s.placing)
   const stops = useGtfsStore((s) => s.stops)
+  const sampleAvailable = useGtfsStore((s) => s.sample !== null)
   const store = useDriversStore.getState
   return (
     <PlacesEditorView
@@ -87,6 +91,7 @@ export default function PlacesEditor() {
       onReplace={(list) => store().replacePlaces(list)}
       onStartPlacing={(t) => store().startPlacing(t)}
       onCancelPlacing={() => store().cancelPlacing()}
+      sampleAvailable={sampleAvailable}
     />
   )
 }
@@ -102,6 +107,7 @@ export function PlacesEditorView({
   onReplace,
   onStartPlacing,
   onCancelPlacing,
+  sampleAvailable = false,
   download = downloadText,
   now = () => new Date(),
 }: PlacesEditorProps) {
@@ -151,6 +157,27 @@ export function PlacesEditorView({
         <p className="text-muted-foreground">
           場所はこの画面の中だけに持ち、サーバーには送りません。GTFS を読み込み直すと一覧は空になります。残すときは JSON に書き出してください。
         </p>
+        {sampleAvailable && (
+          <div className="flex flex-col items-start gap-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                onReplace(DOHOKU_SAMPLE_PLACES)
+                setMessage({
+                  text: `道北バスのサンプルの ${DOHOKU_SAMPLE_SITE_COUNT} 拠点(営業所・車庫・休憩施設、${DOHOKU_SAMPLE_PLACES.length} 件)を置きました。`,
+                  error: false,
+                })
+              }}
+            >
+              道北バスの営業所・車庫・休憩施設(サンプル)を置く
+            </Button>
+            <span className="text-muted-foreground">
+              本社・旭川営業所、名寄出張所、上川営業所、層雲峡出張所、永山出張所。今の一覧を置き換えます。
+            </span>
+          </div>
+        )}
         <div className="flex flex-col gap-1">
           <span id="places-type-label">足す場所の種類</span>
           <ToggleGroup

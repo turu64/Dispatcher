@@ -12,7 +12,9 @@
  *   - 診療所:角を丸めた四角の中に小さな十字を置いた Dispatcher 独自の形。丸の中に十字は国土地理院の保健所の記号と同じ形なので
  *     避けた(地図記号を知っている人に、診療所が保健所に見えないように)。病院の盾形とも形で分かれる
  *   - ほかの事業者の停留所:小さなひし形の Dispatcher 独自の形
- *   - 幼稚園・認定こども園など学校の種別が分からないもの:小・中学校の記号を使う(近い記号)
+ *   - 学校の種別が分からないもの:小・中学校の「文」の記号を使う(近い記号)。
+ *     小学校・中学校・義務教育学校と幼稚園・認定こども園は前提情報の調査の対象外で読み込まない(2026-11-06 に利用者が決定。ref/facilities.ts の
+ *     EXCLUDED_SCHOOL_TYPES)ので、この記号は種別が分からない学校にだけ使う
  *   独自の形は、凡例に「(独自の記号)」と出す
  *
  * 記号の形は、この文書の path で自分で描いた(国土地理院の画像を写していない)。
@@ -76,7 +78,7 @@ function symbolFacilityKind(symbol: FacilitySymbolKind): FacilityKind {
 
 /** 凡例に出す名前 */
 export const FACILITY_SYMBOL_LABELS: Record<FacilitySymbolKind, string> = {
-  'school-basic': '小・中学校など',
+  'school-basic': '学校(種別が分からないもの)',
   'school-high': '高校・特別支援学校',
   'school-higher': '大学・高専・専修学校(独自の記号)',
   hospital: '病院',
@@ -147,7 +149,7 @@ export function facilitySymbolParts(symbol: FacilitySymbolKind): SymbolPart[] {
   const color = facilitySymbolColor(symbol)
   switch (symbol) {
     case 'school-basic':
-      // 小・中学校:「文」。地図の上でも読めるよう白で縁取る
+      // 国土地理院の小・中学校の記号の「文」(種別が分からない学校に使う)。地図の上でも読めるよう白で縁取る
       return glyph(12, 12, 1.1, color, 3, 6)
     case 'school-high':
       // 高等学校:丸で囲んだ「文」

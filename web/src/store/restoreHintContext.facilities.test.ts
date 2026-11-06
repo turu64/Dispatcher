@@ -26,11 +26,12 @@ function fac(o: Partial<Facility> & Pick<Facility, 'targetId' | 'kind'>): Facili
 }
 
 const HIGH = fac({ targetId: 'P29:高校', kind: 'school', name: '東高校', schoolType: '高等学校', openStatus: '開校中' })
-const JUNIOR = fac({ targetId: 'P29:中学', kind: 'school', name: '東中学校', schoolType: '中学校' })
+const TECH = fac({ targetId: 'P29:高専', kind: 'school', name: '東高専', schoolType: '高等専門学校' })
 const COLLEGE = fac({ targetId: 'P29:大学', kind: 'school', name: '東大学', schoolType: '大学', openStatus: '不明' })
 const HOSPITAL = fac({ targetId: 'P04:病院', kind: 'hospital', name: '東病院', beds: 120 })
 const CLINIC = fac({ targetId: 'P04:診療所', kind: 'clinic', name: '東クリニック', beds: 0 })
-const ELEMENTARY = fac({ targetId: 'P29:小学', kind: 'school', name: '東小学校', schoolType: '小学校' })
+/** 種別が分からない学校(優先順位の外) */
+const UNKNOWN = fac({ targetId: 'P29:不明', kind: 'school', name: '東学校' })
 const CLOSED = fac({ targetId: 'P29:休校', kind: 'school', name: '休校高校', schoolType: '高等学校', openStatus: '休校中' })
 const OPERATOR = fac({ targetId: 'P11:事業者', kind: 'operator', name: 'ほかのバス' })
 
@@ -74,11 +75,11 @@ describe('施設の位置の区分(facilityRegionClass)', () => {
 describe('手がかりに使う施設(hintFacilities)', () => {
   const base = { results: new Map<string, ResearchResult>(), order: DEFAULT_PRIORITY_ORDER, ref: ref(), params: DEFAULT_REACH_PARAMS, result: NO_FALLBACK }
 
-  it('優先順位にある学校と入院設備のある病院だけを使う(診療所・小学校・休校中の学校・事業者は使わない)', () => {
-    const got = hintFacilities([HIGH, JUNIOR, COLLEGE, HOSPITAL, CLINIC, ELEMENTARY, CLOSED, OPERATOR], base)
+  it('優先順位にある学校と入院設備のある病院だけを使う(診療所・種別が分からない学校・休校中の学校・事業者は使わない)', () => {
+    const got = hintFacilities([HIGH, TECH, COLLEGE, HOSPITAL, CLINIC, UNKNOWN, CLOSED, OPERATOR], base)
     expect(got.map((f) => [f.targetId, f.kind, f.categoryLabel, f.rank])).toEqual([
       ['P29:高校', 'school', '高校・特別支援学校', 3],
-      ['P29:中学', 'school', '中学校', 8],
+      ['P29:高専', 'school', '大学・高専・専修学校', 4],
       ['P29:大学', 'school', '大学・高専・専修学校', 4],
       ['P04:病院', 'hospital', '入院設備のある病院', 1],
     ])
@@ -92,9 +93,9 @@ describe('手がかりに使う施設(hintFacilities)', () => {
   })
 
   it('優先順位は画面の並び(order)の順位。調査の結果があれば要点(事実は3件まで、出典の URL つき)を付ける', () => {
-    const order = movePriority(DEFAULT_PRIORITY_ORDER, 'junior_high', -1)
-    const got = hintFacilities([HIGH, JUNIOR], { ...base, order, results: new Map([[HIGH.targetId, RESULT]]) })
-    expect(got[1].rank).toBe(7)
+    const order = movePriority(DEFAULT_PRIORITY_ORDER, 'higher_education', 1)
+    const got = hintFacilities([HIGH, TECH], { ...base, order, results: new Map([[HIGH.targetId, RESULT]]) })
+    expect(got[1].rank).toBe(5)
     expect(got[0].research).toEqual({
       status: 'found',
       checkedAt: '2026-11-03T12:00:00+09:00',
@@ -128,11 +129,11 @@ describe('調べた結果から施設ごとの窓と長期休業を読む(hintFa
     origin: 'demo',
   }
 
-  /** data/demo/research_dohoku.json の神楽中学校(休業は1・2件目。始業は5件目に足す) */
+  /** data/demo/research_dohoku.json の神楽中学校の結果の事実(休業は1・2件目。始業は5件目に足す)。施設は高専に置き換えた */
   const KAGURA: ResearchResult = {
-    targetId: JUNIOR.targetId,
+    targetId: TECH.targetId,
     kind: 'school',
-    name: '東中学校',
+    name: '東高専',
     status: 'partial',
     facts: [
       { label: '夏季休業(市立中学校共通)', value: '令和8年度 7月24日(金曜日)から8月24日(月曜日)まで。最終更新日2026年4月1日', source: 1 },
@@ -162,7 +163,7 @@ describe('調べた結果から施設ごとの窓と長期休業を読む(hintFa
   })
 
   it('学校:要点(3件)に入らない事実からも始業と長期休業を読む。休業は減便の期間と重なるかを出せる', () => {
-    const [school] = hintFacilities([JUNIOR], { ...base, results: new Map([[JUNIOR.targetId, KAGURA]]) })
+    const [school] = hintFacilities([TECH], { ...base, results: new Map([[TECH.targetId, KAGURA]]) })
     expect(school.research!.facts).toHaveLength(3)
     expect(school.windows.arrive).toMatchObject({ from: 7 * 60 + 20, to: 8 * 60 + 20, source: 'research', basis: '始業 8:20' })
     expect(school.windows.arrive.fact?.url).toBe('https://example.jp/kagura2')
@@ -178,7 +179,7 @@ describe('調べた結果から施設ごとの窓と長期休業を読む(hintFa
 
   it('見つからなかった(not_found)結果の事実は使わず、既定の窓にする', () => {
     const notFound: ResearchResult = { ...KAGURA, status: 'not_found' }
-    const [school] = hintFacilities([JUNIOR], { ...base, results: new Map([[JUNIOR.targetId, notFound]]) })
+    const [school] = hintFacilities([TECH], { ...base, results: new Map([[TECH.targetId, notFound]]) })
     expect(school.windows).toEqual(defaultFacilityWindows('school'))
     expect(school.longBreaks).toEqual([])
   })
@@ -226,14 +227,14 @@ describe('到達圏の ctx に学校・病院を入れる(buildRestoreHintContex
 
   it('同じ材料なら同じ ctx。施設・調査の結果・優先順位が変わると作り直す', () => {
     const state = reachState()
-    const facilities = ready([HIGH, JUNIOR])
+    const facilities = ready([HIGH, TECH])
     const results = new Map<string, ResearchResult>()
     const source = { facilities, results, order: DEFAULT_PRIORITY_ORDER }
     const ctx = buildRestoreHintContext(state, undefined, source)
     expect(buildRestoreHintContext(state, undefined, { ...source })).toBe(ctx)
-    const reordered = buildRestoreHintContext(state, undefined, { ...source, order: movePriority(DEFAULT_PRIORITY_ORDER, 'junior_high', -1) })
+    const reordered = buildRestoreHintContext(state, undefined, { ...source, order: movePriority(DEFAULT_PRIORITY_ORDER, 'higher_education', 1) })
     expect(reordered).not.toBe(ctx)
-    expect(reordered!.facilities!.find((f) => f.targetId === JUNIOR.targetId)!.rank).toBe(7)
+    expect(reordered!.facilities!.find((f) => f.targetId === TECH.targetId)!.rank).toBe(5)
     const researched = buildRestoreHintContext(state, undefined, { ...source, results: new Map([[HIGH.targetId, RESULT]]) })
     expect(researched!.facilities![0].research?.facts[0].value).toBe('8時40分')
     // 調べた結果が変わると、窓も作り直す

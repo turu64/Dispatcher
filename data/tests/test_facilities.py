@@ -89,7 +89,7 @@ def test_行政区域コードの一覧(muni: facilities.Municipalities):
 # --- 学校 --------------------------------------------------------------------
 
 
-def test_幼稚園と認定こども園は入れない(muni: facilities.Municipalities, tmp_path):
+def test_調査の対象外の学校は入れない(muni: facilities.Municipalities, tmp_path):
     def feature(code: str, type_code: str, name: str) -> dict:
         return {
             "type": "Feature",
@@ -100,14 +100,20 @@ def test_幼稚園と認定こども園は入れない(muni: facilities.Municipa
     path.write_text(
         json.dumps({"type": "FeatureCollection", "features": [
             feature("B101220400001", "16001", "旭川テスト小学校"),
+            feature("C101220400004", "16002", "旭川テスト中学校"),
+            feature("B101220400005", "16014", "旭川テスト義務教育学校"),
             feature("A101220400002", "16011", "旭川テスト幼稚園"),
             feature("A101220400003", "16013", "旭川テストこども園"),
+            # 中等教育学校は高校の課程を含むので残す
+            feature("C101220400006", "16003", "旭川テスト中等教育学校"),
+            feature("C101220400007", "16004", "旭川テスト高等学校"),
         ]}, ensure_ascii=False),
         encoding="utf-8",
     )
     res = load_schools(path, muni)
-    assert [f.name for f in res.facilities] == ["旭川テスト小学校"]
-    assert res.skipped == {"小学校より前(幼稚園・認定こども園)": 2}
+    assert [f.name for f in res.facilities] == ["旭川テスト中等教育学校", "旭川テスト高等学校"]
+    assert res.skipped == {facilities.EXCLUDED_SCHOOL_REASON: 5}
+    assert facilities.EXCLUDED_SCHOOL_REASON == "調査の対象外の学校(幼稚園・小学校・中学校など)"
 
 
 def test_学校(muni: facilities.Municipalities):
@@ -454,9 +460,9 @@ def test_実データの件数(real_report):
         by_kind[f["kind"]] = by_kind.get(f["kind"], 0) + 1
     assert by_kind["hospital"] == 550
     assert by_kind["clinic"] == 3464
-    assert by_kind["school"] == 2824 - report.skipped["P29"].get("休校中", 0) - report.skipped["P29"].get("小学校より前(幼稚園・認定こども園)", 0)
-    # 幼稚園・認定こども園は入らない(2026-11-06)
-    assert not any(f["detail"].get("school_type_code") in ("16011", "16013") for f in items if f["kind"] == "school")
+    assert by_kind["school"] == 2824 - report.skipped["P29"].get("休校中", 0) - report.skipped["P29"].get(facilities.EXCLUDED_SCHOOL_REASON, 0)
+    # 幼稚園・認定こども園・小学校・中学校・義務教育学校は入らない(2026-11-06)
+    assert not any(f["detail"].get("school_type_code") in ("16001", "16002", "16011", "16013", "16014") for f in items if f["kind"] == "school")
     assert len({f["target_id"] for f in items if f["kind"] == "operator"}) == 67
     assert report.skipped["P04"]["歯科診療所"] == 2889
     # 行政区域コードは全部引ける。医療機関の所在地が市町村名で始まらないものだけ空

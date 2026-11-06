@@ -52,7 +52,8 @@ const FILE = {
     item('P04:hosp', 'hospital', 'テスト総合病院', 43.771, 142.361, { beds: 300 }),
     item('P04:clinic', 'clinic', 'テスト内科', 43.765, 142.355, { beds: 0 }),
     item('P29:high', 'school', 'テスト高等学校', 43.775, 142.36, { school_type: '高等学校', open_status: '開校中' }),
-    item('P29:elem', 'school', 'テスト小学校', 43.77, 142.355, { school_type: '小学校' }),
+    // 種別が分からない学校(優先順位の外)
+    item('P29:elem', 'school', 'テスト学校', 43.77, 142.355),
     item('P29:far', 'school', '遠くの高校', 43.9, 142.36, { school_type: '高等学校' }),
     item('P11:テストバス', 'operator', 'テストバス', 43.77, 142.36, { stops: 50, bbox: [43.7, 142.3, 43.8, 142.4] }),
     item('P11:となりバス', 'operator', 'となりバス', 43.775, 142.365, { stops: 9, bbox: [43.77, 142.36, 43.79, 142.38] }),
@@ -200,7 +201,7 @@ describe('ResearchStep', () => {
     setup()
     const list = screen.getByRole('group', { name: '調べる対象の候補' })
     const groups = within(list).getAllByRole('group', { hidden: true }).map((g) => g.getAttribute('aria-label'))
-    expect(groups).toEqual(['周辺のバス事業者', '入院設備のある病院', '高校・特別支援学校', '診療所', 'そのほかの学校(優先順位の外。小学校など)'])
+    expect(groups).toEqual(['周辺のバス事業者', '入院設備のある病院', '高校・特別支援学校', '診療所', 'そのほかの学校(優先順位の外。種別が分からないもの)'])
     // 範囲の外の施設は出ない
     expect(screen.queryByText('遠くの高校')).toBeNull()
     expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト内科'])
@@ -213,7 +214,7 @@ describe('ResearchStep', () => {
   it('重要拠点の優先順位は、欄に今の順の要約とボタンを出し、Dialog の中で並べ替えられる。データの無い種類は「データ未対応」と出す。並べ替えると既定の選び方が変わる', async () => {
     act(() => useResearchStore.setState({ maxTargets: 1 }))
     setup()
-    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 入院設備のある病院、2 鉄道駅・空港、3 高校・特別支援学校 ほか 7 種類')
+    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 入院設備のある病院、2 鉄道駅・空港、3 高校・特別支援学校 ほか 6 種類')
     // 並べ替えの一覧は Dialog の中だけ(閉じている間は出さない)
     expect(screen.queryByRole('list', { name: PRIORITY_TITLE, hidden: true })).toBeNull()
     const trigger = screen.getByRole('button', { name: PRIORITY_TITLE })
@@ -222,7 +223,7 @@ describe('ResearchStep', () => {
     const dialog = screen.getByRole('dialog', { name: PRIORITY_TITLE })
     const priority = within(dialog).getByRole('list', { name: PRIORITY_TITLE })
     const items = within(priority).getAllByRole('listitem')
-    expect(items).toHaveLength(10)
+    expect(items).toHaveLength(9)
     expect(items[0].textContent).toContain('入院設備のある病院')
     expect(within(priority).getAllByText('データ未対応')).toHaveLength(4)
     expect(items[1].textContent).toContain('空港はデータ未対応')
@@ -240,7 +241,7 @@ describe('ResearchStep', () => {
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(trigger))
-    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 高校・特別支援学校、2 入院設備のある病院、3 鉄道駅・空港 ほか 7 種類(変更あり)')
+    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 高校・特別支援学校、2 入院設備のある病院、3 鉄道駅・空港 ほか 6 種類(変更あり)')
     expect(checkedNames()).toEqual(['テスト高等学校'])
 
     // 「既定の並びに戻す」で戻し、「閉じる」で閉じても焦点はボタンに戻る
@@ -282,17 +283,17 @@ describe('ResearchStep', () => {
       el.open = open
       fireEvent(el, new Event('toggle'))
     }
-    const others = 'そのほかの学校(優先順位の外。小学校など)'
+    const others = 'そのほかの学校(優先順位の外。種別が分からないもの)'
     // 選んだ対象の無いまとまりは閉じ、あるまとまりは開いている
     expect(group(others).open).toBe(false)
     expect(group('診療所').open).toBe(true)
 
     // 利用者が開いたまとまりで1件選び、外しても開いたまま
     setOpen(others, true)
-    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト小学校' }))
-    expect(checkedNames()).toContain('テスト小学校')
-    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト小学校' }))
-    expect(checkedNames()).not.toContain('テスト小学校')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト学校' }))
+    expect(checkedNames()).toContain('テスト学校')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト学校' }))
+    expect(checkedNames()).not.toContain('テスト学校')
     expect(group(others).open).toBe(true)
 
     // 最初から開いていたまとまりも、最後の1件を外して閉じない(同じまとまりの中で選び直せる)
@@ -311,13 +312,13 @@ describe('ResearchStep', () => {
   it('上限より多くは選べない。選び直したら「既定の選び方に戻す」で戻せる', () => {
     act(() => useResearchStore.setState({ maxTargets: 4 }))
     setup()
-    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト小学校', hidden: true }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト学校', hidden: true }))
     expect(screen.getByRole('alert').textContent).toContain('4 件まで')
-    expect(checkedNames()).not.toContain('テスト小学校')
+    expect(checkedNames()).not.toContain('テスト学校')
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'テスト内科', hidden: true }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト小学校', hidden: true }))
-    expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト小学校'])
+    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト学校', hidden: true }))
+    expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト学校'])
     fireEvent.click(screen.getByRole('button', { name: '既定の選び方に戻す' }))
     expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト内科'])
   })
@@ -592,10 +593,10 @@ describe('ResearchStep', () => {
 describe('ResearchStep の一覧の畳み方', () => {
   // 診療所 8 件(停留所 S1 から西へ、番号の順に遠くなる)と、優先順位の外の学校 8 件
   function many(prefix: string, kind: string, detail: Record<string, unknown>) {
-    return Array.from({ length: 8 }, (_, k) => item(`${prefix}${k + 1}`, kind, `${kind === 'clinic' ? '診療所' : '小学校'}${k + 1}`, 43.76 + 0.0005 * k, 142.34 - 0.0005 * k, detail))
+    return Array.from({ length: 8 }, (_, k) => item(`${prefix}${k + 1}`, kind, `${kind === 'clinic' ? '診療所' : '学校'}${k + 1}`, 43.76 + 0.0005 * k, 142.34 - 0.0005 * k, detail))
   }
-  const LONG_FILE = { facilities: [...many('P04:c', 'clinic', { beds: 0 }), ...many('P29:e', 'school', { school_type: '小学校' })] }
-  const OTHERS = 'そのほかの学校(優先順位の外。小学校など)'
+  const LONG_FILE = { facilities: [...many('P04:c', 'clinic', { beds: 0 }), ...many('P29:e', 'school', {})] }
+  const OTHERS = 'そのほかの学校(優先順位の外。種別が分からないもの)'
 
   function names(group: string): string[] {
     return within(screen.getByRole('group', { name: group, hidden: true }))
@@ -612,12 +613,12 @@ describe('ResearchStep の一覧の畳み方', () => {
 
   it('選んだ対象の無いまとまりは最初の5件まで。「続きを表示(残り N 件)」で残りを開き、開いた最初の行に焦点を移す', () => {
     setup()
-    expect(names(OTHERS)).toEqual(['小学校1', '小学校2', '小学校3', '小学校4', '小学校5'])
+    expect(names(OTHERS)).toEqual(['学校1', '学校2', '学校3', '学校4', '学校5'])
     const more = within(screen.getByRole('group', { name: OTHERS, hidden: true })).getByRole('button', { name: '続きを表示(残り 3 件)', hidden: true })
     fireEvent.click(more)
     expect(names(OTHERS)).toHaveLength(8)
     expect(within(screen.getByRole('group', { name: OTHERS, hidden: true })).queryByRole('button', { name: /続きを表示/, hidden: true })).toBeNull()
-    expect(document.activeElement?.getAttribute('aria-label')).toBe('小学校6')
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('学校6')
   })
 
   it('選んだ対象のあるまとまりは、選んだ対象のうち最後のものの後ろ3件まで。外しても減らさない。まとまりごとに開く', () => {
@@ -642,7 +643,7 @@ describe('ResearchStep の一覧の畳み方', () => {
         {
           targetId: 'P29:e7',
           kind: 'school',
-          name: '小学校7',
+          name: '学校7',
           status: 'found',
           facts: [{ label: '始業', value: '8時30分', source: 1 }],
           sources: [{ url: 'https://example.jp/e7', title: '学校の案内' }],
@@ -653,7 +654,7 @@ describe('ResearchStep の一覧の畳み方', () => {
       ]),
     )
     expect(names(OTHERS)).toHaveLength(8)
-    expect(screen.getByRole('group', { name: '小学校7の調査の結果', hidden: true }).textContent).toContain('8時30分')
+    expect(screen.getByRole('group', { name: '学校7の調査の結果', hidden: true }).textContent).toContain('8時30分')
   })
 })
 

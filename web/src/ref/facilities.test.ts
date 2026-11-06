@@ -4,6 +4,7 @@ import type { OperatorOverlap } from './busstops'
 import {
   compareOperators,
   defaultSelection,
+  EXCLUDED_SCHOOL_TYPES,
   facilitiesInBounds,
   facilityCategory,
   fetchFacilities,
@@ -42,8 +43,8 @@ const FILE_A = {
     item('P04:clinic', 'clinic', '内科クリニック', 43.765, 142.355, { beds: 0 }),
     item('P29:high', 'school', '第一高等学校', 43.775, 142.36, { school_type: '高等学校', open_status: '開校中' }),
     item('P29:closed', 'school', '休校の高校', 43.775, 142.365, { school_type: '高等学校', open_status: '休校中' }),
-    item('P29:elem', 'school', '小学校', 43.77, 142.355, { school_type: '小学校' }),
-    item('P29:junior', 'school', '中学校', 43.772, 142.358, { school_type: '中学校' }),
+    // 種別が分からない学校(優先順位の外)
+    item('P29:other', 'school', '種別の無い学校', 43.77, 142.355),
     item('P29:univ', 'school', '大学', 43.773, 142.359, { school_type: '大学' }),
     // 北に 1.9km(範囲の中)と 2.5km(範囲の外)
     item('P29:near', 'school', '近くの高校', NORTH_EDGE + 0.017, 142.36, { school_type: '高等学校' }),
@@ -67,10 +68,13 @@ function merged(): Facility[] {
 }
 
 describe('parseFacility', () => {
-  it('幼稚園・幼保連携型認定こども園は読み飛ばす(小学校は読む)', () => {
-    expect(parseFacility(item('P29:k', 'school', '幼稚園', 43, 142, { school_type: '幼稚園' }))).toBeNull()
-    expect(parseFacility(item('P29:n', 'school', 'こども園', 43, 142, { school_type: '幼保連携型認定こども園' }))).toBeNull()
-    expect(parseFacility(item('P29:e', 'school', '小学校', 43, 142, { school_type: '小学校' }))).not.toBeNull()
+  it('調査の対象外の学校(幼稚園・認定こども園・小学校・中学校・義務教育学校)は読み飛ばす(中等教育学校は読む)', () => {
+    for (const t of ['幼稚園', '幼保連携型認定こども園', '小学校', '中学校', '義務教育学校']) {
+      expect(parseFacility(item('P29:x', 'school', t, 43, 142, { school_type: t }))).toBeNull()
+    }
+    expect([...EXCLUDED_SCHOOL_TYPES].sort()).toEqual(['中学校', '小学校', '幼保連携型認定こども園', '幼稚園', '義務教育学校'].sort())
+    expect(parseFacility(item('P29:s', 'school', '中等教育学校', 43, 142, { school_type: '中等教育学校' }))).not.toBeNull()
+    expect(parseFacility(item('P29:u', 'school', '種別の無い学校', 43, 142))).not.toBeNull()
   })
 
   it('学校・病院・事業者の詳しいことを読む', () => {
@@ -154,14 +158,13 @@ describe('範囲と候補', () => {
     expect(isOwnOperator('道北バス', [])).toBe(false)
   })
 
-  it('重要拠点の種類:病院は入院設備のある病院、高校・特別支援、大学など、診療所、中学校。小学校と事業者は優先順位の外', () => {
+  it('重要拠点の種類:病院は入院設備のある病院、高校・特別支援、大学など、診療所。種別が分からない学校と事業者は優先順位の外', () => {
     const cat = (id: string) => facilityCategory(merged().find((f) => f.targetId === id)!)
     expect(cat('P04:hosp-big')).toBe('inpatient_hospital')
     expect(cat('P04:clinic')).toBe('clinic')
     expect(cat('P29:high')).toBe('high_school')
     expect(cat('P29:univ')).toBe('higher_education')
-    expect(cat('P29:junior')).toBe('junior_high')
-    expect(cat('P29:elem')).toBeNull()
+    expect(cat('P29:other')).toBeNull()
     expect(cat('P11:ほかのバス')).toBeNull()
   })
 })
@@ -171,22 +174,21 @@ describe('defaultSelection', () => {
 
   it('優先順位の高い種類から1件ずつ巡回して取り、周辺の事業者(自社を除く)は最後の列。病院は病床の多い順', () => {
     expect(defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 30)).toEqual([
-      // 1巡目:病院・高校・大学・診療所・中学校・事業者
+      // 1巡目:病院・高校・大学・診療所・事業者
       'P04:hosp-big',
       'P29:high',
       'P29:univ',
       'P04:clinic',
-      'P29:junior',
       'P11:ほかのバス',
       // 2巡目
       'P04:hosp-small',
     ])
   })
 
-  it('休校中、優先順位の外(小学校)、停留所から 1,200m より遠い施設は選ばない', () => {
+  it('休校中、優先順位の外(種別が分からない学校)、停留所から 1,200m より遠い施設は選ばない', () => {
     const picked = defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 30)
     expect(picked).not.toContain('P29:closed')
-    expect(picked).not.toContain('P29:elem')
+    expect(picked).not.toContain('P29:other')
     expect(picked).not.toContain('P29:near')
     expect(picked).not.toContain('P11:道北バス(株)')
   })
@@ -213,13 +215,13 @@ describe('defaultSelection', () => {
 describe('groupCandidates', () => {
   it('周辺の事業者 → 優先順位の種類の順 → 優先順位の外、にまとめる(データの無い種類のまとまりは無い)', () => {
     const groups = groupCandidates(researchCandidates(merged(), STOPS, []), DEFAULT_PRIORITY_ORDER)
-    expect(groups.map((g) => g.label)).toEqual([OPERATOR_GROUP, '入院設備のある病院', '高校・特別支援学校', '大学・高専・専修学校', '診療所', '中学校', OTHER_GROUP])
+    expect(groups.map((g) => g.label)).toEqual([OPERATOR_GROUP, '入院設備のある病院', '高校・特別支援学校', '大学・高専・専修学校', '診療所', OTHER_GROUP])
     expect(groups[1].items.map((c) => c.facility.targetId)).toEqual(['P04:hosp-big', 'P04:hosp-small'])
   })
 })
 
 describe('重要拠点の優先順位', () => {
-  it('既定は CLAUDE.md の10段階。データの無い種類は none', () => {
+  it('既定は CLAUDE.md の9段階(中学校は 2026-11-06 に外した)。データの無い種類は none', () => {
     expect(DEFAULT_PRIORITY.map((c) => c.label)).toEqual([
       '入院設備のある病院',
       '鉄道駅・空港',
@@ -228,7 +230,6 @@ describe('重要拠点の優先順位', () => {
       '介護・福祉施設',
       '役所',
       '診療所',
-      '中学校',
       '商業施設・郵便局',
       '観光地',
     ])

@@ -102,12 +102,11 @@ function refDataOf(ref: RefState | undefined): RefData | null {
 
 // ---- 学校・病院の手がかりの施設(T19)----
 
-/** 手がかりに使う重要拠点の種類と、施設の種類(学校・病院)。診療所と小学校などは使わない */
+/** 手がかりに使う重要拠点の種類と、施設の種類(学校・病院)。診療所と種別が分からない学校は使わない */
 const HINT_CATEGORIES: ReadonlyMap<PriorityKey, HintFacility['kind']> = new Map([
   ['inpatient_hospital', 'hospital'],
   ['high_school', 'school'],
   ['higher_education', 'school'],
-  ['junior_high', 'school'],
 ])
 
 /** 休校中の学校は使わない(休校区分が「不明」「調査なし」の学校は使う) */
@@ -173,7 +172,7 @@ function hourFactsOf(r: ResearchResult | undefined): FactLike[] {
 
 /**
  * 前提情報の施設の参照データ(国土数値情報の学校 P29・医療機関 P04)から、学校・病院の手がかりに使う施設を作る。
- * 使うのは重要拠点の優先順位にある学校(中学校・高校・大学など)と入院設備のある病院(診療所・小学校など・事業者は使わない)。
+ * 使うのは重要拠点の優先順位にある学校(高校・大学など)と入院設備のある病院(診療所・種別が分からない学校・事業者は使わない)。
  * 徒歩圏は、施設の位置の区分のバス停の分数 × 分速(到達圏と同じ距離)。優先順位は order の順位、調査の結果があれば要点を付ける。
  * 時間帯の窓は、調査の結果の受付時間・始業・終業から施設ごとに決め、読めなければ既定(gtfs/edit/facilityHours.ts。T27)。
  * 学校は、調査の結果から長期休業の期間も読む(減便の期間と重なるかは画面が overlapLongBreaks で出す)

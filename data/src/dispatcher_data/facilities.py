@@ -108,8 +108,11 @@ SCHOOL_TYPES = {
     "16015": "各種学校",
     "16016": "専修学校",
 }
-# 小学校より前の学校(幼稚園・幼保連携型認定こども園)。前提情報の調査の対象にしないので、施設に入れない(2026-11-06 に利用者が決定)
-PRE_ELEMENTARY_SCHOOL_CODES = {"16011", "16013"}
+# 前提情報の調査の対象外の学校(幼稚園・幼保連携型認定こども園・小学校・中学校・義務教育学校)。施設に入れない
+# (2026-11-06 に利用者が決定。中等教育学校 16003 は高校の課程を含むので残す)。画面の読み込み(web/src/ref/facilities.ts の
+# EXCLUDED_SCHOOL_TYPES)でも外す
+EXCLUDED_SCHOOL_CODES = {"16001", "16002", "16011", "16013", "16014"}
+EXCLUDED_SCHOOL_REASON = "調査の対象外の学校(幼稚園・小学校・中学校など)"
 # 管理者コード(AdminCd)
 MANAGEMENTS = {"0": "その他", "1": "国", "2": "都道府県", "3": "市区町村", "4": "民間"}
 # 休校コード(ClosedSchoolCode)。2 は休校中。9 は定義に無いが、廃校になった学校(森町立石谷小学校など)に付いている
@@ -292,7 +295,7 @@ def _point_and_props(feature: object) -> tuple[float, float, dict[str, Any]] | N
 
 
 def load_schools(path: Path, municipalities: Municipalities) -> LoadResult:
-    """学校(P29)。休校中は除く。"""
+    """学校(P29)。休校中と、調査の対象外の学校(EXCLUDED_SCHOOL_CODES)は除く。"""
     result = LoadResult()
     seen: set[str] = set()
     for feature in _read_features(path):
@@ -305,8 +308,8 @@ def load_schools(path: Path, municipalities: Municipalities) -> LoadResult:
         if not code or not name:
             result.skip("学校コードか名称が空")
             continue
-        if _str(p.get("P29_003")) in PRE_ELEMENTARY_SCHOOL_CODES:
-            result.skip("小学校より前(幼稚園・認定こども園)")
+        if _str(p.get("P29_003")) in EXCLUDED_SCHOOL_CODES:
+            result.skip(EXCLUDED_SCHOOL_REASON)
             continue
         if _str(p.get("P29_007")) == CLOSED_CODE:
             result.skip("休校中")

@@ -43,7 +43,8 @@ const STOPS: Stop[] = [
 const FILE = {
   facilities: [
     { target_id: 'P04:hosp', kind: 'hospital', name: '病院', municipality: '旭川市', lat: 43.77, lon: 142.36, detail: { beds: 100 } },
-    { target_id: 'P29:elem', kind: 'school', name: '小学校', municipality: '旭川市', lat: 43.771, lon: 142.36, detail: { school_type: '小学校' } },
+    // 種別が分からない学校(優先順位の外。小学校・中学校などは読み込まない)
+    { target_id: 'P29:elem', kind: 'school', name: '学校', municipality: '旭川市', lat: 43.771, lon: 142.36, detail: {} },
   ],
 }
 
@@ -254,12 +255,12 @@ describe('FacilityLayer', () => {
     expect(images.has(facilitySymbolId('hospital'))).toBe(true)
     await waitFor(() => expect(sources.get(FACILITIES_SOURCE)!.setData).toHaveBeenCalled())
     const data = sources.get(FACILITIES_SOURCE)!.setData.mock.calls.at(-1)![0] as { features: { properties: { selected: number } }[] }
-    // 既定の選び方:病院は選び、小学校(優先順位の外)は選ばない
+    // 既定の選び方:病院は選び、種別が分からない学校(優先順位の外)は選ばない
     expect(data.features.map((f) => f.properties.selected)).toEqual([1, 0])
     expect(layout[`${FACILITIES_LAYER}.visibility`]).toBe('visible')
     const legend = screen.getByRole('group', { name: '施設の凡例' })
     expect(legend.textContent).toContain('病院 1 件')
-    expect(legend.textContent).toContain('小・中学校など 1 件')
+    expect(legend.textContent).toContain('学校(種別が分からないもの) 1 件')
     expect(legend.textContent).toContain('選んだ対象(1 件)')
     // 凡例の記号は種類ごとに別の形(path)
     const paths = [...legend.querySelectorAll('svg')].map((svg) => [...svg.querySelectorAll('path')].map((p) => p.getAttribute('d')).join('|'))

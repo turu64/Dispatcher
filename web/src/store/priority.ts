@@ -12,7 +12,6 @@ export type PriorityKey =
   | 'welfare'
   | 'government'
   | 'clinic'
-  | 'junior_high'
   | 'commerce_post'
   | 'tourism'
 
@@ -45,7 +44,6 @@ export const DEFAULT_PRIORITY: readonly PriorityCategory[] = [
   { key: 'welfare', label: '介護・福祉施設', data: 'none', dataNote: NO_DATA },
   { key: 'government', label: '役所', data: 'none', dataNote: NO_DATA },
   { key: 'clinic', label: '診療所', data: 'research', dataNote: `${RESEARCH_NOTE_MEDICAL}。病床 19 床以下(歯科を除く)` },
-  { key: 'junior_high', label: '中学校', data: 'research', dataNote: `${RESEARCH_NOTE_SCHOOL}。義務教育学校を含む` },
   { key: 'commerce_post', label: '商業施設・郵便局', data: 'none', dataNote: NO_DATA },
   { key: 'tourism', label: '観光地', data: 'none', dataNote: NO_DATA },
 ]

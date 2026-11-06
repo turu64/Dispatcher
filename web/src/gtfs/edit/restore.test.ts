@@ -610,7 +610,7 @@ function facility(o: Partial<HintFacility> & Pick<HintFacility, 'targetId' | 'la
 }
 
 const HIGH = facility({ targetId: 'P29:高校', name: '学校前高校', ...north(S9, 100) })
-const JUNIOR = facility({ targetId: 'P29:中学', name: '学校前中学校', categoryLabel: '中学校', rank: 8, ...north(S9, 50) })
+const COLLEGE = facility({ targetId: 'P29:大学', name: '学校前大学', categoryLabel: '大学・高専・専修学校', rank: 4, ...north(S9, 50) })
 const HOSPITAL = facility({ targetId: 'P04:病院', name: '病院前病院', kind: 'hospital', categoryLabel: '入院設備のある病院', rank: 1, ...north(C, 200) })
 const HOSPITAL_A = facility({ targetId: 'P04:駅前病院', name: '駅前病院', kind: 'hospital', categoryLabel: '入院設備のある病院', rank: 1, ...north(A, 100) })
 
@@ -762,13 +762,13 @@ describe('足し戻しの手がかり:学校・病院(nearFacility)', () => {
 
   it('施設は、窓に当たるもの、重要拠点の優先順位、距離の順に並べる', () => {
     const { hinter, byId } = facilitySetup()
-    // 中学校(8位)は高校(3位)より近いが、優先順位で後ろ。駅前病院(1位)は窓に当たらない(A は始発で 07:30 発)ので最後
-    const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([JUNIOR, HOSPITAL_A, HIGH]))
-    expect(d.facilities!.map((n) => n.facility.targetId)).toEqual([HIGH.targetId, JUNIOR.targetId, HOSPITAL_A.targetId])
+    // 大学(4位)は高校(3位)より近いが、優先順位で後ろ。駅前病院(1位)は窓に当たらない(A は始発で 07:30 発)ので最後
+    const d = hinter(byId.get('R3_0730_WK')!, facilityCtx([COLLEGE, HOSPITAL_A, HIGH]))
+    expect(d.facilities!.map((n) => n.facility.targetId)).toEqual([HIGH.targetId, COLLEGE.targetId, HOSPITAL_A.targetId])
     expect(bestFacilityRank(d)).toBe(3)
-    // 優先順位を入れ替えると(中学校を 2位に)並びも変わる
-    const swapped = hinter(byId.get('R3_0730_WK')!, facilityCtx([{ ...JUNIOR, rank: 2 }, HOSPITAL_A, HIGH]))
-    expect(swapped.facilities!.map((n) => n.facility.targetId)).toEqual([JUNIOR.targetId, HIGH.targetId, HOSPITAL_A.targetId])
+    // 優先順位を入れ替えると(大学を 2位に)並びも変わる
+    const swapped = hinter(byId.get('R3_0730_WK')!, facilityCtx([{ ...COLLEGE, rank: 2 }, HOSPITAL_A, HIGH]))
+    expect(swapped.facilities!.map((n) => n.facility.targetId)).toEqual([COLLEGE.targetId, HIGH.targetId, HOSPITAL_A.targetId])
   })
 
   it('ctx に施設が無ければ(前提情報を読めていない)出さない。編集後の便には出さない', () => {
@@ -781,7 +781,7 @@ describe('足し戻しの手がかり:学校・病院(nearFacility)', () => {
 
   it('1つの便だけを調べても、索引を作って調べた結果と同じ', () => {
     const { base, plan, edited, hinter, byId } = facilitySetup()
-    const ctx = facilityCtx([HIGH, JUNIOR, HOSPITAL, HOSPITAL_A])
+    const ctx = facilityCtx([HIGH, COLLEGE, HOSPITAL, HOSPITAL_A])
     for (const trip of byId.values()) expect(restoreHints(base, edited, plan, trip, ctx)).toEqual(hinter(trip, ctx))
   })
 

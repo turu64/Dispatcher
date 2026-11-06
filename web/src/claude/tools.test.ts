@@ -719,7 +719,7 @@ WK0800,08:10:00,08:10:00,B,2`),
 
   describe('学校・病院(nearby_facilities と nearFacility。T19)', () => {
     // smallFeed の S9 学校前 (43.79, 142.39) の北 約 100m の高校と、C 病院前 (43.78, 142.38) の北 約 200m の病院、
-    // A 駅前 (43.76, 142.36) の北 約 100m の中学校
+    // A 駅前 (43.76, 142.36) の北 約 100m の大学
     // 窓は、渡さなければ種類の既定の窓(調べた結果からの窓は store/restoreHintContext.ts の hintFacilities が作る)
     const school = (o: Partial<HintFacility> & Pick<HintFacility, 'targetId' | 'name' | 'lat' | 'lon'>): HintFacility => ({
       kind: 'school',
@@ -742,7 +742,7 @@ WK0800,08:10:00,08:10:00,B,2`),
         facts: [{ label: '始業', value: '8時40分', url: 'https://example.jp/high' }],
       },
     })
-    const JUNIOR = school({ targetId: 'P29:中学', name: '駅前中学校', categoryLabel: '中学校', rank: 8, lat: 43.76 + 100 / 111_000, lon: 142.36 })
+    const COLLEGE = school({ targetId: 'P29:大学', name: '駅前大学', categoryLabel: '大学・高専・専修学校', rank: 4, lat: 43.76 + 100 / 111_000, lon: 142.36 })
     const HOSPITAL = school({ targetId: 'P04:病院', name: '病院前病院', kind: 'hospital', categoryLabel: '入院設備のある病院', rank: 1, lat: 43.78 + 200 / 111_000, lon: 142.38 })
 
     /** 比較の日付が土曜の空の比較に、施設を入れた ctx(到達圏を使う2つは出ない) */
@@ -764,14 +764,14 @@ WK0800,08:10:00,08:10:00,B,2`),
     }
 
     it('便の停留所の徒歩圏の学校・病院のうち窓に当たるものを、名前・種類・距離・停留所と時刻つきで返し、nearFacility を付ける', async () => {
-      const { store, deps } = setup({ hintContext: () => ctxWith([JUNIOR, HIGH, HOSPITAL]) })
+      const { store, deps } = setup({ hintContext: () => ctxWith([COLLEGE, HIGH, HOSPITAL]) })
       await withPolicy(deps, store)
       const body = parse((await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)).content)
       const trips = body.trips as { trip_id: string; hints: string[]; hint_texts: string[]; nearby_facilities?: Record<string, unknown>[] }[]
       const byId = new Map(trips.map((t) => [t.trip_id, t]))
 
-      // R3 は A 07:30 発 → S9 学校前 07:40 → B。高校は始業前(7〜9時着)に当たり、駅前中学校は始発の A の近く(着かない)。
-      // 窓に当たらない駅前中学校は、nearby_facilities に入れない
+      // R3 は A 07:30 発 → S9 学校前 07:40 → B。高校は始業前(7〜9時着)に当たり、駅前大学は始発の A の近く(着かない)。
+      // 窓に当たらない駅前大学は、nearby_facilities に入れない
       const r3 = byId.get('R3_0730_WK')!
       expect(r3.hints).toContain('nearFacility')
       expect(r3.hint_texts[r3.hints.indexOf('nearFacility')]).toBe('学校・病院の近く(1 施設)')
@@ -782,7 +782,7 @@ WK0800,08:10:00,08:10:00,B,2`),
       const r2 = byId.get('R2_0900_WK')!
       expect(r2.hints).toContain('nearFacility')
       expect(r2.nearby_facilities!.map((f) => [f.target_id, (f.matches as unknown[]).length])).toEqual([['P04:病院', 1]])
-      // R1 は A → B。駅前中学校の徒歩圏は通るが、窓に当たらない:nearby_facilities の項目は無い
+      // R1 は A → B。駅前大学の徒歩圏は通るが、窓に当たらない:nearby_facilities の項目は無い
       const r1 = byId.get('R1_0800_WK')!
       expect(r1.hints).not.toContain('nearFacility')
       expect(r1).not.toHaveProperty('nearby_facilities')
@@ -809,7 +809,7 @@ WK0800,08:10:00,08:10:00,B,2`),
         ...HOSPITAL,
         windows: facilityWindows('hospital', [{ label: '外来受付時間', value: '〔午前〕8：00～11：30 〔午後〕13：00～15：15（公式ページ記載）' }]),
       }
-      const { store, deps } = setup({ hintContext: () => ctxWith([researchedHigh, researchedHospital, JUNIOR]) })
+      const { store, deps } = setup({ hintContext: () => ctxWith([researchedHigh, researchedHospital, COLLEGE]) })
       await withPolicy(deps, store)
       const body = parse((await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)).content)
       const byId = new Map((body.trips as { trip_id: string; nearby_facilities: Record<string, unknown>[] }[]).map((t) => [t.trip_id, t]))

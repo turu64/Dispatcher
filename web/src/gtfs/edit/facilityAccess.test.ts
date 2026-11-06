@@ -12,7 +12,7 @@ import type { HintFacility } from './restore'
 // - H 病院前:X の北 2km。H2 病院前2:H の北 150m
 // - S 学校前:H の北 1.5km。Y 学校裏:S の北 150m(どの便も乗り降りできない。通過だけ)
 // 施設:名寄病院(H の南 100m。窓はデモの調べた結果の名寄市立総合病院の受付時間から決める)、学校前高校(S の北 100m。既定の窓)、
-// 遠い中学校(X の南 3km。徒歩圏に停留所が無い)
+// 遠い大学(X の南 3km。徒歩圏に停留所が無い)
 // service:WK(月〜金、20261001〜20261130)。比較する日付 20261104 は水曜日、20261107 は土曜日
 
 const ORIGIN = { lat: 43.76, lon: 142.36 }
@@ -60,7 +60,7 @@ const HOSPITAL = facility({
   ...north(PLACES.H, -100),
 })
 const SCHOOL = facility({ targetId: 'P29:高校', name: '学校前高校', ...north(PLACES.S, 100) })
-const FAR = facility({ targetId: 'P29:中学', name: '遠い中学校', categoryLabel: '中学校', rank: 8, ...north(ORIGIN, -3000) })
+const FAR = facility({ targetId: 'P29:大学', name: '遠い大学', categoryLabel: '大学・高専・専修学校', rank: 4, ...north(ORIGIN, -3000) })
 
 const STOPS_CSV = ['stop_id,stop_name,stop_lat,stop_lon', ...Object.entries(PLACES).map(([id, p]) => `${id},停留所${id},${p.lat},${p.lon}`)].join('\n')
 
@@ -132,7 +132,7 @@ describe('facilityAccess(学校・病院の窓に着く便・出る便の前後)
   it('施設を優先順位・距離の順に並べ、徒歩圏に停留所が無い施設は withoutStops に入れる', () => {
     expect(result.reason).toBeNull()
     expect(result.facilities.map((f) => f.targetId)).toEqual(['P04:名寄病院', 'P29:高校'])
-    expect(result.withoutStops).toEqual([{ targetId: 'P29:中学', name: '遠い中学校', kind: 'school', categoryLabel: '中学校', rank: 8 }])
+    expect(result.withoutStops).toEqual([{ targetId: 'P29:大学', name: '遠い大学', kind: 'school', categoryLabel: '大学・高専・専修学校', rank: 4 }])
     expect(result.note).toBe(FACILITY_ACCESS_NOTE)
     expect(result.note).toContain('乗り継ぎと混み具合は見ていません')
   })

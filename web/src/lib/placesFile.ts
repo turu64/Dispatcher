@@ -9,11 +9,12 @@
  */
 
 /** 場所の種類。営業所は出庫・入庫と点呼の場所(休憩も取れる)、車庫は出庫・入庫の場所、休憩施設は休憩を取れる場所 */
-export type PlaceType = 'office' | 'garage' | 'rest'
+export type PlaceType = 'site' | 'office' | 'garage' | 'rest'
 
-export const PLACE_TYPES: readonly PlaceType[] = ['office', 'garage', 'rest']
+export const PLACE_TYPES: readonly PlaceType[] = ['site', 'office', 'garage', 'rest']
 
 export const PLACE_TYPE_LABELS: Record<PlaceType, string> = {
+  site: '営業所・車庫・休憩施設',
   office: '営業所',
   garage: '車庫',
   rest: '休憩施設',
@@ -21,6 +22,7 @@ export const PLACE_TYPE_LABELS: Record<PlaceType, string> = {
 
 /** 種類の説明(画面の補足) */
 export const PLACE_TYPE_NOTES: Record<PlaceType, string> = {
+  site: '営業所・車庫・休憩施設が同じ場所にある拠点。出庫・入庫と点呼の場所で、休憩施設として休憩も取れる',
   office: '出庫・入庫と点呼の場所。休憩も取れる',
   garage: '出庫・入庫の場所',
   rest: '休憩を取れる場所',

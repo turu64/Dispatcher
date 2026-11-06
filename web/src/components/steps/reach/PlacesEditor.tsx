@@ -152,7 +152,8 @@ export function PlacesEditorView({
         <p className="text-muted-foreground">
           {'置いた場所は勤務の数の推定に使います。営業所・車庫は出庫・入庫の回送を数える場所、休憩施設は休憩を数える場所です。' +
             'どの勤務も、最初と最後の停留所から最寄りの営業所・車庫へ回送するとみなすので、営業所・車庫はすべて置いてください。' +
-            '休憩施設を1つでも置くと、休憩施設・営業所の近くの停留所でのすき間だけを休憩に数えます(車庫は休憩に数えません)。'}
+            '休憩施設を1つでも置くと、休憩施設・営業所の近くの停留所でのすき間だけを休憩に数えます(車庫は休憩に数えません)。' +
+            '営業所・車庫・休憩施設が同じ場所にある拠点は、種類「営業所・車庫・休憩施設」で1つ置けば、3つを兼ねます。'}
         </p>
         <p className="text-muted-foreground">
           場所はこの画面の中だけに持ち、サーバーには送りません。GTFS を読み込み直すと一覧は空になります。残すときは JSON に書き出してください。
@@ -166,7 +167,7 @@ export function PlacesEditorView({
               onClick={() => {
                 onReplace(DOHOKU_SAMPLE_PLACES)
                 setMessage({
-                  text: `道北バスのサンプルの ${DOHOKU_SAMPLE_SITE_COUNT} 拠点(営業所・車庫・休憩施設、${DOHOKU_SAMPLE_PLACES.length} 件)を置きました。`,
+                  text: `道北バスのサンプルの営業所・車庫・休憩施設を ${DOHOKU_SAMPLE_SITE_COUNT} か所置きました。`,
                   error: false,
                 })
               }}
@@ -174,7 +175,7 @@ export function PlacesEditorView({
               道北バスの営業所・車庫・休憩施設(サンプル)を置く
             </Button>
             <span className="text-muted-foreground">
-              本社・旭川営業所、名寄出張所、上川営業所、層雲峡出張所、永山出張所。今の一覧を置き換えます。
+              本社・旭川営業所、名寄出張所、上川営業所、層雲峡出張所、永山出張所(どこも営業所・車庫・休憩施設が同じ場所にあるので、1か所に1つずつ置きます)。今の一覧を置き換えます。
             </span>
           </div>
         )}
@@ -184,7 +185,8 @@ export function PlacesEditorView({
             type="single"
             variant="outline"
             size="sm"
-            spacing={0}
+            spacing={1}
+            className="flex-wrap"
             aria-labelledby="places-type-label"
             value={type}
             onValueChange={(v) => {

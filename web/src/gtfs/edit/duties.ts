@@ -94,8 +94,9 @@ export const LONG_DEPOT_DEADHEAD_MIN = 60
  * - depot:営業所。出庫・入庫と点呼の場所で、休憩の場所にも数える
  * - garage:車庫。出庫・入庫の場所。休憩の場所には数えない
  * - rest:休憩施設。休憩の場所
+ * - site:営業所・車庫・休憩施設が同じ場所にある拠点。出庫・入庫と点呼の場所で、休憩施設として休憩の場所を絞る(rest と同じ扱い)
  */
-export type DutyPlaceKind = 'depot' | 'garage' | 'rest'
+export type DutyPlaceKind = 'depot' | 'garage' | 'rest' | 'site'
 
 /** 利用者が足す場所 */
 export interface DutyPlace {
@@ -269,8 +270,10 @@ class Chainer {
     this.turnSec = p.turnaroundMin * 60
     this.sameStopM = p.sameStopM
     this.metersPerSec = (p.deadheadKmh * 1000) / 3600
-    this.depots = places.filter((x) => x.kind === 'depot' || x.kind === 'garage')
-    this.breakPlaces = places.some((x) => x.kind === 'rest') ? places.filter((x) => x.kind === 'rest' || x.kind === 'depot') : null
+    this.depots = places.filter((x) => x.kind === 'depot' || x.kind === 'garage' || x.kind === 'site')
+    this.breakPlaces = places.some((x) => x.kind === 'rest' || x.kind === 'site')
+      ? places.filter((x) => x.kind === 'rest' || x.kind === 'depot' || x.kind === 'site')
+      : null
   }
 
   stop(id: string): Stop {
@@ -457,8 +460,8 @@ function hoursText(min: number): string {
 
 /** 使った仮定の文(画面と変更指示書にそのまま出す) */
 export function dutyAssumptions(p: DutyParams, places: readonly DutyPlace[] = []): string[] {
-  const depots = places.filter((x) => x.kind === 'depot' || x.kind === 'garage').length
-  const rests = places.filter((x) => x.kind === 'rest').length
+  const depots = places.filter((x) => x.kind === 'depot' || x.kind === 'garage' || x.kind === 'site').length
+  const rests = places.filter((x) => x.kind === 'rest' || x.kind === 'site').length
   const bound =
     p.maxBoundMin === BOUND_LIMIT_MIN.extended
       ? `拘束時間は ${hoursText(p.maxBoundMin)}以内(改善基準告示 第5条の延長の上限)`

@@ -80,15 +80,10 @@ describe('PlacesEditorView(営業所・車庫・休憩施設を置く欄)', () =
     const props = renderView({ sampleAvailable: true })
     fireEvent.click(screen.getByRole('button', { name: '道北バスの営業所・車庫・休憩施設(サンプル)を置く' }))
     expect(props.onReplace).toHaveBeenCalledWith(DOHOKU_SAMPLE_PLACES)
-    expect(DOHOKU_SAMPLE_PLACES).toHaveLength(15)
-    expect(new Set(DOHOKU_SAMPLE_PLACES.map((p) => p.name))).toEqual(
-      new Set(['本社・旭川営業所', '名寄出張所', '上川営業所', '層雲峡出張所', '永山出張所']),
-    )
-    // どの拠点も営業所・車庫・休憩施設の3つ
-    for (const name of new Set(DOHOKU_SAMPLE_PLACES.map((p) => p.name))) {
-      expect(DOHOKU_SAMPLE_PLACES.filter((p) => p.name === name).map((p) => p.type).sort()).toEqual(['garage', 'office', 'rest'])
-    }
-    expect(screen.getByText('道北バスのサンプルの 5 拠点(営業所・車庫・休憩施設、15 件)を置きました。')).toBeTruthy()
+    // 営業所・車庫・休憩施設は同じ場所なので、拠点ごとに「営業所・車庫・休憩施設」(site)を1件
+    expect(DOHOKU_SAMPLE_PLACES.map((p) => p.name)).toEqual(['本社・旭川営業所', '名寄出張所', '上川営業所', '層雲峡出張所', '永山出張所'])
+    expect(DOHOKU_SAMPLE_PLACES.every((p) => p.type === 'site')).toBe(true)
+    expect(screen.getByText('道北バスのサンプルの営業所・車庫・休憩施設を 5 か所置きました。')).toBeTruthy()
   })
 
   it('種類を選んで「地図で置く」を押すと、その種類で置き始める', () => {

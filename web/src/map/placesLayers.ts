@@ -16,6 +16,7 @@ export const PLACES_LEGEND_TITLE = '利用者が置いた場所'
 
 /** 種類ごとの色(到達圏・施設の記号の色と重ならない濃い色) */
 export const PLACE_COLORS: Record<PlaceType, string> = {
+  site: '#3F007D',
   office: '#6A3D9A',
   garage: '#8C510A',
   rest: '#01665E',
@@ -23,6 +24,8 @@ export const PLACE_COLORS: Record<PlaceType, string> = {
 
 /** 種類ごとの形(24 × 24)。色だけに頼らないよう形でも分ける */
 export const PLACE_PATHS: Record<PlaceType, string> = {
+  // 五角形(家の形。営業所・車庫・休憩施設がそろった拠点)
+  site: 'M12 2.5 21 9.5V21H3V9.5z',
   // 四角
   office: 'M4.5 4.5h15v15h-15z',
   // ひし形

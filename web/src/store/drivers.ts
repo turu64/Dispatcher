@@ -65,6 +65,7 @@ export interface UserPlace extends DutyPlace {
 export function dutyKindOf(type: PlaceType): DutyPlace['kind'] {
   return type === 'office' ? 'depot' : type
 }
+// site(営業所・車庫・休憩施設が同じ場所の拠点)は、推定でも site(出庫・入庫・点呼の場所で、休憩施設として休憩の場所を絞る)
 
 interface DriverState {
   /** 欠員(その日に乗務できない運転士の数)。入れていなければ null */

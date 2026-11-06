@@ -84,7 +84,7 @@ export function notWeekdayText(date: string): string {
 export function driverCaveats(params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivingMin' | 'maxContinuousMin'>, places: readonly DutyPlace[] = []): string[] {
   const hours = (min: number) => (min % 60 === 0 ? `${min / 60} 時間` : `${Math.floor(min / 60)} 時間 ${min % 60} 分`)
   const depots = places.some((p) => p.kind !== 'rest')
-  const rests = places.some((p) => p.kind === 'rest')
+  const rests = places.some((p) => p.kind === 'rest' || p.kind === 'site')
   return [
     '勤務の数は、要る運転士の数の下限の目安です。実際に要る人数はこれより多くなることがあります。',
     `改善基準告示 第5条の上限(拘束 ${hours(params.maxBoundMin)}・運転 ${hours(params.maxDrivingMin)}・連続運転 ${hours(params.maxContinuousMin)})で勤務を区切りました。`,
@@ -127,7 +127,7 @@ export function rosterCaveatText(operatorRuns: number | null): string {
 /** 使った仮定の短い一覧(拘束・点呼・回送の速さ・置いた場所の数) */
 export function assumptionsSummary(params: Pick<DutyParams, 'maxBoundMin' | 'preCheckMin' | 'postCheckMin' | 'deadheadKmh'>, places: readonly DutyPlace[]): string[] {
   const depots = places.filter((p) => p.kind !== 'rest').length
-  const rests = places.filter((p) => p.kind === 'rest').length
+  const rests = places.filter((p) => p.kind === 'rest' || p.kind === 'site').length
   return [
     `拘束時間の上限 ${params.maxBoundMin / 60} 時間`,
     `点呼 出庫前 ${params.preCheckMin} 分・入庫後 ${params.postCheckMin} 分`,

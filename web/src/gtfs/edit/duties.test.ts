@@ -166,6 +166,23 @@ describe('estimateDuties:営業所・車庫と休憩施設', () => {
     expect(est.longDeadheadDuties).toBe(0)
   })
 
+  it('営業所・車庫・休憩施設がそろった拠点(site)は、同じ場所に営業所と休憩施設を置いたのと同じに数える', () => {
+    const at = STOPS.get('B')!.point!
+    const site: DutyPlace[] = [{ kind: 'site', name: '拠点', ...at }]
+    const separate: DutyPlace[] = [
+      { kind: 'depot', name: '拠点', ...at },
+      { kind: 'garage', name: '拠点', ...at },
+      { kind: 'rest', name: '拠点', ...at },
+    ]
+    // 休憩の場所を絞る(B の近くのすき間だけを休憩に数える)
+    expect(tripsPerDuty(legs, {}, site)).toEqual(tripsPerDuty(legs, {}, separate))
+    expect(tripsPerDuty(legs, {}, site)).toEqual([4, 1])
+    // 出庫・入庫の回送の場所にも数える
+    const est = estimateDuties([leg('a', '06:00', '07:00')], STOPS, {}, site)
+    expect(est.duties[0].deadheadMin).toBe(16)
+    expect(est.assumptions.some((s) => s.includes('営業所・車庫(1 か所)'))).toBe(true)
+  })
+
   it('車庫も出庫・入庫の回送の場所に数える', () => {
     const garage: DutyPlace[] = [{ kind: 'garage', name: '車庫', ...STOPS.get('B')!.point! }]
     const est = estimateDuties([leg('a', '06:00', '07:00')], STOPS, {}, garage)

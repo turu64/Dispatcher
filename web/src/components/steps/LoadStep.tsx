@@ -290,17 +290,19 @@ export default function LoadStep() {
               <AttachmentActions className="gap-1">
                 {shown.isSample && <Badge variant="secondary">サンプル</Badge>}
                 {shown.status === 'done' && (
+                  // 見た目は赤いごみ箱のアイコンだけ。名前(読み上げ・ポインターを重ねたときの表示)は「読み込んだ GTFS を削除」
                   <Button
                     ref={deleteButton}
                     type="button"
-                    variant="ghost"
-                    size="xs"
+                    variant="destructive"
+                    size="icon-sm"
                     disabled={busy !== null}
                     aria-haspopup="dialog"
+                    aria-label="読み込んだ GTFS を削除"
+                    title="読み込んだ GTFS を削除"
                     onClick={() => askDelete(shown.isSample)}
                   >
-                    <Trash2Icon aria-hidden="true" data-icon="inline-start" />
-                    読み込んだ GTFS を削除
+                    <Trash2Icon aria-hidden="true" />
                   </Button>
                 )}
               </AttachmentActions>

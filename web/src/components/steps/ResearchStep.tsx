@@ -1,10 +1,11 @@
-import { ArrowDown, ArrowUp, ExternalLink } from 'lucide-react'
+import { ArrowDown, ArrowUp, ExternalLink, GripVertical } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStore, type StoreApi, type UseBoundStore } from 'zustand'
 import StepSection from '@/components/StepSection'
 import OperationPremise from '@/components/steps/research/OperationPremise'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { checkedAtText, safeUrl, type ResearchResult, type ResearchStatus } from '@/claude/research'
 import { FacilitySymbol } from '@/map/FacilityLayer'
@@ -116,12 +117,16 @@ function prioritySummary(order: readonly PriorityKey[]): string {
 /**
  * 重要拠点の優先順位。欄には今の順の要約と「重要拠点の優先順位」のボタンを出し、Dialog の中で並べ替える
  * (11/6 の利用者の指示。前は開閉(details)の中にあった)。データの無い種類は「データ未対応」。
- * 並べ替えるとすぐに store が変わる(保存のボタンは無い)
+ * 行をドラッグして並べ替える(11/6 の利用者の指示)。ドラッグしている行が別の行の上に来たら、その位置へすぐ動かす。
+ * キーボードでも並べ替えられるよう、行の「上へ」「下へ」のボタンも残す。並べ替えるとすぐに store が変わる(保存のボタンは無い)
  */
 export function PriorityList() {
   const order = usePriorityStore((s) => s.order)
   const move = usePriorityStore((s) => s.move)
+  const moveTo = usePriorityStore((s) => s.moveTo)
   const reset = usePriorityStore((s) => s.reset)
+  // ドラッグしている種類(ドラッグしていなければ null)
+  const [dragging, setDragging] = useState<PriorityKey | null>(null)
   const changed = order.some((k, i) => k !== DEFAULT_PRIORITY[i].key)
   const listRef = useRef<HTMLOListElement>(null)
   // 動かした後も、動かした種類のボタンに焦点を残す(端に着いて押せなくなったら、逆向きのボタンへ)
@@ -155,14 +160,42 @@ export function PriorityList() {
           <DialogHeader>
             <DialogTitle>{PRIORITY_TITLE}</DialogTitle>
             <DialogDescription>
-              上ほど優先します。調べる対象の既定の選び方と、便を平日に戻す判断材料の並びに使います。データのない種類は選べません。
+              上ほど優先します。行をドラッグして並べ替えます(キーボードでは「上へ」「下へ」のボタン)。調べる対象の既定の選び方と、便を平日に戻す判断材料の並びに使います。データのない種類は選べません。
             </DialogDescription>
           </DialogHeader>
           <ol ref={listRef} className="flex flex-col gap-1 text-xs" aria-label={PRIORITY_TITLE}>
             {order.map((key, i) => {
               const cat = priorityCategory(key)
               return (
-                <li key={key} className="flex items-center gap-1.5">
+                <li
+                  key={key}
+                  draggable
+                  data-testid={`priority-row-${key}`}
+                  aria-grabbed={dragging === key ? true : undefined}
+                  onDragStart={(e) => {
+                    setDragging(key)
+                    e.dataTransfer.effectAllowed = 'move'
+                    // 一部のブラウザは何か入れないとドラッグを始めない
+                    e.dataTransfer.setData('text/plain', key)
+                  }}
+                  onDragOver={(e) => {
+                    if (dragging === null) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    if (dragging !== key) moveTo(dragging, i)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setDragging(null)
+                  }}
+                  onDragEnd={() => setDragging(null)}
+                  className={cn(
+                    'flex cursor-grab items-center gap-1.5 rounded-md border border-transparent bg-background px-1 py-1 active:cursor-grabbing',
+                    'hover:border-border',
+                    dragging === key && 'border-dashed border-primary bg-muted opacity-70',
+                  )}
+                >
+                  <GripVertical className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
                   <span className="w-5 text-right tabular-nums">{i + 1}</span>
                   <span className="min-w-0 flex-1">
                     <span className={cat.data === 'none' ? 'text-muted-foreground' : undefined}>{cat.label}</span>

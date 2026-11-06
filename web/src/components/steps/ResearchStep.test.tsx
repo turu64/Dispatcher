@@ -252,6 +252,28 @@ describe('ResearchStep', () => {
     expect(checkedNames()).toEqual(['テスト総合病院'])
   })
 
+  it('重要拠点の優先順位は、行をドラッグして並べ替えられる(ほかの行の上に来たらその位置へ動かす)', () => {
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: PRIORITY_TITLE }))
+    const dialog = screen.getByRole('dialog', { name: PRIORITY_TITLE })
+    const rows = () => within(within(dialog).getByRole('list', { name: PRIORITY_TITLE })).getAllByRole('listitem')
+    const order = () => rows().map((r) => r.getAttribute('data-testid'))
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData: () => {} }
+    const before = order()
+    const third = rows()[2]
+    expect(third.getAttribute('draggable')).toBe('true')
+    // 3番目(高校・特別支援学校)をつかんで、1番目の行の上へ
+    fireEvent.dragStart(third, { dataTransfer })
+    expect(third.getAttribute('aria-grabbed')).toBe('true')
+    fireEvent.dragOver(rows()[0], { dataTransfer })
+    expect(order()[0]).toBe(before[2])
+    expect(order().slice(1, 3)).toEqual(before.slice(0, 2))
+    fireEvent.drop(rows()[0], { dataTransfer })
+    fireEvent.dragEnd(rows()[0], { dataTransfer })
+    expect(rows().some((r) => r.getAttribute('aria-grabbed') === 'true')).toBe(false)
+    expect(screen.getByTestId('priority-summary').textContent).toContain('1 高校・特別支援学校')
+  })
+
   it('まとまりの開閉は利用者が決め、最後の1件を外しても閉じない。外から選ばれたまとまりは開く', () => {
     setup()
     const group = (name: string) => screen.getByRole('group', { name, hidden: true }) as HTMLDetailsElement

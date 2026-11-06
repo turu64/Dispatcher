@@ -74,11 +74,22 @@ export function movePriority(order: readonly PriorityKey[], key: PriorityKey, de
   return next
 }
 
+/** key を to 番目(0 から)へ動かした新しい並び(ドラッグでの並べ替え)。動かない・範囲の外なら同じ並びを返す */
+export function movePriorityTo(order: readonly PriorityKey[], key: PriorityKey, to: number): readonly PriorityKey[] {
+  const i = order.indexOf(key)
+  if (i < 0 || to < 0 || to >= order.length || to === i) return order
+  const next = order.filter((k) => k !== key)
+  next.splice(to, 0, key)
+  return next
+}
+
 interface PriorityState {
   /** 重要拠点の種類の並び(先頭が最も高い) */
   order: readonly PriorityKey[]
   /** 1つ上(delta -1)か下(+1)へ動かす */
   move: (key: PriorityKey, delta: -1 | 1) => void
+  /** to 番目(0 から)へ動かす(ドラッグでの並べ替え) */
+  moveTo: (key: PriorityKey, to: number) => void
   /** 既定の並びに戻す */
   reset: () => void
 }
@@ -91,6 +102,10 @@ export const usePriorityStore = create<PriorityState>()((set, get) => ({
   order: DEFAULT_PRIORITY_ORDER,
   move: (key, delta) => {
     const next = movePriority(get().order, key, delta)
+    if (next !== get().order) set({ order: next })
+  },
+  moveTo: (key, to) => {
+    const next = movePriorityTo(get().order, key, to)
     if (next !== get().order) set({ order: next })
   },
   reset: () => set({ order: DEFAULT_PRIORITY_ORDER }),

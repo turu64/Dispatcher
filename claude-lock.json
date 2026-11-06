@@ -9,16 +9,16 @@
     "./agents/coordinator.md": {
       "kind": "agent",
       "id": "agent_013ycyoYo5CcDwC7cyWaZGDP",
-      "version": "4",
-      "hash": "a8db21e49bcef4c5a182481f4c54d4c6",
-      "remote_hash": "6a71e0bd0d2bf1c6197104eb05ec079b"
+      "version": "5",
+      "hash": "e91a53b4d28f49251069383b1567bbbc",
+      "remote_hash": "7084e9aac4cbe0dc4a7e953d4ebdec9f"
     },
     "./agents/researcher.md": {
       "kind": "agent",
       "id": "agent_01CsHrdrSR9itoevdrSpjGUM",
-      "version": "1",
-      "hash": "2439095254a6d0bb18e24f1399369949",
-      "remote_hash": "d510f22a89388b79a5124a88a05554be"
+      "version": "2",
+      "hash": "66193cf3a5e168b31cb67d5987e6b700",
+      "remote_hash": "b14ba6f52c86005a40a49b012c10cbfc"
     },
     "./environments/dispatcher.yaml": {
       "kind": "environment",

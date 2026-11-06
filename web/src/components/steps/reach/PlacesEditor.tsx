@@ -2,12 +2,18 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { DUTY_DEFAULTS } from '@/gtfs/edit/duties'
 import type { Stop } from '@/gtfs/parse'
 import { MAX_PLACE_NAME, MAX_PLACES, PLACE_TYPE_LABELS, type PlaceInput, type PlaceType } from '@/lib/userPlaces'
 import { PlaceSymbol } from '@/map/PlacesLayer'
 import { useDriversStore, type UserPlace } from '@/store/drivers'
 import { useGtfsStore } from '@/store/gtfs'
 import { searchStops } from './places'
+
+const REMOTE_WAIT_MIN = DUTY_DEFAULTS.maxRemoteWaitMin ?? 0
+/** 営業所から遠い停留所で待つ時間の上限('1 時間 30 分') */
+const REMOTE_WAIT_TEXT =
+  REMOTE_WAIT_MIN % 60 === 0 ? `${REMOTE_WAIT_MIN / 60} 時間` : `${Math.floor(REMOTE_WAIT_MIN / 60)} 時間 ${REMOTE_WAIT_MIN % 60} 分`
 
 /**
  * 前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)の中の、営業所を置く欄
@@ -77,7 +83,7 @@ export function PlacesEditorView({
         <p className="text-muted-foreground">
           {'置いた営業所は勤務の数の推定に使います。営業所は出庫・入庫と点呼の場所で、休憩も取れる場所とみなします。' +
             'どの勤務も、最初と最後の停留所から最寄りの営業所へ回送するとみなすので、営業所はすべて置いてください。' +
-            '営業所を1つでも置くと、営業所から遠い停留所で 1 時間 30 分より長く待つすき間は、営業所へ戻って休むとみなします。'}
+            `営業所を1つでも置くと、営業所から遠い停留所で ${REMOTE_WAIT_TEXT}より長く待つすき間は、営業所へ戻って休むとみなします。`}
         </p>
         <p className="text-muted-foreground">
           場所はこの画面の中だけに持ち、サーバーには送りません。GTFS を読み込み直すと一覧は空になります。

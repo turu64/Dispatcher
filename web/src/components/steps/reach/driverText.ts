@@ -1,4 +1,4 @@
-import type { DutyParams, DutyPlace } from '@/gtfs/edit/duties'
+import { DUTY_DEFAULTS, type DutyParams, type DutyPlace } from '@/gtfs/edit/duties'
 import { formatDateJa } from '@/lib/dates'
 import type { ParseResult } from '@/reach/input'
 import { MAX_ROSTER, MAX_SHORTAGE, WORK_DAYS_RANGE, type DriverNeed, type DriverSupply, type DriverVerdict } from '@/store/drivers'
@@ -123,8 +123,12 @@ export function notWeekdayText(date: string): string {
 /**
  * 断り書き。下限の目安であること、改善基準告示の上限で区切ったこと、事業者が決めること、営業所の扱い
  */
-export function driverCaveats(params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivingMin' | 'maxContinuousMin'>, places: readonly DutyPlace[] = []): string[] {
+export function driverCaveats(
+  params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivingMin' | 'maxContinuousMin'> & Partial<Pick<DutyParams, 'maxRemoteWaitMin'>>,
+  places: readonly DutyPlace[] = [],
+): string[] {
   const hours = (min: number) => (min % 60 === 0 ? `${min / 60} 時間` : `${Math.floor(min / 60)} 時間 ${min % 60} 分`)
+  const remoteWait = params.maxRemoteWaitMin === undefined ? DUTY_DEFAULTS.maxRemoteWaitMin : params.maxRemoteWaitMin
   const offices = places.length > 0
   return [
     '勤務の数は、要る運転士の数の下限の目安です。実際に要る人数はこれより多くなることがあります。',
@@ -134,7 +138,9 @@ export function driverCaveats(params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivi
       ? '出庫・入庫の回送は、最寄りの営業所との直線距離から見積もっています。'
       : '営業所を置いていないため、出庫・入庫の回送を 0 として数えています。',
     offices
-      ? '休憩はどの停留所でのすき間にも数え、営業所から遠い停留所で 1 時間 30 分より長く待つすき間は営業所へ戻って休むとみなす甘めの数え方です。'
+      ? remoteWait === null
+        ? '休憩はどの停留所でのすき間にも数える甘めの数え方です。'
+        : `休憩はどの停留所でのすき間にも数え、営業所から遠い停留所で ${hours(remoteWait)}より長く待つすき間は営業所へ戻って休むとみなす甘めの数え方です。`
       : '営業所を置いていないため、どの停留所でのすき間も休憩に数える甘めの数え方です。',
   ]
 }

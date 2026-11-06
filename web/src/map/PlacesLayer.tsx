@@ -19,8 +19,8 @@ import {
 } from './placesLayers'
 
 /**
- * 利用者が置いた営業所・車庫・休憩施設(指摘 24、docs/tasks-1105.md の D05)を地図に出す。
- * 種類ごとに形と色を分け(営業所は四角、車庫はひし形、休憩施設は三角)、右上に凡例「利用者が置いた場所」を出す。
+ * 利用者が置いた営業所(指摘 24、docs/tasks-1105.md の D05)を地図に出す。
+ * 記号は四角(11/6 に種類を営業所1つにまとめた)で、右上に凡例「利用者が置いた場所」(「営業所 N か所」)を出す。
  * 「地図で置く」(store/drivers.ts の placing)の間は、地図を1回押した位置に場所を足す。地図を動かす・拡大する操作は
  * そのまま使える(MapLibre は動かした後には click を出さない)。Esc でやめる。
  * 場所は前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)で置き、前提情報・影響・平日便を戻す手順の地図に出す。
@@ -40,7 +40,7 @@ export function PlaceSymbol({ type, className }: { type: PlaceType; className?: 
   )
 }
 
-/** 凡例(種類ごとの数)。置いている途中なら、押して置くことと Esc でやめることを出す */
+/** 凡例(「営業所 N か所」)。置いている途中なら、押して置くことと Esc でやめることを出す */
 export function PlacesLegend({ places, placing }: { places: readonly UserPlace[]; placing: PlaceType | null }) {
   const counts = new Map<PlaceType, number>()
   for (const p of places) counts.set(p.type, (counts.get(p.type) ?? 0) + 1)

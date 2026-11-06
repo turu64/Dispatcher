@@ -106,18 +106,18 @@ describe('DriverSummaryView(変更指示書のまとまり)', () => {
     expect(verdict.className).toContain('font-semibold')
   })
 
-  it('営業所・車庫・休憩施設を置くと、仮定の一覧にその数と、回送・休憩の数え方を出す。置いた場所の名前は出さない', () => {
+  it('営業所を置くと、仮定の一覧にその数と、回送・休憩の数え方を出す。置いた営業所の名前は出さない', () => {
     const places = [
-      { kind: 'depot' as const, name: '旭川営業所テスト', lat: 43.76, lon: 142.36 },
-      { kind: 'garage' as const, name: '永山車庫テスト', lat: 43.77, lon: 142.36 },
-      { kind: 'rest' as const, name: '休憩所テスト', lat: 43.76, lon: 142.37 },
+      { name: '旭川営業所テスト', lat: 43.76, lon: 142.36 },
+      { name: '永山出張所テスト', lat: 43.77, lon: 142.36 },
+      { name: '名寄出張所テスト', lat: 43.76, lon: 142.37 },
     ]
     render(<DriverSummaryView comparison={comparisonOf({ places })} />)
     const list = screen.getByRole('list', { name: '要る運転士の数の仮定' }).textContent ?? ''
-    expect(list).toContain('営業所・車庫(2 か所)と最初・最後の停留所の間の回送を、拘束時間と運転時間に入れます')
-    expect(list).toContain('休憩は、休憩施設(1 か所)・営業所の 300m 以内の停留所でのすき間だけに数えます(車庫は出庫・入庫の場所で、休憩には数えません)')
-    expect(list).not.toContain('営業所・車庫の位置がないため')
-    expect(list).not.toContain('休憩施設の位置がないため')
+    expect(list).toContain('営業所(3 か所)と最初・最後の停留所の間の回送を、拘束時間と運転時間に入れます')
+    expect(list).toContain('休憩は、営業所の 300m 以内の停留所でのすき間だけに数えます')
+    expect(list).not.toContain('営業所の位置がないため')
+    expect(list).not.toMatch(/車庫|休憩施設/)
     const block = screen.getByTestId('driver-summary').textContent ?? ''
     for (const p of places) expect(block).not.toContain(p.name)
     cleanup()
@@ -125,8 +125,8 @@ describe('DriverSummaryView(変更指示書のまとまり)', () => {
     // 置かなければ、位置がない旨を出す
     render(<DriverSummaryView comparison={comparisonOf()} />)
     const none = screen.getByRole('list', { name: '要る運転士の数の仮定' }).textContent ?? ''
-    expect(none).toContain('営業所・車庫の位置がないため、出庫・入庫の回送は数えません')
-    expect(none).toContain('休憩施設の位置がないため')
+    expect(none).toContain('営業所の位置がないため、出庫・入庫の回送は数えません')
+    expect(none).toContain('営業所の位置がないため、どの停留所でのすき間も休憩に数えます')
   })
 
   it('在籍の運転士の数は入れたときだけ、乗務できる運転士と減便後に要る勤務の数を参考に並べる。置いた場所の名前は出さない', () => {
@@ -134,7 +134,7 @@ describe('DriverSummaryView(変更指示書のまとまり)', () => {
     expect(screen.queryByTestId('driver-summary-roster')).toBeNull()
     cleanup()
 
-    const places = [{ kind: 'depot' as const, name: '秘匿の営業所S', lat: 43.76, lon: 142.36 }]
+    const places = [{ name: '秘匿の営業所S', lat: 43.76, lon: 142.36 }]
     render(<DriverSummaryView comparison={comparisonOf({ shortage: 1, roster: 3, places })} />)
     const roster = screen.getByTestId('driver-summary-roster').textContent ?? ''
     expect(roster).toContain('参考:乗務できる運転士(在籍 3 − 欠員 1)2 人/減便後に要る勤務の数(目安)1。')
@@ -170,7 +170,7 @@ describe('DriverSummary(変更指示書に差し込む。承認済みの最後�
     expect(within(table()).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['', '減便前', '減便後', '差'])
     expect(screen.queryByTestId('driver-summary-verdict')).toBeNull()
     act(() => useDriversStore.getState().setShortage(5))
-    expect(screen.getByTestId('driver-summary-verdict').textContent).toMatch(/^欠員 5 人:⚠ 減便で減る勤務の数\(目安\)\d+ < 欠員 5 → あと \d+ 足りない目安です。$/)
+    expect(screen.getByTestId('driver-summary-verdict').textContent).toMatch(/^欠員 5 人:⚠ 減便で減る勤務の数\(目安\)-?\d+ < 欠員 5 → あと \d+ 足りない目安です。$/)
     act(() => useDriversStore.getState().setParams({ maxBoundMin: BOUND_LIMIT_MIN.extended }))
     expect(screen.getByRole('list', { name: '要る運転士の数の仮定' }).textContent).toContain('拘束時間は 15 時間以内')
   })

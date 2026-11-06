@@ -20,16 +20,16 @@ import { compareStrings } from './signature'
  *
  * 法令の条件(既定値。params で変えられる。改善基準告示 第5条、docs/research/dia-planning.md 4.5・4.6):
  * - 拘束時間:出庫前の点呼(30 分)から入庫後の点呼(15 分)まで 13 時間以内(延長の上限の 15 時間に切り替えられる)。
- *   places に営業所・車庫があれば、最初の停留所・最後の停留所と最寄りの営業所・車庫の間の回送を足す(運転時間と連続運転にも入れる)
+ *   places に営業所があれば、最初の停留所・最後の停留所と最寄りの営業所の間の回送を足す(運転時間と連続運転にも入れる)
  * - 運転時間:9 時間以内(2日平均で1日9時間の基準を、その日だけに当てはめた目安)
  * - 連続運転:4 時間以内。10 分以上のすき間を合わせて 30 分になったら、連続運転を数え直す
- * - 休憩の場所:places に休憩施設があれば、休憩施設・営業所の params.placeRadiusM 以内の停留所(前の便の終着か次の便の始発)
- *   でのすき間だけを休憩に数える。車庫は出庫・入庫の場所で、休憩の場所には数えない。休憩施設が無ければ、どの停留所のすき間も休憩に数える
- * - 事業場外の休憩(営業所・車庫の外での休憩)の合計の上限(3 時間)は任意の条件で、既定は使わない
+ * - 休憩の場所:places に営業所(休憩施設もある)が1つでもあれば、営業所の params.placeRadiusM 以内の停留所(前の便の終着か
+ *   次の便の始発)でのすき間だけを休憩に数える。営業所が無ければ、どの停留所のすき間も休憩に数える
+ * - 事業場外の休憩(営業所の外での休憩)の合計の上限(3 時間)は任意の条件で、既定は使わない
  * - どの勤務も、その便で終えても条件を満たすように足す(入庫の回送と点呼まで含めて確かめる)。1便だけで条件を超える便は、
  *   その便だけの勤務にして overLimit に印を付ける
- * - 出庫か入庫の回送が片道 LONG_DEPOT_DEADHEAD_MIN 分を超える勤務を数える(longDeadheadDuties)。営業所・車庫が路線から遠いと、
- *   回送だけで上限に近づいて勤務が細かく分かれ、数が跳ね上がる(道北バスで遠い営業所を1つ置くと 82 → 400 超)。画面で注意に出す
+ * - 出庫か入庫の回送が片道 LONG_DEPOT_DEADHEAD_MIN 分を超える勤務を数える(longDeadheadDuties)。営業所が路線から遠いと、
+ *   回送だけで上限に近づいて勤務が細かく分かれ、数が跳ね上がる(道北バスで遠い営業所を1つ置くと 79 → 400 超。回送 30km/h)。画面で注意に出す
  *
  * 車両の数の下限の目安:法令の条件を外し、折り返しと回送だけで同じ手順でつないだ数(chained)と、同時に営業運行中の便の
  * 最大(maxConcurrent)。
@@ -61,7 +61,7 @@ export interface DutyParams {
   deadheadFactor: number
   /** 回送の速さ(km/h) */
   deadheadKmh: number
-  /** 営業所・車庫・休憩施設に近い停留所とみなす距離(m) */
+  /** 営業所に近い停留所とみなす距離(m) */
   placeRadiusM: number
   /** 事業場外の休憩の合計の上限(分)。null なら使わない */
   offSiteBreakMaxMin: number | null
@@ -78,7 +78,7 @@ export const DUTY_DEFAULTS: DutyParams = {
   turnaroundMin: 5,
   sameStopM: 300,
   deadheadFactor: 1.3,
-  deadheadKmh: 20,
+  deadheadKmh: 30,
   placeRadiusM: 300,
   offSiteBreakMaxMin: null,
 }
@@ -90,17 +90,10 @@ export const OFF_SITE_BREAK_LIMIT_MIN = 3 * 60
 export const LONG_DEPOT_DEADHEAD_MIN = 60
 
 /**
- * 利用者が足す場所の、推定での種類。
- * - depot:営業所。出庫・入庫と点呼の場所で、休憩の場所にも数える
- * - garage:車庫。出庫・入庫の場所。休憩の場所には数えない
- * - rest:休憩施設。休憩の場所
- * - site:営業所・車庫・休憩施設が同じ場所にある拠点。出庫・入庫と点呼の場所で、休憩施設として休憩の場所を絞る(rest と同じ扱い)
+ * 利用者が足す営業所(2026-11-06 に種類を営業所1つにまとめた)。出庫・入庫と点呼の場所で、休憩施設もある。
+ * 1つでも置くと、出庫・入庫の回送をその場所との間で数え、休憩はその近くのすき間だけに数える
  */
-export type DutyPlaceKind = 'depot' | 'garage' | 'rest' | 'site'
-
-/** 利用者が足す場所 */
 export interface DutyPlace {
-  kind: DutyPlaceKind
   name: string
   lat: number
   lon: number
@@ -120,9 +113,9 @@ export interface Duty {
   drivingMin: number
   /** そのうち回送(分) */
   deadheadMin: number
-  /** そのうち出庫の回送(営業所・車庫から最初の停留所。分) */
+  /** そのうち出庫の回送(営業所から最初の停留所。分) */
   pullOutMin: number
-  /** そのうち入庫の回送(最後の停留所から営業所・車庫。分) */
+  /** そのうち入庫の回送(最後の停留所から営業所。分) */
   pullInMin: number
   /** 連続運転の最大(分) */
   maxContinuousMin: number
@@ -216,11 +209,11 @@ interface Stop {
   name: string
   key: string
   point: { lat: number; lon: number } | null
-  /** 最寄りの営業所・車庫との回送(秒)。営業所・車庫が無いか座標が無ければ 0 */
+  /** 最寄りの営業所との回送(秒)。営業所が無いか座標が無ければ 0 */
   depotSec: number
-  /** 休憩に数える停留所か(休憩施設・営業所の近く。休憩施設が無ければどこでも) */
+  /** 休憩に数える停留所か(営業所の近く。営業所が無ければどこでも) */
   breakOk: boolean
-  /** 営業所・車庫の近くか(事業場外の休憩の判定) */
+  /** 営業所の近くか(事業場外の休憩の判定) */
   nearDepot: boolean
 }
 
@@ -256,10 +249,10 @@ class Chainer {
   private readonly turnSec: number
   private readonly sameStopM: number
   private readonly metersPerSec: number
-  /** 出庫・入庫の場所(営業所と車庫) */
-  private readonly depots: DutyPlace[]
-  /** 休憩の場所(休憩施設と営業所。車庫は入れない)。休憩施設が無ければ null(どこでも休憩に数える) */
-  private readonly breakPlaces: DutyPlace[] | null
+  /** 出庫・入庫の場所(営業所) */
+  private readonly depots: readonly DutyPlace[]
+  /** 休憩の場所(営業所)。営業所が無ければ null(どこでも休憩に数える) */
+  private readonly breakPlaces: readonly DutyPlace[] | null
   private readonly stopPoints: ReadonlyMap<string, StopPoint>
   private readonly p: DutyParams
   stopsWithoutPoint = 0
@@ -270,10 +263,8 @@ class Chainer {
     this.turnSec = p.turnaroundMin * 60
     this.sameStopM = p.sameStopM
     this.metersPerSec = (p.deadheadKmh * 1000) / 3600
-    this.depots = places.filter((x) => x.kind === 'depot' || x.kind === 'garage' || x.kind === 'site')
-    this.breakPlaces = places.some((x) => x.kind === 'rest' || x.kind === 'site')
-      ? places.filter((x) => x.kind === 'rest' || x.kind === 'depot' || x.kind === 'site')
-      : null
+    this.depots = places
+    this.breakPlaces = places.length > 0 ? places : null
   }
 
   stop(id: string): Stop {
@@ -460,8 +451,7 @@ function hoursText(min: number): string {
 
 /** 使った仮定の文(画面と変更指示書にそのまま出す) */
 export function dutyAssumptions(p: DutyParams, places: readonly DutyPlace[] = []): string[] {
-  const depots = places.filter((x) => x.kind === 'depot' || x.kind === 'garage' || x.kind === 'site').length
-  const rests = places.filter((x) => x.kind === 'rest' || x.kind === 'site').length
+  const offices = places.length
   const bound =
     p.maxBoundMin === BOUND_LIMIT_MIN.extended
       ? `拘束時間は ${hoursText(p.maxBoundMin)}以内(改善基準告示 第5条の延長の上限)`
@@ -471,20 +461,20 @@ export function dutyAssumptions(p: DutyParams, places: readonly DutyPlace[] = []
   const lines = [
     '便を始発時刻の順に、つなげる勤務のうち最後の便の到着が最も遅い勤務へつなぎ、つなげなければ新しい勤務にします(block_id は使いません)',
     `出庫前の点呼 ${p.preCheckMin} 分と入庫後の点呼 ${p.postCheckMin} 分を拘束時間に入れます`,
-    depots > 0
-      ? `営業所・車庫(${depots} か所)と最初・最後の停留所の間の回送を、拘束時間と運転時間に入れます`
-      : '営業所・車庫の位置がないため、出庫・入庫の回送は数えません',
+    offices > 0
+      ? `営業所(${offices} か所)と最初・最後の停留所の間の回送を、拘束時間と運転時間に入れます`
+      : '営業所の位置がないため、出庫・入庫の回送は数えません',
     `同じ停留所(停留所名が同じか ${p.sameStopM}m 以内)での折り返しは ${p.turnaroundMin} 分以上とします`,
     `別の停留所へは、折り返し ${p.turnaroundMin} 分に回送(直線距離の ${p.deadheadFactor} 倍を時速 ${p.deadheadKmh}km)を足した時間が要るとします。回送は運転時間に入れます`,
     bound,
     `運転時間は ${hoursText(p.maxDrivingMin)}以内(改善基準告示 第5条の「2日平均で1日 9 時間以内」を、この日だけに当てはめた目安)`,
     `連続運転は ${hoursText(p.maxContinuousMin)}以内とし、${p.minBreakMin} 分以上のすき間を合わせて ${p.breakResetMin} 分になったら数え直します(改善基準告示 第5条)`,
-    rests > 0
-      ? `休憩は、休憩施設(${rests} か所)・営業所の ${p.placeRadiusM}m 以内の停留所でのすき間だけに数えます(車庫は出庫・入庫の場所で、休憩には数えません)`
-      : '休憩施設の位置がないため、どの停留所でのすき間も休憩に数えます',
+    offices > 0
+      ? `休憩は、営業所の ${p.placeRadiusM}m 以内の停留所でのすき間だけに数えます`
+      : '営業所の位置がないため、どの停留所でのすき間も休憩に数えます',
   ]
   if (p.offSiteBreakMaxMin !== null) {
-    lines.push(`営業所・車庫の外での休憩は、合わせて ${hoursText(p.offSiteBreakMaxMin)}以内とします`)
+    lines.push(`営業所の外での休憩は、合わせて ${hoursText(p.offSiteBreakMaxMin)}以内とします`)
   }
   lines.push(
     '勤務の数は下限の目安です。実際の仕業・交番、休息期間、36協定、予備の要員、交代の場所は事業者が決めます',

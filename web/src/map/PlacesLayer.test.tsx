@@ -70,7 +70,7 @@ function fakeMap() {
 
 const immediateImage = () => Promise.resolve({} as HTMLImageElement)
 
-const PLACE: UserPlace = { id: 'p1', type: 'office', kind: 'depot', name: '営業所A', lat: 43.77, lon: 142.36 }
+const PLACE: UserPlace = { id: 'p1', type: 'office', name: '営業所A', lat: 43.77, lon: 142.36 }
 
 function resetDrivers(places: UserPlace[] = []) {
   useDriversStore.setState({ shortage: null, params: { ...DUTY_DEFAULTS }, places, placing: null })
@@ -97,16 +97,15 @@ describe('PlacesLayer の材料', () => {
     })
   })
 
-  it('種類ごとに色と形の違う画像を1回ずつ足し、片付けで消す', async () => {
+  it('営業所の記号(1種類)の画像を1回だけ足し、片付けで消す', async () => {
     const fake = fakeMap()
     const load = vi.fn(immediateImage)
     await addPlaceImages(fake.map, undefined, load)
     await addPlaceImages(fake.map, undefined, load)
-    expect(load).toHaveBeenCalledTimes(4)
-    expect([...fake.images].sort()).toEqual([placeImageId('garage'), placeImageId('office'), placeImageId('rest'), placeImageId('site')])
-    expect(new Set(Object.values(PLACE_COLORS)).size).toBe(4)
-    const svgs = (['site', 'office', 'garage', 'rest'] as const).map((t) => placeSymbolSvg(t))
-    expect(new Set(svgs.map((s) => s.match(/d="([^"]+)"/)?.[1])).size).toBe(4)
+    expect(load).toHaveBeenCalledTimes(1)
+    expect([...fake.images]).toEqual([placeImageId('office')])
+    expect(Object.keys(PLACE_COLORS)).toEqual(['office'])
+    expect(placeSymbolSvg('office')).toContain(`fill="${PLACE_COLORS.office}"`)
     addPlaceLayers(fake.map)
     expect(fake.sources.has(PLACES_SOURCE)).toBe(true)
     expect(fake.layers.has(PLACES_LAYER)).toBe(true)
@@ -124,8 +123,8 @@ describe('PlacesLayer(地図の記号と凡例)', () => {
     expect(fake.layers.size).toBe(0)
   })
 
-  it('場所があれば記号を足し、凡例に「利用者が置いた場所」と種類ごとの数を出す', async () => {
-    const fake = setup([PLACE, { ...PLACE, id: 'p2', type: 'rest', kind: 'rest', name: '休憩所' }])
+  it('場所があれば記号を足し、凡例に「利用者が置いた場所」と「営業所 N か所」を出す', async () => {
+    const fake = setup([PLACE, { ...PLACE, id: 'p2', name: '営業所B' }])
     render(<PlacesLayer visible loadImage={immediateImage} />)
     await waitFor(() => expect(fake.layers.has(PLACES_LAYER)).toBe(true))
     await waitFor(() => expect(fake.sources.get(PLACES_SOURCE)!.setData).toHaveBeenCalled())
@@ -134,9 +133,8 @@ describe('PlacesLayer(地図の記号と凡例)', () => {
     expect(fake.layout[`${PLACES_LAYER}.visibility`]).toBe('visible')
     const legend = screen.getByRole('group', { name: '利用者が置いた場所の凡例' })
     expect(legend.textContent).toContain(PLACES_LEGEND_TITLE)
-    expect(legend.textContent).toContain('営業所 1 か所')
-    expect(legend.textContent).toContain('休憩施設 1 か所')
-    expect(legend.textContent).not.toContain('車庫')
+    expect(legend.textContent).toBe(`${PLACES_LEGEND_TITLE}営業所 2 か所`)
+    expect(legend.textContent).not.toMatch(/車庫|休憩施設/)
   })
 
   it('地図を隠す手順・場所を見せない手順(visible が false)では何も出さず、記号も隠す', async () => {
@@ -161,13 +159,13 @@ describe('PlacesLayer(地図で置く)', () => {
   it('置き始めると十字の印にし、地図を1回押した位置に場所を足して置き終える。地図は動かさない', async () => {
     const fake = setup()
     render(<PlacesLayer visible loadImage={immediateImage} />)
-    act(() => useDriversStore.getState().startPlacing('garage'))
+    act(() => useDriversStore.getState().startPlacing('office'))
     expect(fake.canvas.style.cursor).toBe('crosshair')
-    expect(screen.getByRole('status').textContent).toContain('地図を押すと車庫を置きます(Esc でやめる)')
+    expect(screen.getByRole('status').textContent).toContain('地図を押すと営業所を置きます(Esc でやめる)')
     act(() => fake.click(142.4, 43.8))
     const places = useDriversStore.getState().places
     expect(places).toHaveLength(1)
-    expect(places[0]).toMatchObject({ type: 'garage', kind: 'garage', name: '車庫 1', lat: 43.8, lon: 142.4 })
+    expect(places[0]).toMatchObject({ type: 'office', name: '営業所 1', lat: 43.8, lon: 142.4 })
     expect(useDriversStore.getState().placing).toBeNull()
     expect(fake.canvas.style.cursor).toBe('')
     // 置き終えたら、もう一度押しても足さない
@@ -180,9 +178,9 @@ describe('PlacesLayer(地図で置く)', () => {
     const fake = setup([PLACE])
     render(<PlacesLayer visible loadImage={immediateImage} />)
     await waitFor(() => expect(fake.handlers.get(`click:${PLACES_LAYER}`)?.size).toBe(1))
-    act(() => useDriversStore.getState().startPlacing('rest'))
+    act(() => useDriversStore.getState().startPlacing('office'))
     act(() => fake.click(142.36, 43.77, [{ properties: { id: 'p1', name: '営業所A', type: 'office' } }]))
-    expect(useDriversStore.getState().places.map((p) => p.name)).toEqual(['営業所A', '休憩施設 1'])
+    expect(useDriversStore.getState().places.map((p) => p.name)).toEqual(['営業所A', '営業所 1'])
     expect(screen.queryByRole('status')).toBeNull()
   })
 

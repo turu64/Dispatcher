@@ -22,7 +22,7 @@ export const SHORTAGE_LABEL = '欠員(その日に乗務できない運転士の
 export const ROSTER_LABEL = '在籍の運転士の数(任意)'
 
 /** 前提情報の手順の「運行の前提」の欄の見出し */
-export const PREMISE_TITLE = '運行の前提(営業所・休憩施設・運転士の数)'
+export const PREMISE_TITLE = '運行の前提(営業所・運転士の数)'
 
 /** 影響(到達圏)の手順の欄から、運行の前提の欄へ移るボタン */
 export const PREMISE_JUMP = '前提情報で設定する'
@@ -79,22 +79,21 @@ export function notWeekdayText(date: string): string {
 }
 
 /**
- * 断り書き。下限の目安であること、改善基準告示の上限で区切ったこと、事業者が決めること、営業所・休憩施設の扱い
+ * 断り書き。下限の目安であること、改善基準告示の上限で区切ったこと、事業者が決めること、営業所の扱い
  */
 export function driverCaveats(params: Pick<DutyParams, 'maxBoundMin' | 'maxDrivingMin' | 'maxContinuousMin'>, places: readonly DutyPlace[] = []): string[] {
   const hours = (min: number) => (min % 60 === 0 ? `${min / 60} 時間` : `${Math.floor(min / 60)} 時間 ${min % 60} 分`)
-  const depots = places.some((p) => p.kind !== 'rest')
-  const rests = places.some((p) => p.kind === 'rest' || p.kind === 'site')
+  const offices = places.length > 0
   return [
     '勤務の数は、要る運転士の数の下限の目安です。実際に要る人数はこれより多くなることがあります。',
     `改善基準告示 第5条の上限(拘束 ${hours(params.maxBoundMin)}・運転 ${hours(params.maxDrivingMin)}・連続運転 ${hours(params.maxContinuousMin)})で勤務を区切りました。`,
     '休息期間・休日・予備の要員・36協定と、実際の仕業・交番は事業者が判断します。Dispatcher は運転士ごとの勤務を判定しません。',
-    depots
-      ? '出庫・入庫の回送は、最寄りの営業所・車庫との直線距離から見積もっています。'
-      : '営業所・車庫を置いていないため、出庫・入庫の回送を 0 として数えています。',
-    rests
-      ? '休憩は、前の便の終着か次の便の始発のどちらかが休憩施設・営業所の近くなら、そのすき間を休憩に数える甘めの数え方です(車庫は休憩に数えません)。'
-      : '休憩施設を置いていないため、どの停留所でのすき間も休憩に数える甘めの数え方です。',
+    offices
+      ? '出庫・入庫の回送は、最寄りの営業所との直線距離から見積もっています。'
+      : '営業所を置いていないため、出庫・入庫の回送を 0 として数えています。',
+    offices
+      ? '休憩は、前の便の終着か次の便の始発のどちらかが営業所の近くなら、そのすき間を休憩に数える甘めの数え方です。'
+      : '営業所を置いていないため、どの停留所でのすき間も休憩に数える甘めの数え方です。',
   ]
 }
 
@@ -126,13 +125,11 @@ export function rosterCaveatText(operatorRuns: number | null): string {
 
 /** 使った仮定の短い一覧(拘束・点呼・回送の速さ・置いた場所の数) */
 export function assumptionsSummary(params: Pick<DutyParams, 'maxBoundMin' | 'preCheckMin' | 'postCheckMin' | 'deadheadKmh'>, places: readonly DutyPlace[]): string[] {
-  const depots = places.filter((p) => p.kind !== 'rest').length
-  const rests = places.filter((p) => p.kind === 'rest' || p.kind === 'site').length
   return [
     `拘束時間の上限 ${params.maxBoundMin / 60} 時間`,
     `点呼 出庫前 ${params.preCheckMin} 分・入庫後 ${params.postCheckMin} 分`,
     `回送 時速 ${params.deadheadKmh}km`,
-    `営業所・車庫 ${depots} か所・休憩施設 ${rests} か所`,
+    `営業所 ${places.length} か所`,
   ]
 }
 

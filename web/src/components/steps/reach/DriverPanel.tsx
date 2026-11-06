@@ -29,8 +29,8 @@ import { placesEffectText } from './places'
  * 影響(到達圏)の手順の「要る運転士の数(目安)」の欄(指摘 24・18.1、docs/tasks-1105.md の D03)。結果だけを出す。
  * 比較する日付の、減便前・減便後の便の数・営業運行時間・勤務の数の目安と、入力の運用番号の数(参考)を表で出し、
  * 欠員を入れていれば、減便で減る勤務の数と比べた目安を出す。在籍の運転士の数を入れていれば、乗務できる運転士(在籍 − 欠員)と
- * 減便後に要る勤務の数を参考に並べる。置いた営業所・車庫・休憩施設があれば、置く前と後の勤務の数を表の下に出す。
- * 入力(欠員・在籍の運転士の数・営業所などの場所・仮定)は、前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)で行い、
+ * 減便後に要る勤務の数を参考に並べる。置いた営業所があれば、置く前と後の勤務の数を表の下に出す。
+ * 入力(欠員・在籍の運転士の数・営業所の位置・仮定)は、前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)で行い、
  * この欄の「前提情報で設定する」でそこへ移る。計算は store/drivers.ts(compareDrivers)
  */
 export default function DriverPanel() {
@@ -95,15 +95,15 @@ export function DriverView({
       <Button type="button" variant="outline" size="sm" className="self-start" onClick={onOpenPremise}>
         {PREMISE_JUMP}
       </Button>
-      <p className="text-xs text-muted-foreground">欠員・在籍の運転士の数・営業所などの場所・推定の仮定は、手順「前提情報」の「運行の前提」の欄で変えられます。</p>
+      <p className="text-xs text-muted-foreground">欠員・在籍の運転士の数・営業所の位置・推定の仮定は、手順「前提情報」の「運行の前提」の欄で変えられます。</p>
     </section>
   )
 }
 
 /**
  * 上限を超えた勤務・回送が長すぎる勤務の注意の文。どちらも無ければ null。
- * 営業所・車庫が路線から遠いと、回送だけで上限に近づいて勤務が細かく分かれ、勤務の数が跳ね上がる
- * (道北バスで遠い営業所を1つ置くと 82 → 400 超)ので、数を出して置いた場所を確かめてもらう
+ * 営業所が路線から遠いと、回送だけで上限に近づいて勤務が細かく分かれ、勤務の数が跳ね上がる
+ * (道北バスで遠い営業所を1つ置くと 79 → 400 超。回送 30km/h)ので、数を出して置いた場所を確かめてもらう
  */
 function dutyWarningText(comparison: DriverComparison): string | null {
   const { before, after, placesEffect } = comparison
@@ -120,7 +120,7 @@ function dutyWarningText(comparison: DriverComparison): string | null {
   if (long.any) parts.push(`出庫か入庫の回送が片道 ${LONG_DEPOT_DEADHEAD_MIN} 分を超える勤務 ${long.text}`)
   const hint =
     placesEffect || long.any
-      ? '営業所・車庫が路線から遠いと、回送だけで上限に近づいて勤務が細かく分かれ、勤務の数が大きく増えます。置いた場所が正しいか、ほかの営業所・車庫も置いたかを確かめてください。'
+      ? '営業所が路線から遠いと、回送だけで上限に近づいて勤務が細かく分かれ、勤務の数が大きく増えます。置いた場所が正しいか、ほかの営業所も置いたかを確かめてください。'
       : '長い便は途中の交代を数えていないため、勤務の数が多めに出ることがあります。'
   return `注意:${parts.join('、')}。${hint}`
 }

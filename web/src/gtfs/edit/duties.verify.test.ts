@@ -2,8 +2,8 @@
 // 道北バスの 9/17 版(data/raw/gtfs/dohoku_bus_減便前.zip)と 10/29 版(dohoku_bus_減便後.zip)があるときだけ走る
 // (ZIP はコミットしない)。日付は平日 2026-11-04(水。service 01)、土曜 2026-11-07(土。service 03)。
 // 期待の幅は計画(docs/tasks-1105.md の D02):9/17版 平日 75〜90、土曜 50〜65、10/29版 平日 60〜75、
-// 平日→土曜の差 18〜32(試算は 82・57・68)。運用番号の数は 101・72・86。
-// 既定の仮定(営業所・休憩施設なし、拘束 13 時間)で、絶対数は仮定で ±20% 動く(§6 の3)。
+// 平日→土曜の差 18〜32(試算は回送 20km/h で 82・57・68。11/6 に回送の既定を 30km/h にして 79・55・67)。運用番号の数は 101・72・86。
+// 既定の仮定(営業所なし、拘束 13 時間、回送 30km/h)で、絶対数は仮定で ±20% 動く(§6 の3)。
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -42,6 +42,11 @@ describe.skipIf(!existsSync(BEFORE_ZIP) || !existsSync(AFTER_ZIP))('estimateDuti
     expect(saturday.dutyCount).toBeLessThanOrEqual(65)
     expect(after.dutyCount).toBeGreaterThanOrEqual(60)
     expect(after.dutyCount).toBeLessThanOrEqual(75)
+    // 2026-11-06 に測った値(回送 30km/h)。回送 20km/h では 82・57・68 で、場所の種類を営業所1つにまとめても変わらない
+    console.info(`[道北バス・営業所なし] 9/17 版の平日 ${weekday.dutyCount}・土曜 ${saturday.dutyCount}、10/29 版の平日 ${after.dutyCount}`)
+    expect([weekday.dutyCount, saturday.dutyCount, after.dutyCount]).toEqual([79, 55, 67])
+    const at20 = [estimateOn(base, WEEKDAY, { deadheadKmh: 20 }), estimateOn(base, SATURDAY, { deadheadKmh: 20 }), estimateOn(edited, WEEKDAY, { deadheadKmh: 20 })]
+    expect(at20.map((e) => e.dutyCount)).toEqual([82, 57, 68])
   })
 
   it('平日を土曜ダイヤにすると、勤務の数は 18〜32 減る', () => {
@@ -73,7 +78,7 @@ describe.skipIf(!existsSync(BEFORE_ZIP) || !existsSync(AFTER_ZIP))('estimateDuti
   })
 
   it('拘束を 15 時間にすると、勤務の数は増えない', () => {
-    // この ZIP での確かめ(試算は 65)。貪欲につなぐので、上限を緩めて数が増えないことはどのデータでも言えるわけではない
+    // この ZIP での確かめ。貪欲につなぐので、上限を緩めて数が増えないことはどのデータでも言えるわけではない
     const extended = estimateOn(base, WEEKDAY, { maxBoundMin: BOUND_LIMIT_MIN.extended })
     expect(extended.dutyCount).toBeLessThanOrEqual(weekday.dutyCount)
   })
@@ -85,24 +90,27 @@ describe.skipIf(!existsSync(BEFORE_ZIP) || !existsSync(AFTER_ZIP))('estimateDuti
   })
 })
 
-// 道北バスのサンプルの営業所・車庫・休憩施設(lib/samplePlaces.ts。2026-11-06 に利用者が入力した5拠点)を置いたときの数。
-// 2026-11-06 に測った値(既定の仮定。回送 20km/h):平日 140(回送が片道 60 分を超える勤務 32・上限を超える勤務 32)、土曜 118、差 22。
-// どの勤務も最初と最後の停留所から最寄りの営業所・車庫へ回送するとみなすので、営業所から遠い終点の便は回送が長くなり、勤務の数が増える。
-// 回送の速さを 30km/h にすると平日 117(上限超え 4)・土曜 100、40km/h で平日 115(上限超え 4)・土曜 91
-describe.skipIf(!existsSync(BEFORE_ZIP))('estimateDuties(道北バス、サンプルの営業所・車庫・休憩施設を置いたとき)', () => {
+// 道北バスのサンプルの営業所(lib/samplePlaces.ts。2026-11-06 に利用者が入力した5か所)を置いたときの数。
+// 2026-11-06 に測った値(既定の仮定。回送 30km/h):平日 117(回送が片道 60 分を超える勤務 11・上限を超える勤務 4)、土曜 100、差 17。
+// どの勤務も最初と最後の停留所から最寄りの営業所へ回送するとみなすので、営業所から遠い終点の便は回送が長くなり、勤務の数が増える。
+// 回送 20km/h では平日 140(回送が長い 32・上限超え 32)・土曜 118、40km/h で平日 115(上限超え 4)・土曜 91。
+// 11/6 に種類を営業所1つにまとめた後も、回送 20km/h で前と同じ数(平日 140・土曜 118。前の版は種類「営業所・車庫・休憩施設」で置いた)になることを確かめる
+describe.skipIf(!existsSync(BEFORE_ZIP))('estimateDuties(道北バス、サンプルの営業所を置いたとき)', () => {
   it('平日を土曜ダイヤにすると勤務の数が減り、置かないときより勤務の数は多い', async () => {
     const { DOHOKU_SAMPLE_PLACES } = await import('@/lib/samplePlaces')
-    const { dutyKindOf } = await import('@/store/drivers')
     const base = await load(BEFORE_ZIP)
-    const places = DOHOKU_SAMPLE_PLACES.map((p) => ({ kind: dutyKindOf(p.type), name: p.name, lat: p.lat, lon: p.lon }))
-    const on = (date: string, withPlaces: boolean) =>
-      estimateDuties(tripLegs(base, describeServiceDay(base, date).serviceIds).legs, stopPointsOf(base), {}, withPlaces ? places : [])
+    const places = DOHOKU_SAMPLE_PLACES.map((p) => ({ name: p.name, lat: p.lat, lon: p.lon }))
+    const on = (date: string, withPlaces: boolean, params = {}) =>
+      estimateDuties(tripLegs(base, describeServiceDay(base, date).serviceIds).legs, stopPointsOf(base), params, withPlaces ? places : [])
     const weekday = on(WEEKDAY, true)
     const saturday = on(SATURDAY, true)
     console.info(
       `[道北バス・サンプルの営業所あり] 平日 ${weekday.dutyCount}(回送が長い ${weekday.longDeadheadDuties}・上限超え ${weekday.overLimitDuties})、` +
         `土曜 ${saturday.dutyCount}、差 ${weekday.dutyCount - saturday.dutyCount}`,
     )
+    expect([weekday.dutyCount, weekday.longDeadheadDuties, weekday.overLimitDuties]).toEqual([117, 11, 4])
+    expect(saturday.dutyCount).toBe(100)
+    expect([on(WEEKDAY, true, { deadheadKmh: 20 }).dutyCount, on(SATURDAY, true, { deadheadKmh: 20 }).dutyCount]).toEqual([140, 118])
     expect(weekday.dutyCount).toBeGreaterThan(saturday.dutyCount)
     expect(weekday.dutyCount).toBeGreaterThan(on(WEEKDAY, false).dutyCount)
   })

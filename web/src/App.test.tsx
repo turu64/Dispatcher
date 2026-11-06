@@ -292,7 +292,7 @@ describe('運行の前提(前提情報の手順)と要る運転士の数(影響�
     })
     expect(useStepStore.getState().current).toBe('research')
     expect(useSidePanelStore.getState().tab).toBe('edit')
-    const premise = screen.getByRole('region', { name: '運行の前提(営業所・休憩施設・運転士の数)' })
+    const premise = screen.getByRole('region', { name: '運行の前提(営業所・運転士の数)' })
     expect(document.activeElement).toBe(premise)
     // そこで入れた欠員は、影響の手順の結果に出る
     fireEvent.change(within(premise).getByLabelText('欠員(その日に乗務できない運転士の数)'), { target: { value: '1' } })

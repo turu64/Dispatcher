@@ -31,7 +31,7 @@ export const SUMMARY_DATE_NOTE =
 
 /**
  * 変更指示書の「要る運転士の数(目安)」。減便前の GTFS と承認済みの最後の版を、比較する平日(date)で比べる。
- * 下書きは使わない(変更指示書は承認した内容だけを載せる)。欠員・仮定・営業所などは store/drivers の値を使う。
+ * 下書きは使わない(変更指示書は承認した内容だけを載せる)。欠員・仮定・営業所は store/drivers の値を使う。
  * date が null(比較する平日が見つからない)なら、出さない理由を1行出す
  */
 export default function DriverSummary({ base, version, date }: { base: GtfsFeed; version: Form2Result; date: string | null }) {

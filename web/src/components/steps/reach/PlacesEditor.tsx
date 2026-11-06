@@ -1,9 +1,7 @@
 import { useRef, useState, type ChangeEvent } from 'react'
-import { SELECTED_TOGGLE_CLASS } from '@/components/selectedToggle'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { Stop } from '@/gtfs/parse'
 import {
   importResultText,
@@ -12,23 +10,21 @@ import {
   MAX_PLACES_FILE_BYTES,
   parsePlacesFile,
   PLACE_TYPE_LABELS,
-  PLACE_TYPE_NOTES,
-  PLACE_TYPES,
   placesFileName,
   serializePlaces,
   type PlaceInput,
   type PlaceType,
 } from '@/lib/placesFile'
-import { DOHOKU_SAMPLE_PLACES, DOHOKU_SAMPLE_SITE_COUNT } from '@/lib/samplePlaces'
+import { DOHOKU_SAMPLE_OFFICE_COUNT, DOHOKU_SAMPLE_PLACES } from '@/lib/samplePlaces'
 import { PlaceSymbol } from '@/map/PlacesLayer'
 import { useDriversStore, type UserPlace } from '@/store/drivers'
 import { useGtfsStore } from '@/store/gtfs'
 import { searchStops } from './places'
 
 /**
- * 前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)の中の、営業所・車庫・休憩施設を置く欄
- * (指摘 24、docs/tasks-1105.md の D05。11/5 に影響(到達圏)の手順から移した)。
- * 足し方は2つ:「地図で置く」を押して地図を1回押す(地図は map/PlacesLayer.tsx)か、停留所の名前で探して選ぶ。
+ * 前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)の中の、営業所を置く欄
+ * (指摘 24、docs/tasks-1105.md の D05。11/5 に影響(到達圏)の手順から移した。11/6 に種類を営業所1つにまとめた)。
+ * 足し方は2つ:「地図で営業所を置く」を押して地図を1回押す(地図は map/PlacesLayer.tsx)か、停留所の名前で探して選ぶ。
  * 名前を変える・消すができ、一覧は JSON に書き出し・読み込みできる(lib/placesFile.ts)。
  * 場所はメモリだけに持ち(store/drivers.ts)、サーバーにもブラウザの保存にも入れない。推定(gtfs/edit/duties.ts)に渡す
  */
@@ -65,7 +61,7 @@ export interface PlacesEditorProps {
   onReplace: (places: readonly PlaceInput[]) => void
   onStartPlacing: (type: PlaceType) => void
   onCancelPlacing: () => void
-  /** 道北バスのサンプルの営業所などを置けるか(サンプルの GTFS を読み込んだときだけ true) */
+  /** 道北バスのサンプルの営業所を置けるか(サンプルの GTFS を読み込んだときだけ true) */
   sampleAvailable?: boolean
   /** 書き出し(テストで差し替える) */
   download?: (fileName: string, text: string) => void
@@ -111,7 +107,8 @@ export function PlacesEditorView({
   download = downloadText,
   now = () => new Date(),
 }: PlacesEditorProps) {
-  const [type, setType] = useState<PlaceType>('office')
+  const type: PlaceType = 'office'
+  const label = PLACE_TYPE_LABELS[type]
   const [query, setQuery] = useState('')
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -145,15 +142,14 @@ export function PlacesEditorView({
   return (
     <details className="text-xs" data-testid="places-editor">
       <summary className="cursor-pointer">
-        <span className="font-medium">営業所・車庫・休憩施設を置く</span>
+        <span className="font-medium">営業所を置く</span>
         <span className="text-muted-foreground">({places.length} か所)</span>
       </summary>
       <div className="mt-2 flex flex-col gap-3">
         <p className="text-muted-foreground">
-          {'置いた場所は勤務の数の推定に使います。営業所・車庫は出庫・入庫の回送を数える場所、休憩施設は休憩を数える場所です。' +
-            'どの勤務も、最初と最後の停留所から最寄りの営業所・車庫へ回送するとみなすので、営業所・車庫はすべて置いてください。' +
-            '休憩施設を1つでも置くと、休憩施設・営業所の近くの停留所でのすき間だけを休憩に数えます(車庫は休憩に数えません)。' +
-            '営業所・車庫・休憩施設が同じ場所にある拠点は、種類「営業所・車庫・休憩施設」で1つ置けば、3つを兼ねます。'}
+          {'置いた営業所は勤務の数の推定に使います。営業所は出庫・入庫と点呼の場所で、休憩も取れる場所とみなします。' +
+            'どの勤務も、最初と最後の停留所から最寄りの営業所へ回送するとみなすので、営業所はすべて置いてください。' +
+            '営業所を1つでも置くと、営業所の近くの停留所でのすき間だけを休憩に数えます。'}
         </p>
         <p className="text-muted-foreground">
           場所はこの画面の中だけに持ち、サーバーには送りません。GTFS を読み込み直すと一覧は空になります。残すときは JSON に書き出してください。
@@ -167,41 +163,18 @@ export function PlacesEditorView({
               onClick={() => {
                 onReplace(DOHOKU_SAMPLE_PLACES)
                 setMessage({
-                  text: `道北バスのサンプルの営業所・車庫・休憩施設を ${DOHOKU_SAMPLE_SITE_COUNT} か所置きました。`,
+                  text: `道北バスのサンプルの営業所を ${DOHOKU_SAMPLE_OFFICE_COUNT} か所置きました。`,
                   error: false,
                 })
               }}
             >
-              道北バスの営業所・車庫・休憩施設(サンプル)を置く
+              道北バスの営業所(サンプル)を置く
             </Button>
             <span className="text-muted-foreground">
-              本社・旭川営業所、名寄出張所、上川営業所、層雲峡出張所、永山出張所(どこも営業所・車庫・休憩施設が同じ場所にあるので、1か所に1つずつ置きます)。今の一覧を置き換えます。
+              本社・旭川営業所、名寄出張所、上川営業所、層雲峡出張所、永山出張所。今の一覧を置き換えます。
             </span>
           </div>
         )}
-        <div className="flex flex-col gap-1">
-          <span id="places-type-label">足す場所の種類</span>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            spacing={1}
-            className="flex-wrap"
-            aria-labelledby="places-type-label"
-            value={type}
-            onValueChange={(v) => {
-              if ((PLACE_TYPES as readonly string[]).includes(v)) setType(v as PlaceType)
-            }}
-          >
-            {PLACE_TYPES.map((t) => (
-              <ToggleGroupItem key={t} value={t} className={SELECTED_TOGGLE_CLASS}>
-                <PlaceSymbol type={t} className="size-3.5 shrink-0" />
-                {PLACE_TYPE_LABELS[t]}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-          <span className="text-muted-foreground">{PLACE_TYPE_LABELS[type]}:{PLACE_TYPE_NOTES[type]}</span>
-        </div>
         <div className="flex flex-col gap-1">
           {placing ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -214,14 +187,15 @@ export function PlacesEditorView({
             </div>
           ) : (
             <Button type="button" variant="outline" size="sm" className="self-start" disabled={full} onClick={() => onStartPlacing(type)}>
-              地図で{PLACE_TYPE_LABELS[type]}を置く
+              <PlaceSymbol type={type} className="size-3.5 shrink-0" />
+              地図で{label}を置く
             </Button>
           )}
           {full && <span className="text-muted-foreground">置ける場所は {MAX_PLACES} か所までです。</span>}
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="places-stop-search" className="text-xs">
-            停留所の名前で探して{PLACE_TYPE_LABELS[type]}を置く
+            停留所の名前で探して{label}を置く
           </Label>
           <Input
             id="places-stop-search"
@@ -311,7 +285,6 @@ function PlaceRow({ place, onRename, onRemove }: { place: UserPlace; onRename: (
   return (
     <li className="flex items-center gap-1.5">
       <PlaceSymbol type={place.type} />
-      <span className="w-14 shrink-0">{label}</span>
       <Input
         aria-label={`${label}の名前`}
         value={text}

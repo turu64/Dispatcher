@@ -164,9 +164,9 @@ describe('ResearchStep', () => {
     expect(screen.queryByRole('button', { name: RESEARCH_START })).toBeNull()
   })
 
-  it('調査の欄の上に、運行の前提(営業所・休憩施設・運転士の数)の欄を出し、欠員・在籍の運転士の数を入れられる', () => {
+  it('調査の欄の上に、運行の前提(営業所・運転士の数)の欄を出し、欠員・在籍の運転士の数を入れられる', () => {
     setup()
-    const premise = screen.getByRole('region', { name: '運行の前提(営業所・休憩施設・運転士の数)' })
+    const premise = screen.getByRole('region', { name: '運行の前提(営業所・運転士の数)' })
     const research = screen.getByRole('heading', { name: '周辺の事業者・施設の調査' })
     expect(premise.compareDocumentPosition(research) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(within(premise).getByTestId('places-editor')).toBeTruthy()
@@ -180,7 +180,7 @@ describe('ResearchStep', () => {
     setup()
     act(() => useResearchStore.setState({ facilities: { status: 'error', key: facilityMeshes(STOPS).join(','), message: '施設を読み込めませんでした' } }))
     expect(screen.getByText('施設を読み込めませんでした')).toBeTruthy()
-    expect(screen.getByRole('region', { name: '運行の前提(営業所・休憩施設・運転士の数)' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: '運行の前提(営業所・運転士の数)' })).toBeTruthy()
   })
 
   it('停留所の周り 2km の候補を種類ごとにまとめ、既定で事業者と優先順位の上から選ぶ(自社と優先順位の外は選ばない)', () => {

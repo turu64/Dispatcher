@@ -3,7 +3,7 @@ import type { Stop } from '@/gtfs/parse'
 import type { PlacesEffect } from '@/store/drivers'
 
 /**
- * 営業所・車庫・休憩施設を置く欄(PlacesEditor.tsx)と、要る運転士の数の欄(DriverPanel.tsx)の材料(D05)。
+ * 営業所を置く欄(PlacesEditor.tsx)と、要る運転士の数の欄(DriverPanel.tsx)の材料(D05)。
  * 停留所の名前での検索と、置く前と後の勤務の数の文
  */
 
@@ -47,7 +47,7 @@ export function searchStops(stops: readonly Stop[], query: string, limit: number
   return [...prefix, ...rest].slice(0, limit)
 }
 
-/** 営業所・車庫・休憩施設を置く前と後の勤務の数の文 */
+/** 営業所を置く前と後の勤務の数の文 */
 export function placesEffectText(effect: PlacesEffect): string {
   const side = (label: string, v: { without: number; with: number }) => {
     const d = v.with - v.without
@@ -55,5 +55,5 @@ export function placesEffectText(effect: PlacesEffect): string {
   }
   const parts = [side('減便前', effect.before)]
   if (effect.after) parts.push(side('減便後', effect.after))
-  return `営業所・車庫・休憩施設(${effect.count} か所)を置く前と後の勤務の数(目安):${parts.join('、')}。表と判定は置いた後の数です。`
+  return `営業所(${effect.count} か所)を置く前と後の勤務の数(目安):${parts.join('、')}。表と判定は置いた後の数です。`
 }

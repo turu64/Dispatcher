@@ -1,32 +1,27 @@
 /**
- * 利用者が置く営業所・車庫・休憩施設(指摘 24、docs/tasks-1105.md の D05)の種類と、JSON の書き出し・読み込み。
+ * 利用者が置く営業所(指摘 24、docs/tasks-1105.md の D05)の種類と、JSON の書き出し・読み込み。
  * 場所はメモリだけに持ち(store/drivers.ts)、サーバーにもブラウザの保存にも入れない。GTFS を読み込み直すと消えるので、
  * 残したいときは利用者がこの形の JSON に書き出し、次に読み込む。
  *
  * ファイルの形(版 1):
  *   { "format": "dispatcher-places", "version": 1, "places": [{ "type": "office", "name": "旭川営業所", "lat": 43.77, "lon": 142.36 }] }
  * 読み込みでは、形の合わないファイルは丸ごと断り、places の壊れた行(種類・名前・緯度経度が読めない、範囲の外)は読み飛ばして数える。
+ *
+ * 場所の種類は 2026-11-06 に「営業所」1つにまとめた(利用者の指示)。書き出すのは type 'office' だけ。前の版で書き出した
+ * 'site'(営業所・車庫・休憩施設)・'garage'(車庫)・'rest'(休憩施設)の行も、捨てずに営業所として読み込む
  */
 
-/** 場所の種類。営業所は出庫・入庫と点呼の場所(休憩も取れる)、車庫は出庫・入庫の場所、休憩施設は休憩を取れる場所 */
-export type PlaceType = 'site' | 'office' | 'garage' | 'rest'
+/** 場所の種類。営業所は出庫・入庫と点呼の場所で、休憩も取れる(休憩施設もある) */
+export type PlaceType = 'office'
 
-export const PLACE_TYPES: readonly PlaceType[] = ['site', 'office', 'garage', 'rest']
+export const PLACE_TYPES: readonly PlaceType[] = ['office']
 
 export const PLACE_TYPE_LABELS: Record<PlaceType, string> = {
-  site: '営業所・車庫・休憩施設',
   office: '営業所',
-  garage: '車庫',
-  rest: '休憩施設',
 }
 
-/** 種類の説明(画面の補足) */
-export const PLACE_TYPE_NOTES: Record<PlaceType, string> = {
-  site: '営業所・車庫・休憩施設が同じ場所にある拠点。出庫・入庫と点呼の場所で、休憩施設として休憩も取れる',
-  office: '出庫・入庫と点呼の場所。休憩も取れる',
-  garage: '出庫・入庫の場所',
-  rest: '休憩を取れる場所',
-}
+/** 前の版の種類(読み込みでは営業所にする) */
+const LEGACY_PLACE_TYPES: readonly string[] = ['site', 'garage', 'rest']
 
 /** 場所1つ(書き出す値) */
 export interface PlaceInput {
@@ -53,8 +48,11 @@ export function roundCoord(value: number): number {
   return Math.round(value * f) / f
 }
 
-function isPlaceType(v: unknown): v is PlaceType {
-  return typeof v === 'string' && (PLACE_TYPES as readonly string[]).includes(v)
+/** 読み込む行の種類を、今の種類にする。読めない種類なら null */
+function placeTypeOf(v: unknown): PlaceType | null {
+  if (typeof v !== 'string') return null
+  if ((PLACE_TYPES as readonly string[]).includes(v)) return v as PlaceType
+  return LEGACY_PLACE_TYPES.includes(v) ? 'office' : null
 }
 
 /** 名前を整える(前後の空白を取り、続く空白を1つにする)。空か長すぎれば null */
@@ -77,14 +75,15 @@ export function validCoords(lat: unknown, lon: unknown): boolean {
   )
 }
 
-/** 1行を場所にする。読めなければ null */
+/** 1行を場所にする。読めなければ null。前の版の種類(営業所・車庫・休憩施設、車庫、休憩施設)は営業所にする */
 export function placeOf(raw: unknown): PlaceInput | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
   const r = raw as Record<string, unknown>
-  if (!isPlaceType(r.type)) return null
+  const type = placeTypeOf(r.type)
+  if (type === null) return null
   const name = normalizePlaceName(r.name)
   if (name === null || !validCoords(r.lat, r.lon)) return null
-  return { type: r.type, name, lat: roundCoord(r.lat as number), lon: roundCoord(r.lon as number) }
+  return { type, name, lat: roundCoord(r.lat as number), lon: roundCoord(r.lon as number) }
 }
 
 /** 場所の一覧を JSON の文字列にする(読み込みで同じ一覧に戻る) */
@@ -92,7 +91,7 @@ export function serializePlaces(places: readonly PlaceInput[]): string {
   const body = {
     format: PLACES_FILE_FORMAT,
     version: PLACES_FILE_VERSION,
-    places: places.map((p) => ({ type: p.type, name: p.name, lat: roundCoord(p.lat), lon: roundCoord(p.lon) })),
+    places: places.map((p) => ({ type: 'office', name: p.name, lat: roundCoord(p.lat), lon: roundCoord(p.lon) })),
   }
   return `${JSON.stringify(body, null, 2)}\n`
 }
@@ -117,7 +116,7 @@ export function parsePlacesFile(text: string): ParsePlacesResult {
     return { ok: false, message: 'JSON として読めません。書き出した JSON のファイルを選んでください。' }
   }
   if (typeof data !== 'object' || data === null || Array.isArray(data) || (data as Record<string, unknown>).format !== PLACES_FILE_FORMAT) {
-    return { ok: false, message: '営業所・車庫・休憩施設の JSON ではありません。この画面で書き出した JSON を選んでください。' }
+    return { ok: false, message: '営業所の JSON ではありません。この画面で書き出した JSON を選んでください。' }
   }
   const body = data as Record<string, unknown>
   if (body.version !== PLACES_FILE_VERSION) {

@@ -855,17 +855,17 @@ describe('AI が確かめた便の件数(指摘18.4)', () => {
   })
 })
 
-describe('置いた営業所・車庫・休憩施設の名前は AI に送らない(F02)', () => {
+describe('置いた営業所の名前は AI に送らない(F02)', () => {
   // 場所は画面の中だけに持つ(store/drivers.ts)。[画面の状態] の行・発言・ツールの結果のどれにも名前が入らないことを確かめる回帰テスト
-  const NAMES = ['秘匿の営業所F02', '秘匿の車庫F02', '秘匿の休憩所F02']
+  const NAMES = ['秘匿の営業所F02', '秘匿の出張所F02', '秘匿の本社F02']
   const leaks = (text: string) => NAMES.filter((n) => text.includes(n))
 
   function placeAll() {
     useEditStore.getState().setBase({ feed: smallFeed(), zip: new ArrayBuffer(0), label: 'test.zip', sample: null })
     const d = useDriversStore.getState()
     d.addPlace({ type: 'office', name: NAMES[0], lat: 43.76, lon: 142.36 })
-    d.addPlace({ type: 'garage', name: NAMES[1], lat: 43.77, lon: 142.36 })
-    d.addPlace({ type: 'rest', name: NAMES[2], lat: 43.76, lon: 142.37 })
+    d.addPlace({ type: 'office', name: NAMES[1], lat: 43.77, lon: 142.36 })
+    d.addPlace({ type: 'office', name: NAMES[2], lat: 43.76, lon: 142.37 })
     d.setShortage(20)
     expect(useDriversStore.getState().places.map((p) => p.name)).toEqual(NAMES)
   }

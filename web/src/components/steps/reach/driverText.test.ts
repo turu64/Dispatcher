@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BOUND_LIMIT_MIN, DUTY_DEFAULTS } from '@/gtfs/edit/duties'
 import {
+  assumptionsSummary,
   driverCaveats,
   formatDiff,
   formatHours,
@@ -49,7 +50,7 @@ describe('verdictText(欠員との比較の文)', () => {
       verdictText({ kind: 'enough', reduced: 1, shortage: 1 }, '20261104'),
       verdictText({ kind: 'short', reduced: 1, shortage: 2, missing: 1 }, '20261104'),
       ...driverCaveats(DUTY_DEFAULTS),
-      ...driverCaveats(DUTY_DEFAULTS, [{ kind: 'rest', name: '休憩所', lat: 0, lon: 0 }]),
+      ...driverCaveats(DUTY_DEFAULTS, [{ name: '営業所', lat: 0, lon: 0 }]),
     ]
     for (const line of all) expect(line).not.toContain('あなた')
   })
@@ -100,14 +101,28 @@ describe('driverCaveats(断り書き)', () => {
     expect(text).toContain('甘めの数え方')
   })
 
-  it('拘束を 15 時間にすると文も 15 時間になり、施設を置くと回送と休憩の文が変わる', () => {
+  it('拘束を 15 時間にすると文も 15 時間になり、営業所を置くと回送と休憩の文が変わる', () => {
     const text = driverCaveats({ ...DUTY_DEFAULTS, maxBoundMin: BOUND_LIMIT_MIN.extended }, [
-      { kind: 'depot', name: '車庫', lat: 0, lon: 0 },
-      { kind: 'rest', name: '休憩所', lat: 0, lon: 0 },
+      { name: '営業所A', lat: 0, lon: 0 },
+      { name: '営業所B', lat: 0, lon: 0 },
     ]).join('\n')
     expect(text).toContain('拘束 15 時間')
-    expect(text).toContain('最寄りの営業所・車庫')
-    expect(text).toContain('前の便の終着か次の便の始発のどちらかが休憩施設・営業所の近くなら')
+    expect(text).toContain('最寄りの営業所との直線距離')
+    expect(text).toContain('前の便の終着か次の便の始発のどちらかが営業所の近くなら')
+    // 車庫・休憩施設の語は使わない
+    expect(text).not.toMatch(/車庫|休憩施設/)
+    expect(driverCaveats(DUTY_DEFAULTS).join('\n')).not.toMatch(/車庫|休憩施設/)
+  })
+})
+
+describe('assumptionsSummary(仮定の短い一覧)', () => {
+  it('置いた営業所の数を「営業所 N か所」と書く', () => {
+    expect(assumptionsSummary(DUTY_DEFAULTS, [])).toEqual(['拘束時間の上限 13 時間', '点呼 出庫前 30 分・入庫後 15 分', '回送 時速 30km', '営業所 0 か所'])
+    const two = [
+      { name: '営業所A', lat: 0, lon: 0 },
+      { name: '営業所B', lat: 0, lon: 0 },
+    ]
+    expect(assumptionsSummary(DUTY_DEFAULTS, two).at(-1)).toBe('営業所 2 か所')
   })
 })
 

@@ -498,11 +498,11 @@ export function ResultCard({ result, highlighted = false }: { result: ResearchRe
  * 調べる対象を選んで AI に Web で調べてもらう(docs/interfaces-1105.md §3.2・§6.4、docs/tasks-1103.md の T16)。
  * 対象は重要拠点の優先順位の上から既定で選び、上限は 30 件。保存済みの結果(デモ)を使えば、AI を呼ばずに結果を見られる。
  * サーバーに送るのは target_id だけ。GTFS の中身は送らない。
- * 調査の欄の上に、運行の前提(営業所・休憩施設・運転士の数。research/OperationPremise.tsx)の欄を置く
+ * 調査の欄の上に、運行の前提(営業所・運転士の数。research/OperationPremise.tsx)の欄を置く
  */
 export default function ResearchStep({ chat = useChatStore }: { chat?: ChatStoreHook }) {
   const feed = useGtfsStore((s) => s.feed)
-  return <StepSection title="2. 前提情報">{!feed ? <p className="text-sm text-muted-foreground">GTFS を読み込むと、運行の前提(営業所・休憩施設・運転士の数)を設定し、周辺の事業者・学校・病院を調べられます。</p> : <ResearchBody chat={chat} />}</StepSection>
+  return <StepSection title="2. 前提情報">{!feed ? <p className="text-sm text-muted-foreground">GTFS を読み込むと、運行の前提(営業所・運転士の数)を設定し、周辺の事業者・学校・病院を調べられます。</p> : <ResearchBody chat={chat} />}</StepSection>
 }
 
 function ResearchBody({ chat }: { chat: ChatStoreHook }) {

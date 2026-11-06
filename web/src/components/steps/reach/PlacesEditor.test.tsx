@@ -6,7 +6,7 @@ import { feedOf } from '@/gtfs/edit/form2.fixture'
 import type { GtfsFeed } from '@/gtfs/load'
 import type { Stop } from '@/gtfs/parse'
 import { MAX_PLACES, PLACES_FILE_FORMAT, serializePlaces } from '@/lib/placesFile'
-import { compareDrivers, dutyKindOf, useDriversStore, type UserPlace } from '@/store/drivers'
+import { compareDrivers, useDriversStore, type UserPlace } from '@/store/drivers'
 import { useGtfsStore } from '@/store/gtfs'
 import { DriverView } from './DriverPanel'
 import { placesEffectText, searchStops } from './places'
@@ -33,7 +33,7 @@ const STOPS: Stop[] = [
   stop('6', '旭川駅', 43.763, 142.358, 1),
 ]
 
-const PLACE: UserPlace = { id: 'p1', type: 'office', kind: 'depot', name: '営業所A', lat: 43.77, lon: 142.36 }
+const PLACE: UserPlace = { id: 'p1', type: 'office', name: '営業所A', lat: 43.77, lon: 142.36 }
 
 function renderView(overrides: Partial<PlacesEditorProps> = {}) {
   const props: PlacesEditorProps = {
@@ -72,42 +72,47 @@ describe('searchStops(停留所の名前で探す)', () => {
   })
 })
 
-describe('PlacesEditorView(営業所・車庫・休憩施設を置く欄)', () => {
-  it('サンプルの GTFS のときだけ、道北バスのサンプルの営業所・車庫・休憩施設を置くボタンを出し、押すと今の一覧を置き換える', () => {
-    renderView()
-    expect(screen.queryByRole('button', { name: '道北バスの営業所・車庫・休憩施設(サンプル)を置く' })).toBeNull()
-    cleanup()
-    const props = renderView({ sampleAvailable: true })
-    fireEvent.click(screen.getByRole('button', { name: '道北バスの営業所・車庫・休憩施設(サンプル)を置く' }))
-    expect(props.onReplace).toHaveBeenCalledWith(DOHOKU_SAMPLE_PLACES)
-    // 営業所・車庫・休憩施設は同じ場所なので、拠点ごとに「営業所・車庫・休憩施設」(site)を1件
-    expect(DOHOKU_SAMPLE_PLACES.map((p) => p.name)).toEqual(['本社・旭川営業所', '名寄出張所', '上川営業所', '層雲峡出張所', '永山出張所'])
-    expect(DOHOKU_SAMPLE_PLACES.every((p) => p.type === 'site')).toBe(true)
-    expect(screen.getByText('道北バスのサンプルの営業所・車庫・休憩施設を 5 か所置きました。')).toBeTruthy()
+describe('PlacesEditorView(営業所を置く欄)', () => {
+  it('見出しは「営業所を置く」で、種類の選択は無く、車庫・休憩施設の語を出さない', () => {
+    renderView({ places: [PLACE], sampleAvailable: true })
+    const editor = screen.getByTestId('places-editor')
+    expect(editor.querySelector('summary')?.textContent).toBe('営業所を置く(1 か所)')
+    expect(screen.queryByRole('radio')).toBeNull()
+    expect(editor.textContent).not.toMatch(/車庫|休憩施設/)
+    expect(editor.textContent).toContain('営業所を1つでも置くと、営業所の近くの停留所でのすき間だけを休憩に数えます。')
   })
 
-  it('種類を選んで「地図で置く」を押すと、その種類で置き始める', () => {
+  it('サンプルの GTFS のときだけ、道北バスのサンプルの営業所を置くボタンを出し、押すと今の一覧を置き換える', () => {
+    renderView()
+    expect(screen.queryByRole('button', { name: '道北バスの営業所(サンプル)を置く' })).toBeNull()
+    cleanup()
+    const props = renderView({ sampleAvailable: true })
+    fireEvent.click(screen.getByRole('button', { name: '道北バスの営業所(サンプル)を置く' }))
+    expect(props.onReplace).toHaveBeenCalledWith(DOHOKU_SAMPLE_PLACES)
+    expect(DOHOKU_SAMPLE_PLACES.map((p) => p.name)).toEqual(['本社・旭川営業所', '名寄出張所', '上川営業所', '層雲峡出張所', '永山出張所'])
+    expect(DOHOKU_SAMPLE_PLACES.every((p) => p.type === 'office')).toBe(true)
+    expect(screen.getByText('道北バスのサンプルの営業所を 5 か所置きました。')).toBeTruthy()
+  })
+
+  it('「地図で営業所を置く」を押すと、営業所を置き始める', () => {
     const props = renderView()
-    fireEvent.click(screen.getByRole('radio', { name: '車庫' }))
-    expect(screen.getByText('車庫:出庫・入庫の場所')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '地図で車庫を置く' }))
-    expect(props.onStartPlacing).toHaveBeenCalledWith('garage')
+    fireEvent.click(screen.getByRole('button', { name: '地図で営業所を置く' }))
+    expect(props.onStartPlacing).toHaveBeenCalledWith('office')
   })
 
   it('置いている途中は、押して置くことと Esc でやめることを出し、「置くのをやめる」でやめる', () => {
-    const props = renderView({ placing: 'rest' })
-    expect(screen.getByRole('status').textContent).toBe('地図を押すと休憩施設を置きます。Esc でやめます。')
+    const props = renderView({ placing: 'office' })
+    expect(screen.getByRole('status').textContent).toBe('地図を押すと営業所を置きます。Esc でやめます。')
     fireEvent.click(screen.getByRole('button', { name: '置くのをやめる' }))
     expect(props.onCancelPlacing).toHaveBeenCalled()
   })
 
-  it('停留所の名前で探して選ぶと、選んだ種類でその停留所の位置に足す', () => {
+  it('停留所の名前で探して選ぶと、その停留所の位置に営業所を足す', () => {
     const props = renderView()
-    fireEvent.click(screen.getByRole('radio', { name: '休憩施設' }))
-    fireEvent.change(screen.getByLabelText('停留所の名前で探して休憩施設を置く'), { target: { value: '空港' } })
+    fireEvent.change(screen.getByLabelText('停留所の名前で探して営業所を置く'), { target: { value: '空港' } })
     const results = screen.getByRole('list', { name: '停留所の検索の結果' })
     fireEvent.click(within(results).getByRole('button', { name: '旭川空港' }))
-    expect(props.onAdd).toHaveBeenCalledWith({ type: 'rest', name: '旭川空港', lat: 43.67, lon: 142.45 })
+    expect(props.onAdd).toHaveBeenCalledWith({ type: 'office', name: '旭川空港', lat: 43.67, lon: 142.45 })
     // 選んだら検索の語を消す
     expect(screen.queryByRole('list', { name: '停留所の検索の結果' })).toBeNull()
   })
@@ -144,22 +149,22 @@ describe('PlacesEditorView(営業所・車庫・休憩施設を置く欄)', () =
     expect(screen.getByRole('status').textContent).toBe('1 か所を JSON に書き出しました。')
   })
 
-  it('JSON を読み込むと一覧を置き換え、読み飛ばした行の数を出す', async () => {
+  it('JSON を読み込むと一覧を置き換え、読み飛ばした行の数を出す(前の版の車庫の行も営業所として読む)', async () => {
     const props = renderView({ places: [PLACE] })
     const text = JSON.stringify({
       format: PLACES_FILE_FORMAT,
       version: 1,
-      places: [{ type: 'garage', name: '車庫B', lat: 43.8, lon: 142.4 }, { type: 'garage', name: '', lat: 43.8, lon: 142.4 }],
+      places: [{ type: 'garage', name: '永山車庫', lat: 43.8, lon: 142.4 }, { type: 'office', name: '', lat: 43.8, lon: 142.4 }],
     })
     fireEvent.change(screen.getByTestId('places-file'), { target: { files: [new File([text], 'places.json', { type: 'application/json' })] } })
-    await waitFor(() => expect(props.onReplace).toHaveBeenCalledWith([{ type: 'garage', name: '車庫B', lat: 43.8, lon: 142.4 }]))
+    await waitFor(() => expect(props.onReplace).toHaveBeenCalledWith([{ type: 'office', name: '永山車庫', lat: 43.8, lon: 142.4 }]))
     expect(screen.getByRole('status').textContent).toBe('1 か所を読み込みました。読めない行 1 行を読み飛ばしました。')
   })
 
   it('形の合わない JSON は読み込まず、理由を出す', async () => {
     const props = renderView()
     fireEvent.change(screen.getByTestId('places-file'), { target: { files: [new File(['[]'], 'x.json')] } })
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('営業所・車庫・休憩施設の JSON ではありません'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('営業所の JSON ではありません'))
     expect(props.onReplace).not.toHaveBeenCalled()
   })
 
@@ -180,7 +185,7 @@ describe('PlacesEditor(store とつなぐ)', () => {
     render(<PlacesEditor />)
     fireEvent.change(screen.getByLabelText('停留所の名前で探して営業所を置く'), { target: { value: '駅' } })
     fireEvent.click(screen.getByRole('button', { name: '駅前' }))
-    expect(useDriversStore.getState().places).toMatchObject([{ type: 'office', kind: 'depot', name: '駅前', lat: 43.76, lon: 142.36 }])
+    expect(useDriversStore.getState().places).toMatchObject([{ type: 'office', name: '駅前', lat: 43.76, lon: 142.36 }])
     fireEvent.click(screen.getByRole('button', { name: '地図で営業所を置く' }))
     expect(useDriversStore.getState().placing).toBe('office')
     act(() => useDriversStore.getState().cancelPlacing())
@@ -211,8 +216,8 @@ describe('DriverView の、置く前と後の勤務の数', () => {
 
   it('場所を置くと、表の下に置く前と後の勤務の数を出す(置かなければ出さない)', () => {
     const base = shuttle()
-    // 約 50km 離れた車庫:出庫・入庫の回送が加わり、運転時間 9 時間を超えるので勤務が分かれる
-    const far: UserPlace = { id: 'g', type: 'garage', kind: dutyKindOf('garage'), name: '車庫', lat: 44.21, lon: 142.36 }
+    // 約 50km 離れた営業所:出庫・入庫の回送が加わり、運転時間 9 時間を超えるので勤務が分かれる
+    const far: UserPlace = { id: 'g', type: 'office', name: '遠い営業所', lat: 44.21, lon: 142.36 }
     const input = { base, edited: null, date: '20261104', weekdayServices: null, params: { ...DUTY_DEFAULTS }, shortage: null }
     const without = compareDrivers({ ...input, places: [] })
     const placed = compareDrivers({ ...input, places: [far] })
@@ -225,15 +230,15 @@ describe('DriverView の、置く前と後の勤務の数', () => {
     const after = placed.before.duties.dutyCount
     expect(after).toBeGreaterThan(1)
     expect(screen.getByTestId('places-effect').textContent).toBe(
-      `営業所・車庫・休憩施設(1 か所)を置く前と後の勤務の数(目安):減便前 1 → ${after}(+${after - 1})。表と判定は置いた後の数です。`,
+      `営業所(1 か所)を置く前と後の勤務の数(目安):減便前 1 → ${after}(+${after - 1})。表と判定は置いた後の数です。`,
     )
-    // 断り書きも、営業所・車庫を置いた文に替わる
-    expect(screen.getByRole('list', { name: '要る運転士の数の断り書き' }).textContent).toContain('最寄りの営業所・車庫との直線距離から見積もっています')
+    // 断り書きも、営業所を置いた文に替わる
+    expect(screen.getByRole('list', { name: '要る運転士の数の断り書き' }).textContent).toContain('最寄りの営業所との直線距離から見積もっています')
   })
 
   it('減便後があれば両方を出し、変わらなければその旨を書く', () => {
     expect(placesEffectText({ count: 2, before: { without: 82, with: 90 }, after: { without: 57, with: 57 } })).toBe(
-      '営業所・車庫・休憩施設(2 か所)を置く前と後の勤務の数(目安):減便前 82 → 90(+8)、減便後 57 → 57(変わらない)。表と判定は置いた後の数です。',
+      '営業所(2 か所)を置く前と後の勤務の数(目安):減便前 82 → 90(+8)、減便後 57 → 57(変わらない)。表と判定は置いた後の数です。',
     )
   })
 })

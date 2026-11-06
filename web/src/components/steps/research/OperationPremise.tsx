@@ -23,10 +23,10 @@ import { BOUND_LIMIT_MIN, dutyAssumptions, type DutyParams, type DutyPlace } fro
 import { MAX_ROSTER, MAX_SHORTAGE, useDriversStore } from '@/store/drivers'
 
 /**
- * 前提情報の手順の「運行の前提(営業所・休憩施設・運転士の数)」の欄(利用者の指摘、11/5)。
+ * 前提情報の手順の「運行の前提(営業所・運転士の数)」の欄(利用者の指摘、11/5)。
  * 要る運転士の数(目安)の推定と判定に使う入力を、この欄にまとめる:
  * - 運転士の数:在籍の運転士の数(任意)と欠員(その日に乗務できない運転士の数)
- * - 営業所・車庫・休憩施設(reach/PlacesEditor.tsx。地図で置く操作は、この手順の地図で行う。map/PlacesLayer.tsx)
+ * - 営業所(reach/PlacesEditor.tsx。地図で置く操作は、この手順の地図で行う。map/PlacesLayer.tsx)
  * - 勤務の数の推定の仮定(拘束時間の上限・点呼・回送の速さ)
  * 結果(減便の前後の勤務の数と判定)は、影響(到達圏)の手順の reach/DriverPanel.tsx に出す。
  * 値は store/drivers.ts(メモリだけ)。GTFS を読み込み直すと運転士の数と場所は消え、仮定は残る
@@ -72,7 +72,7 @@ export function OperationPremiseView({
   onRoster: (value: number | null) => void
   onParams: (patch: Partial<DutyParams>) => void
   onResetParams: () => void
-  /** 営業所・車庫・休憩施設を置く欄(store を使うので外から渡す) */
+  /** 営業所を置く欄(store を使うので外から渡す) */
   placesEditor?: ReactNode
 }) {
   return (

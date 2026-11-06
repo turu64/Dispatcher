@@ -34,10 +34,9 @@ import { useReachStore } from './reach'
  * - 在籍の運転士の数(任意。0〜9999 の整数。空なら null)。入れたときだけ、乗務できる運転士(在籍 − 欠員)と減便後に要る勤務の数を
  *   参考に並べる(rosterCheck)。主な判定(減便で減る勤務の数と欠員の比較)には使わない
  * - 仮定:勤務の数の推定(gtfs/edit/duties.ts の estimateDuties)に渡す値。画面で変えるのは拘束の上限(13/15 時間)・点呼の分・回送の速さ
- * - 営業所・車庫・休憩施設:利用者が地図で置くか停留所から選んだ場所(D05。画面は reach/PlacesEditor.tsx、地図は map/PlacesLayer.tsx)。
- *   推定には次の対応で渡す(dutyKindOf):営業所 → depot(出庫・入庫の回送と点呼の場所。休憩も取れる)、車庫 → garage
- *   (出庫・入庫の回送の場所。休憩には数えない)、休憩施設 → rest。
- *   duties.ts は、休憩施設が1つでもあれば休憩施設・営業所の近くのすき間だけを休憩に数え、無ければどこでも休憩に数える
+ * - 営業所:利用者が地図で置くか停留所から選んだ場所(D05。画面は reach/PlacesEditor.tsx、地図は map/PlacesLayer.tsx)。
+ *   種類は 2026-11-06 に営業所1つにまとめた。duties.ts は、営業所を出庫・入庫の回送と点呼の場所とし、営業所が1つでもあれば
+ *   営業所の近くのすき間だけを休憩に数え、無ければどこでも休憩に数える
  * - 地図で置いている途中の種類(placing)
  *
  * GTFS を読み込み直すと(削除しても)、欠員・在籍の運転士の数と施設は消える(store/gtfs の feed を見張る。store/research.ts と同じ)。仮定は残す
@@ -50,22 +49,13 @@ export const MAX_SHORTAGE = 999
 export const MAX_ROSTER = 9999
 
 /**
- * 利用者が置いた場所。DutyPlace(推定に渡す形)を広げたもので、kind は type から決める(dutyKindOf)。
+ * 利用者が置いた場所(営業所)。DutyPlace(推定に渡す形)を広げたもの。
  * id は消す・名前を変えるときの目印(名前は重なりうるため)
  */
 export interface UserPlace extends DutyPlace {
   id: string
   type: PlaceType
 }
-
-/**
- * 場所の種類を、推定(duties.ts)の種類にする。営業所は出庫・入庫と休憩の場所(depot)、車庫は出庫・入庫だけの場所(garage)、
- * 休憩施設は休憩の場所(rest)
- */
-export function dutyKindOf(type: PlaceType): DutyPlace['kind'] {
-  return type === 'office' ? 'depot' : type
-}
-// site(営業所・車庫・休憩施設が同じ場所の拠点)は、推定でも site(出庫・入庫・点呼の場所で、休憩施設として休憩の場所を絞る)
 
 interface DriverState {
   /** 欠員(その日に乗務できない運転士の数)。入れていなければ null */
@@ -74,7 +64,7 @@ interface DriverState {
   roster: number | null
   /** 勤務の数の推定の仮定(DUTY_DEFAULTS から始める) */
   params: DutyParams
-  /** 営業所・車庫・休憩施設(利用者が置いた順) */
+  /** 営業所(利用者が置いた順) */
   places: UserPlace[]
   /** 地図で置いている途中の種類。置いていなければ null */
   placing: PlaceType | null
@@ -105,10 +95,10 @@ function userPlaceOf(input: PlaceInput): UserPlace | null {
   const name = normalizePlaceName(input.name)
   if (name === null || !validCoords(input.lat, input.lon)) return null
   placeSeq++
-  return { id: `place-${placeSeq}`, type: input.type, kind: dutyKindOf(input.type), name, lat: roundCoord(input.lat), lon: roundCoord(input.lon) }
+  return { id: `place-${placeSeq}`, type: input.type, name, lat: roundCoord(input.lat), lon: roundCoord(input.lon) }
 }
 
-/** 地図で置いた場所の名前(「営業所 1」。同じ種類で使っていない一番小さい番号) */
+/** 地図で置いた場所の名前(「営業所 1」。使っていない一番小さい番号) */
 export function defaultPlaceName(label: string, places: readonly Pick<UserPlace, 'name'>[]): string {
   const used = new Set(places.map((p) => p.name))
   for (let n = 1; ; n++) {
@@ -214,7 +204,7 @@ export interface DriverComparison {
   verdict: DriverVerdict
   /** 使った仮定の文(duties.ts の dutyAssumptions) */
   assumptions: string[]
-  /** 営業所・車庫・休憩施設を置く前と後の勤務の数。置いていなければ null */
+  /** 営業所を置く前と後の勤務の数。置いていなければ null */
   placesEffect: PlacesEffect | null
   /** 在籍の運転士の数を入れたときの参考の数。入れていなければ null */
   rosterCheck: RosterCheck | null
@@ -240,7 +230,7 @@ export interface RosterCheck {
   over: number
 }
 
-/** 営業所・車庫・休憩施設を置く前(without)と後(with)の勤務の数 */
+/** 営業所を置く前(without)と後(with)の勤務の数 */
 export interface PlacesEffect {
   /** 置いた場所の数 */
   count: number
@@ -288,8 +278,8 @@ function servicesOn(feed: GtfsFeed, date: string): string[] {
 
 /** 1つの GTFS の、その日の便・営業運行時間・勤務の数 */
 export function driverSide(feed: GtfsFeed, date: string, params: DutyParams, places: readonly DutyPlace[] = []): DriverSide {
-  // 推定は場所の種類と位置だけを使う。名前を変えても計算し直さないよう、鍵には入れない
-  const key = JSON.stringify([date, params, places.map((p) => [p.kind, p.lat, p.lon])])
+  // 推定は場所の位置だけを使う。名前を変えても計算し直さないよう、鍵には入れない
+  const key = JSON.stringify([date, params, places.map((p) => [p.lat, p.lon])])
   let byKey = sideCache.get(feed)
   const cached = byKey?.get(key)
   if (cached) return cached

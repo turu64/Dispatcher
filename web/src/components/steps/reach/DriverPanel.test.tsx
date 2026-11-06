@@ -162,20 +162,21 @@ describe('DriverView(上限を超えた勤務・回送が長すぎる勤務の�
     expect(screen.queryByTestId('duty-warning')).toBeNull()
   })
 
-  it('路線から遠い車庫を置くと、上限を超えた勤務と回送が長すぎる勤務の数を減便の前後で出す', () => {
-    // 停留所から約 50km 北の車庫(出庫・入庫の回送が片道 3 時間 15 分)。どの便も1便だけで連続運転の上限を超える
-    const far = { kind: 'garage' as const, name: '車庫', lat: 44.21, lon: 142.36 }
+  it('路線から遠い営業所を置くと、上限を超えた勤務と回送が長すぎる勤務の数を減便の前後で出す', () => {
+    // 停留所から約 50km 北の営業所(出庫・入庫の回送が片道 2 時間 10 分)。どの便も1便だけで連続運転の上限を超える
+    const far = { name: '営業所', lat: 44.21, lon: 142.36 }
     viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), places: [far] })
     const warning = screen.getByTestId('duty-warning')
     expect(warning.textContent).toContain('1便だけで改善基準告示の上限を超える勤務 減便前 14・減便後 6')
     expect(warning.textContent).toContain('出庫か入庫の回送が片道 60 分を超える勤務 減便前 14・減便後 6')
-    expect(warning.textContent).toContain('置いた場所が正しいか')
+    expect(warning.textContent).toContain('置いた場所が正しいか、ほかの営業所も置いたか')
+    expect(warning.textContent).not.toMatch(/車庫|休憩施設/)
     expect(warning.className).toContain('text-destructive')
     expect(warning.textContent).not.toContain('あなた')
   })
 
   it('減便後が無ければ、減便前の数だけを出す', () => {
-    const far = { kind: 'depot' as const, name: '営業所', lat: 44.21, lon: 142.36 }
+    const far = { name: '営業所', lat: 44.21, lon: 142.36 }
     viewOf({ base: shuttleFeed(14), places: [far] })
     expect(screen.getByTestId('duty-warning').textContent).toContain('出庫か入庫の回送が片道 60 分を超える勤務 14')
   })

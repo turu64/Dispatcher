@@ -1533,27 +1533,27 @@ WK1700,17:10:00,17:10:00,A,2`),
       expect(d2.verdict.kind).toBe('no_shortage')
     })
 
-    it('営業所・車庫・休憩施設を置いたとき、places は数だけにし、assumptions にも場所の名前を入れない(F02)', async () => {
-      const NAMES = ['秘匿の営業所T', '秘匿の車庫T', '秘匿の休憩所T']
+    it('営業所を置いたとき、places は数(営業所の数)だけにし、assumptions にも営業所の名前を入れない(F02)', async () => {
+      const NAMES = ['秘匿の営業所T', '秘匿の出張所T', '秘匿の本社T']
       const places: DutyPlace[] = [
-        { kind: 'depot', name: NAMES[0], lat: 43.76, lon: 142.36 },
-        { kind: 'garage', name: NAMES[1], lat: 43.77, lon: 142.36 },
-        { kind: 'rest', name: NAMES[2], lat: 43.76, lon: 142.37 },
+        { name: NAMES[0], lat: 43.76, lon: 142.36 },
+        { name: NAMES[1], lat: 43.77, lon: 142.36 },
+        { name: NAMES[2], lat: 43.76, lon: 142.37 },
       ]
       const { store, deps } = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places, shortage: 1 }) })
       await withPolicy(deps, store)
       const r = await runTool('summarize_impact', { date: null, step_hours: null }, deps)
       const d = parse(r.content).drivers as { places: unknown; assumptions: string[] }
       expect(d.places).toBe(3)
-      // 営業所・車庫は 2 か所、休憩施設は 1 か所と、数だけを書く
-      expect(d.assumptions.some((a) => a.includes('営業所・車庫(2 か所)'))).toBe(true)
-      expect(d.assumptions.some((a) => a.includes('休憩施設(1 か所)'))).toBe(true)
+      // 営業所は 3 か所と、数だけを書く
+      expect(d.assumptions.some((a) => a.includes('営業所(3 か所)'))).toBe(true)
+      expect(d.assumptions.join('\n')).not.toMatch(/車庫|休憩施設/)
       for (const name of NAMES) expect(r.content).not.toContain(name)
     })
 
     it('在籍の運転士の数を入れたときだけ roster_check を足し、その意味を notes で伝える。場所の名前は送らない', async () => {
       const NAME = '秘匿の営業所R'
-      const places: DutyPlace[] = [{ kind: 'depot', name: NAME, lat: 43.76, lon: 142.36 }]
+      const places: DutyPlace[] = [{ name: NAME, lat: 43.76, lon: 142.36 }]
       const without = setup({ reach: fakeReach(snapshot).access, drivers: () => ({ params: { ...DUTY_DEFAULTS }, places, shortage: 1 }) })
       await withPolicy(without.deps, without.store)
       const b0 = parse((await runTool('summarize_impact', { date: null, step_hours: null }, without.deps)).content)

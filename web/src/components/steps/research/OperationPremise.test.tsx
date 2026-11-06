@@ -13,10 +13,10 @@ afterEach(() => {
   useGtfsStore.getState().clear()
 })
 
-const section = () => screen.getByRole('region', { name: '運行の前提(営業所・休憩施設・運転士の数)' })
+const section = () => screen.getByRole('region', { name: '運行の前提(営業所・運転士の数)' })
 
 describe('OperationPremise(前提情報の手順の運行の前提の欄)', () => {
-  it('見出しと、在籍の運転士の数・欠員の欄、営業所などを置く欄、推定の仮定の開閉を出す。焦点を置ける', () => {
+  it('見出しと、在籍の運転士の数・欠員の欄、営業所を置く欄、推定の仮定の開閉を出す。焦点を置ける', () => {
     render(<OperationPremise />)
     const s = section()
     expect(s.id).toBe(PREMISE_SECTION_ID)
@@ -81,12 +81,12 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
   it('営業所を停留所から選んで置ける(置く欄はこの手順にある)', () => {
     useGtfsStore.setState({ stops: [{ id: '1', name: '旭川駅前', lat: 43.7631, lon: 142.3582, locationType: 0, parentStation: '' }] })
     render(<OperationPremise />)
-    fireEvent.click(screen.getByText('営業所・車庫・休憩施設を置く'))
+    fireEvent.click(screen.getByText('営業所を置く'))
     fireEvent.change(screen.getByLabelText('停留所の名前で探して営業所を置く'), { target: { value: '旭川' } })
     fireEvent.click(within(screen.getByRole('list', { name: '停留所の検索の結果' })).getByRole('button', { name: '旭川駅前' }))
     expect(useDriversStore.getState().places.map((p) => [p.type, p.name])).toEqual([['office', '旭川駅前']])
     // 推定の仮定の文も、置いた場所の数になる
     fireEvent.click(screen.getByText('勤務の数の推定の仮定を変える'))
-    expect(screen.getByRole('list', { name: '推定の仮定' }).textContent).toContain('営業所・車庫(1 か所)')
+    expect(screen.getByRole('list', { name: '推定の仮定' }).textContent).toContain('営業所(1 か所)')
   })
 })

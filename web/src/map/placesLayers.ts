@@ -1,4 +1,4 @@
-import { PLACE_TYPES, type PlaceType } from '@/lib/placesFile'
+import { PLACE_TYPES, type PlaceType } from '@/lib/userPlaces'
 import type { UserPlace } from '@/store/drivers'
 import { loadSymbolImage, type FacilityMap, type LoadSymbolImage } from './facilityLayers'
 

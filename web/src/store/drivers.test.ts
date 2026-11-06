@@ -5,7 +5,7 @@ import { DUTY_DEFAULTS, BOUND_LIMIT_MIN } from '@/gtfs/edit/duties'
 import { feedOf, basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
 import { applyForm2, activeWeekdayServicesOf, type Form2Result } from '@/gtfs/edit/form2'
 import { loadGtfsZip, type GtfsFeed } from '@/gtfs/load'
-import { MAX_PLACES } from '@/lib/placesFile'
+import { MAX_PLACES } from '@/lib/userPlaces'
 import { compareDrivers, defaultPlaceName, useDriversStore, weekdayServicesOfEdit, type DriverInput } from './drivers'
 import { useGtfsStore } from './gtfs'
 

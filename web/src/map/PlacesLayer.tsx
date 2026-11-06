@@ -1,7 +1,7 @@
 import type { MapLayerMouseEvent, MapMouseEvent } from 'maplibre-gl'
 import { X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { PLACE_TYPE_LABELS, PLACE_TYPES, type PlaceType } from '@/lib/placesFile'
+import { PLACE_TYPE_LABELS, PLACE_TYPES, type PlaceType } from '@/lib/userPlaces'
 import { defaultPlaceName, useDriversStore, type UserPlace } from '@/store/drivers'
 import { useMapStore } from '@/store/map'
 import { loadSymbolImage, type LoadSymbolImage } from './facilityLayers'

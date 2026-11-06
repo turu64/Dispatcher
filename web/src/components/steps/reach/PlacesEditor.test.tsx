@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DUTY_DEFAULTS } from '@/gtfs/edit/duties'
 import { feedOf } from '@/gtfs/edit/form2.fixture'
 import type { GtfsFeed } from '@/gtfs/load'
 import type { Stop } from '@/gtfs/parse'
-import { MAX_PLACES, PLACES_FILE_FORMAT, serializePlaces } from '@/lib/placesFile'
+import { MAX_PLACES } from '@/lib/userPlaces'
 import { compareDrivers, useDriversStore, type UserPlace } from '@/store/drivers'
 import { useGtfsStore } from '@/store/gtfs'
 import { DriverView } from './DriverPanel'
@@ -46,8 +46,6 @@ function renderView(overrides: Partial<PlacesEditorProps> = {}) {
     onReplace: vi.fn(),
     onStartPlacing: vi.fn(),
     onCancelPlacing: vi.fn(),
-    download: vi.fn(),
-    now: () => new Date(2026, 10, 5, 12, 30),
     ...overrides,
   }
   render(<PlacesEditorView {...props} />)
@@ -73,10 +71,17 @@ describe('searchStops(停留所の名前で探す)', () => {
 })
 
 describe('PlacesEditorView(営業所を置く欄)', () => {
-  it('見出しは「営業所を置く」で、種類の選択は無く、車庫・休憩施設の語を出さない', () => {
+  it('見出しは「営業所を置く」で、折りたたまずに出す。種類の選択は無く、車庫・休憩施設の語を出さない', () => {
     renderView({ places: [PLACE], sampleAvailable: true })
-    const editor = screen.getByTestId('places-editor')
-    expect(editor.querySelector('summary')?.textContent).toBe('営業所を置く(1 か所)')
+    const editor = screen.getByRole('region', { name: /^営業所を置く/ })
+    expect(editor).toBe(screen.getByTestId('places-editor'))
+    expect(screen.getByRole('heading', { name: /^営業所を置く/ }).textContent).toBe('営業所を置く(1 か所)')
+    // 折りたたまない:地図で置く・停留所から選ぶ・一覧・サンプルのボタンが最初から見える
+    expect(editor.querySelector('details, summary')).toBeNull()
+    expect(screen.getByRole('button', { name: '地図で営業所を置く' })).toBeTruthy()
+    expect(screen.getByLabelText('停留所の名前で探して営業所を置く')).toBeTruthy()
+    expect(screen.getByRole('list', { name: '置いた場所' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '道北バスの営業所(サンプル)を置く' })).toBeTruthy()
     expect(screen.queryByRole('radio')).toBeNull()
     expect(editor.textContent).not.toMatch(/車庫|休憩施設/)
     expect(editor.textContent).toContain('営業所を1つでも置くと、営業所の近くの停留所でのすき間だけを休憩に数えます。')
@@ -138,34 +143,13 @@ describe('PlacesEditorView(営業所を置く欄)', () => {
     expect(props.onRemove).toHaveBeenCalledWith('p1')
   })
 
-  it('JSON に書き出す(置いていなければ押せない)', () => {
-    const empty = renderView()
-    expect((screen.getByRole('button', { name: 'JSON に書き出す' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(empty.download).not.toHaveBeenCalled()
-    cleanup()
-    const props = renderView({ places: [PLACE] })
-    fireEvent.click(screen.getByRole('button', { name: 'JSON に書き出す' }))
-    expect(props.download).toHaveBeenCalledWith('dispatcher_places_202611051230.json', serializePlaces([PLACE]))
-    expect(screen.getByRole('status').textContent).toBe('1 か所を JSON に書き出しました。')
-  })
-
-  it('JSON を読み込むと一覧を置き換え、読み飛ばした行の数を出す(前の版の車庫の行も営業所として読む)', async () => {
-    const props = renderView({ places: [PLACE] })
-    const text = JSON.stringify({
-      format: PLACES_FILE_FORMAT,
-      version: 1,
-      places: [{ type: 'garage', name: '永山車庫', lat: 43.8, lon: 142.4 }, { type: 'office', name: '', lat: 43.8, lon: 142.4 }],
-    })
-    fireEvent.change(screen.getByTestId('places-file'), { target: { files: [new File([text], 'places.json', { type: 'application/json' })] } })
-    await waitFor(() => expect(props.onReplace).toHaveBeenCalledWith([{ type: 'office', name: '永山車庫', lat: 43.8, lon: 142.4 }]))
-    expect(screen.getByRole('status').textContent).toBe('1 か所を読み込みました。読めない行 1 行を読み飛ばしました。')
-  })
-
-  it('形の合わない JSON は読み込まず、理由を出す', async () => {
-    const props = renderView()
-    fireEvent.change(screen.getByTestId('places-file'), { target: { files: [new File(['[]'], 'x.json')] } })
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('営業所の JSON ではありません'))
-    expect(props.onReplace).not.toHaveBeenCalled()
+  it('JSON の書き出し・読み込みは無く、GTFS を読み込み直すと一覧が空になることを書く', () => {
+    renderView({ places: [PLACE] })
+    const editor = screen.getByTestId('places-editor')
+    expect(editor.textContent).not.toContain('JSON')
+    expect(editor.querySelector('input[type="file"]')).toBeNull()
+    expect(editor.textContent).toContain('場所はこの画面の中だけに持ち、サーバーには送りません。GTFS を読み込み直すと一覧は空になります。')
+    expect(editor.textContent).not.toContain('あなた')
   })
 
   it(`上限の ${MAX_PLACES} か所に達したら、置き始められない`, () => {

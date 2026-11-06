@@ -1,4 +1,4 @@
-import type { PlaceInput } from './placesFile'
+import type { PlaceInput } from './userPlaces'
 
 /**
  * 道北バスのサンプルの営業所(2026-11-06 に利用者が入力した位置。5か所)。

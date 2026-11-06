@@ -19,7 +19,7 @@ import {
   type ServiceHoursComparison,
 } from '@/gtfs/edit/serviceHours'
 import type { GtfsFeed } from '@/gtfs/load'
-import { MAX_PLACES, normalizePlaceName, roundCoord, validCoords, type PlaceInput, type PlaceType } from '@/lib/placesFile'
+import { MAX_PLACES, normalizePlaceName, roundCoord, validCoords, type PlaceInput, type PlaceType } from '@/lib/userPlaces'
 import { describeServiceDay } from '@/lib/serviceDay'
 import { lastVersion, useEditStore, type EditState } from './edit'
 import { useGtfsStore } from './gtfs'
@@ -78,7 +78,7 @@ interface DriverState {
   /** 名前を変える。空や長すぎる名前は受け付けない */
   renamePlace: (id: string, name: string) => void
   removePlace: (id: string) => void
-  /** 一覧を置き換える(JSON の読み込み)。読めない行と上限を超えた分は入れない */
+  /** 一覧を置き換える(道北バスのサンプルの営業所を置く)。読めない行と上限を超えた分は入れない */
   replacePlaces: (places: readonly PlaceInput[]) => void
   /** 地図で置き始める */
   startPlacing: (type: PlaceType) => void

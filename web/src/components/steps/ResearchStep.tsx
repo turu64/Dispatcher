@@ -5,12 +5,12 @@ import StepSection from '@/components/StepSection'
 import OperationPremise from '@/components/steps/research/OperationPremise'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { checkedAtText, safeUrl, type ResearchResult, type ResearchStatus } from '@/claude/research'
 import { FacilitySymbol } from '@/map/FacilityLayer'
 import { OTHER_STOP_RADIUS_M } from '@/ref/busstops'
 import {
   DEFAULT_SELECT_WALK_M,
-  FACILITY_KIND_LABELS,
   groupCandidates,
   initialShownCount,
   operatorMovementFacts,
@@ -20,7 +20,7 @@ import {
 import { RESEARCH_KEEP_OPEN, RESEARCH_SEND_NOTE, researchText, useChatStore, type ChatState } from '@/store/chat'
 import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
-import { DEFAULT_PRIORITY, priorityCategory, usePriorityStore } from '@/store/priority'
+import { DEFAULT_PRIORITY, priorityCategory, usePriorityStore, type PriorityKey } from '@/store/priority'
 import {
   facilitiesInUse,
   usePolicyApproved,
@@ -46,6 +46,12 @@ export const RESEARCH_DEMO_NONE = 'この GTFS の停留所の周りには、保
 export const RESEARCH_SAVED_NOTE = '保存済みの対象は調べ直さず(Web 検索をせず)、その結果を使います。'
 export const RESEARCH_RESULT_NOTE = '結果は AI が Web で調べたものです。確認日時のあとに変わっていることがあります。出典を開いて確かめてください。'
 export const OWN_OPERATOR = '読み込んだ GTFS の事業者'
+/** 学校・病院などの行の下に出す、調べた結果の開閉の見出し(最初は開いておく) */
+export const ROW_RESULT_LABEL = '調べた結果'
+/** 周辺の事業者の行の下に出す、調べた結果の全部の開閉の見出し(減便の動きは行に出すので、最初は閉じておく) */
+export const OPERATOR_RESULT_LABEL = '調べた結果のすべて'
+/** 重要拠点の優先順位の Dialog を開くボタンの文と、Dialog の見出し */
+export const PRIORITY_TITLE = '重要拠点の優先順位'
 export const CLOSED_SCHOOL = '休校中か不明'
 
 // 周辺の事業者の行(減便の動きと、こちらの停留所との重なり)
@@ -54,7 +60,7 @@ export const OVERLAP_DISCLAIMER = '国土数値情報の停留所には時刻が
 export const NO_BUSSTOP_DATA = '周辺の事業者の停留所の参照データがないため、こちらの停留所との重なりは数えていません。'
 export const MOVEMENT_NOT_RESEARCHED = '減便・ダイヤ改正・運休の動きは、まだ調べていません。'
 // 見出し(label)で絞った結果だけを言う。廃止など、絞り込みの語に当たらない事実がありうるため「動きがない」とは書かない
-export const MOVEMENT_NONE = '調べた結果に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、下の「調査の結果」で、ほかの事実と出典を確かめてください。'
+export const MOVEMENT_NONE = '調べた結果に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、下の「調べた結果のすべて」を開いて、ほかの事実と出典を確かめてください。'
 export const REDUCED_AFTER_POLICY = '「減便の方針」を承認すると、発車が減る・なくなる停留所のうち、ほかの事業者の停留所が近くにある数も表示します。'
 export const REDUCED_NO_DATE = '減便の期間に元の平日ダイヤが走る日がないため、発車が減る・なくなる停留所のうち、ほかの事業者の停留所が近くにある数は数えていません。'
 
@@ -97,59 +103,118 @@ function detailText(c: ResearchCandidate): string {
 
 // ---- 部品 ----
 
-/** 重要拠点の優先順位(並べ替えられる。データの無い種類は「データ未対応」) */
+/** 欄に出す、今の優先順位の要約に入れる種類の数 */
+const PRIORITY_SUMMARY_COUNT = 3
+
+/** 今の優先順位の要約(上から3つと残りの数) */
+function prioritySummary(order: readonly PriorityKey[]): string {
+  const head = order.slice(0, PRIORITY_SUMMARY_COUNT).map((key, i) => `${i + 1} ${priorityCategory(key).label}`)
+  const rest = order.length - head.length
+  return `優先する順:${head.join('、')}${rest > 0 ? ` ほか ${rest} 種類` : ''}`
+}
+
+/**
+ * 重要拠点の優先順位。欄には今の順の要約と「重要拠点の優先順位」のボタンを出し、Dialog の中で並べ替える
+ * (11/6 の利用者の指示。前は開閉(details)の中にあった)。データの無い種類は「データ未対応」。
+ * 並べ替えるとすぐに store が変わる(保存のボタンは無い)
+ */
 export function PriorityList() {
   const order = usePriorityStore((s) => s.order)
   const move = usePriorityStore((s) => s.move)
   const reset = usePriorityStore((s) => s.reset)
   const changed = order.some((k, i) => k !== DEFAULT_PRIORITY[i].key)
+  const listRef = useRef<HTMLOListElement>(null)
+  // 動かした後も、動かした種類のボタンに焦点を残す(端に着いて押せなくなったら、逆向きのボタンへ)
+  const focusAfterMove = useRef<{ key: PriorityKey; dir: -1 | 1 } | null>(null)
+  useEffect(() => {
+    const target = focusAfterMove.current
+    if (!target) return
+    focusAfterMove.current = null
+    const button = (dir: -1 | 1) => listRef.current?.querySelector<HTMLButtonElement>(`button[data-move="${dir}"][data-key="${target.key}"]`)
+    const same = button(target.dir)
+    const next = same && !same.disabled ? same : button(target.dir === -1 ? 1 : -1)
+    next?.focus()
+  }, [order])
+  const onMove = (key: PriorityKey, dir: -1 | 1) => {
+    focusAfterMove.current = { key, dir }
+    move(key, dir)
+  }
   return (
-    <details className="rounded-md border text-xs">
-      <summary className="cursor-pointer px-2 py-1.5 font-medium">重要拠点の優先順位{changed ? '(変更あり)' : ''}</summary>
-      <div className="flex flex-col gap-1.5 px-2 pb-2">
-        <p className="text-muted-foreground">
-          上ほど優先します。調べる対象の既定の選び方と、便を平日に戻す判断材料の並びに使います。データのない種類は選べません。
-        </p>
-        <ol className="flex flex-col gap-1" aria-label="重要拠点の優先順位">
-          {order.map((key, i) => {
-            const cat = priorityCategory(key)
-            return (
-              <li key={key} className="flex items-center gap-1.5">
-                <span className="w-5 text-right tabular-nums">{i + 1}</span>
-                <span className="min-w-0 flex-1">
-                  <span className={cat.data === 'none' ? 'text-muted-foreground' : undefined}>{cat.label}</span>
-                  {cat.data === 'none' ? (
-                    <Badge variant="outline" className="ml-1.5">
-                      データ未対応
-                    </Badge>
-                  ) : (
-                    <span className="ml-1.5 text-muted-foreground">{cat.dataNote}</span>
-                  )}
-                </span>
-                <Button type="button" variant="ghost" size="icon-xs" aria-label={`${cat.label}を上へ`} disabled={i === 0} onClick={() => move(key, -1)}>
-                  <ArrowUp aria-hidden="true" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={`${cat.label}を下へ`}
-                  disabled={i === order.length - 1}
-                  onClick={() => move(key, 1)}
-                >
-                  <ArrowDown aria-hidden="true" />
-                </Button>
-              </li>
-            )
-          })}
-        </ol>
-        {changed && (
-          <Button type="button" variant="outline" size="xs" className="self-start" onClick={reset}>
-            既定の並びに戻す
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      <span className="min-w-0 text-muted-foreground" data-testid="priority-summary">
+        {prioritySummary(order)}
+        {changed ? '(変更あり)' : ''}
+      </span>
+      <Dialog>
+        <DialogTrigger asChild>
+          <Button type="button" variant="outline" size="xs">
+            {PRIORITY_TITLE}
           </Button>
-        )}
-      </div>
-    </details>
+        </DialogTrigger>
+        <DialogContent showCloseButton={false} className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{PRIORITY_TITLE}</DialogTitle>
+            <DialogDescription>
+              上ほど優先します。調べる対象の既定の選び方と、便を平日に戻す判断材料の並びに使います。データのない種類は選べません。
+            </DialogDescription>
+          </DialogHeader>
+          <ol ref={listRef} className="flex flex-col gap-1 text-xs" aria-label={PRIORITY_TITLE}>
+            {order.map((key, i) => {
+              const cat = priorityCategory(key)
+              return (
+                <li key={key} className="flex items-center gap-1.5">
+                  <span className="w-5 text-right tabular-nums">{i + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className={cat.data === 'none' ? 'text-muted-foreground' : undefined}>{cat.label}</span>
+                    {cat.data === 'none' ? (
+                      <Badge variant="outline" className="ml-1.5">
+                        データ未対応
+                      </Badge>
+                    ) : (
+                      <span className="ml-1.5 text-muted-foreground">{cat.dataNote}</span>
+                    )}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`${cat.label}を上へ`}
+                    data-key={key}
+                    data-move="-1"
+                    disabled={i === 0}
+                    onClick={() => onMove(key, -1)}
+                  >
+                    <ArrowUp aria-hidden="true" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`${cat.label}を下へ`}
+                    data-key={key}
+                    data-move="1"
+                    disabled={i === order.length - 1}
+                    onClick={() => onMove(key, 1)}
+                  >
+                    <ArrowDown aria-hidden="true" />
+                  </Button>
+                </li>
+              )
+            })}
+          </ol>
+          <DialogFooter>
+            <Button type="button" variant="outline" size="sm" disabled={!changed} onClick={reset}>
+              既定の並びに戻す
+            </Button>
+            <DialogClose asChild>
+              <Button type="button" size="sm">
+                閉じる
+              </Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
 
@@ -181,7 +246,7 @@ function CandidateGroupDetails({ label, picked, children }: { label: string; pic
 }
 
 /**
- * 一覧の行・調査の結果のカードに、マウスとキーボードの焦点で地図の強調を付ける(store/map.ts の highlightedTargetId)。
+ * 一覧の行(行の下の調べた結果を含む)に、マウスとキーボードの焦点で地図の強調を付ける(store/map.ts の highlightedTargetId)。
  * 外れたときは、自分が強調しているときだけ解く(ほかの行に移った後に消さないため)
  */
 function highlightHandlers(targetId: string) {
@@ -267,6 +332,7 @@ function OperatorDetail({ candidate, result, reduced }: { candidate: ResearchCan
           {nearReduced !== null && `。このうち、減便で発車が減る・なくなる停留所 ${nearReduced} か所`}
         </p>
       )}
+      {result && <RowResult result={result} label={OPERATOR_RESULT_LABEL} defaultOpen={false} />}
     </div>
   )
 }
@@ -288,7 +354,13 @@ function CandidateGroupItems({
   reduced: ReducedStops | null
 }) {
   const items = group.items
-  const initial = initialShownCount(items, selected)
+  // 選んだ対象と、調べた結果のある対象は、「続きを表示」の後ろに隠さない(結果を行の下に出すため)
+  const kept = useMemo(() => {
+    const ids = new Set(selected)
+    for (const c of items) if (results.has(c.facility.targetId)) ids.add(c.facility.targetId)
+    return ids
+  }, [items, selected, results])
+  const initial = initialShownCount(items, kept)
   // 最初に出す件数は、選び足すと増え、外しても減らさない(押している最中の行が消えないように)。候補が替わったら決め直す
   const [shown, setShown] = useState(initial)
   const [prevItems, setPrevItems] = useState(items)
@@ -352,7 +424,15 @@ function CandidateGroupItems({
                   )}
                 </span>
               </label>
-              {isOperator && !c.ownOperator && <OperatorDetail candidate={c} result={result} reduced={reduced} />}
+              {isOperator && !c.ownOperator ? (
+                <OperatorDetail candidate={c} result={result} reduced={reduced} />
+              ) : (
+                result && (
+                  <div className="mt-0.5 pl-5">
+                    <RowResult result={result} label={ROW_RESULT_LABEL} defaultOpen />
+                  </div>
+                )
+              )}
             </li>
           )
         })}
@@ -419,12 +499,13 @@ function CandidateList({
     <div className="flex flex-col gap-1.5" role="group" aria-label="調べる対象の候補">
       {groups.map((g) => {
         const picked = g.items.filter((c) => selected.has(c.facility.targetId)).length
+        const withResult = g.items.filter((c) => results.has(c.facility.targetId)).length
         return (
           <CandidateGroupDetails key={g.key} label={g.label} picked={picked}>
             <summary className="cursor-pointer px-2 py-1.5">
               <span className="font-medium">{g.label}</span>
               <span className="ml-2 text-muted-foreground">
-                {g.items.length} 件(選んだ {picked} 件)
+                {g.items.length} 件(選んだ {picked} 件{withResult > 0 ? `・調べた結果 ${withResult} 件` : ''})
               </span>
             </summary>
             {g.key === 'operator' && <OperatorGroupNote overlaps={overlaps} reduced={reduced} />}
@@ -436,28 +517,16 @@ function CandidateList({
   )
 }
 
-/** 調査の結果の1件(事実・出典 URL・確認日時・どこから来た結果か)。マウスと焦点で地図の記号を強調する */
-export function ResultCard({ result, highlighted = false }: { result: ResearchResult; highlighted?: boolean }) {
+/** 調べた結果の中身(事実・注記・出典 URL・確認日時・どこから来た結果か) */
+function ResultBody({ result }: { result: ResearchResult }) {
   return (
-    <li
-      className="flex flex-col gap-1 rounded-md border px-2 py-1.5 text-xs outline-none focus-visible:ring-3 focus-visible:ring-ring/50 data-[highlighted=true]:bg-muted"
-      aria-label={`${result.name}の調査の結果`}
-      tabIndex={0}
-      data-highlighted={highlighted ? 'true' : undefined}
-      {...highlightHandlers(result.targetId)}
-    >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <FacilitySymbol kind={result.kind} />
-        <span className="font-medium">{result.name}</span>
-        <span className="text-muted-foreground">{FACILITY_KIND_LABELS[result.kind]}</span>
-        <ResultBadge result={result} />
-      </div>
+    <div className="flex flex-col gap-1">
       {result.facts.length > 0 && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+        <dl className="flex flex-col gap-1">
           {result.facts.map((f, i) => (
-            <div key={i} className="contents">
+            <div key={i} className="min-w-0">
               <dt className="text-muted-foreground">{f.label}</dt>
-              <dd>
+              <dd className="break-words">
                 {f.value}
                 {f.source >= 1 && f.source <= result.sources.length && <sup className="ml-0.5 text-muted-foreground">[{f.source}]</sup>}
               </dd>
@@ -489,7 +558,30 @@ export function ResultCard({ result, highlighted = false }: { result: ResearchRe
       <p className="text-muted-foreground">
         確認日時 {checkedAtText(result.checkedAt)}・{result.origin === 'demo' ? 'デモ用の保存済みの結果' : 'Web で調べた結果'}
       </p>
-    </li>
+    </div>
+  )
+}
+
+/**
+ * 候補の行の下に出す、調べた結果(11/6 の利用者の指示で、別の「調査の結果」のまとまりから行の下に移した)。
+ * 行ごとに開閉でき、開くかどうかは利用者が決める。地図の強調は行(li)のマウスと焦点で付く(中の見出しやリンクの焦点も含む)
+ */
+function RowResult({ result, label, defaultOpen }: { result: ResearchResult; label: string; defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <details
+      className="rounded-md border bg-background px-2 py-1"
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+      aria-label={`${result.name}の調査の結果`}
+    >
+      <summary className="cursor-pointer text-muted-foreground">
+        {label}(事実 {result.facts.length} 件・出典 {result.sources.length} 件)
+      </summary>
+      <div className="mt-1">
+        <ResultBody result={result} />
+      </div>
+    </details>
   )
 }
 
@@ -519,7 +611,6 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
   const groups = useMemo(() => groupCandidates(candidates, order), [candidates, order])
   const [limitNote, setLimitNote] = useState<string | null>(null)
-  const highlighted = useMapStore((s) => s.highlightedTargetId)
   // 「前提情報を調べる」の送信(POST)の間
   const [starting, setStarting] = useState(false)
   // 「読み込み直す」を押した後、読み込み終えるまで、前の理由とボタン(処理中)を残す
@@ -593,19 +684,8 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
     void useResearchStore.getState().loadDemo(new Set(candidates.map((c) => c.facility.targetId)))
   }
 
-  // 表示する結果:選んでいる対象と、調査を始めた対象のうち、結果のあるもの(選んだ順)
-  const shownResults = useMemo(() => {
-    const ids = [...selectedIds, ...(targets ?? []).map((t) => t.targetId)]
-    const seen = new Set<string>()
-    const out: ResearchResult[] = []
-    for (const id of ids) {
-      if (seen.has(id)) continue
-      seen.add(id)
-      const r = results.get(id)
-      if (r) out.push(r)
-    }
-    return out
-  }, [selectedIds, targets, results])
+  // 候補のうち、調べた結果のあるものの数(結果は候補の行の下に出す)
+  const resultCount = useMemo(() => candidates.filter((c) => results.has(c.facility.targetId)).length, [candidates, results])
   const cachedSelected = selectedIds.filter((id) => results.has(id)).length
 
   return (
@@ -663,6 +743,11 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
                   {limitNote}
                 </p>
               )}
+              {resultCount > 0 && (
+                <p className="text-xs text-muted-foreground" data-testid="research-result-note">
+                  調べた結果({resultCount} 件)は、各対象の行の下に出します。{RESEARCH_RESULT_NOTE}
+                </p>
+              )}
               <CandidateList groups={groups} selected={selected} onToggle={onToggle} results={results} overlaps={overlaps} reduced={reduced} />
             </>
           )}
@@ -716,20 +801,6 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
               </p>
             )}
           </div>
-
-          {shownResults.length > 0 && (
-            <section className="flex flex-col gap-1.5" aria-labelledby="research-results-heading">
-              <h3 id="research-results-heading" className="text-sm font-medium">
-                調査の結果({shownResults.length} 件)
-              </h3>
-              <p className="text-xs text-muted-foreground">{RESEARCH_RESULT_NOTE}</p>
-              <ul className="flex flex-col gap-1.5">
-                {shownResults.map((r) => (
-                  <ResultCard key={r.targetId} result={r} highlighted={highlighted === r.targetId} />
-                ))}
-              </ul>
-            </section>
-          )}
 
           {inUse && <p className="text-xs text-muted-foreground">施設の位置と名前:国土数値情報(バス停留所 P11・学校 P29・医療機関 P04)を加工して作成。</p>}
         </>

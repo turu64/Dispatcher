@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PREMISE_SECTION_ID } from '@/components/steps/stepIds'
 import { BOUND_LIMIT_MIN, DUTY_DEFAULTS } from '@/gtfs/edit/duties'
@@ -15,8 +15,16 @@ afterEach(() => {
 
 const section = () => screen.getByRole('region', { name: '運行の前提(営業所・運転士の数)' })
 
+/** 「勤務時間の設定」を押して Dialog を開く(押したボタンを返す) */
+function openSettings() {
+  const trigger = within(section()).getByRole('button', { name: '勤務時間の設定' })
+  trigger.focus()
+  fireEvent.click(trigger)
+  return trigger
+}
+
 describe('OperationPremise(前提情報の手順の運行の前提の欄)', () => {
-  it('見出しと、在籍の運転士の数・欠員の欄、営業所を置く欄、推定の仮定の開閉を出す。焦点を置ける', () => {
+  it('見出しと、在籍の運転士の数・欠員の欄、営業所を置く欄、推定の仮定の要約と「勤務時間の設定」のボタンを出す。焦点を置ける', () => {
     render(<OperationPremise />)
     const s = section()
     expect(s.id).toBe(PREMISE_SECTION_ID)
@@ -24,7 +32,11 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
     expect(within(s).getByLabelText('在籍の運転士の数(任意)')).toBeTruthy()
     expect(within(s).getByLabelText('欠員(その日に乗務できない運転士の数)')).toBeTruthy()
     expect(within(s).getByTestId('places-editor')).toBeTruthy()
-    expect(within(s).getByText('勤務の数の推定の仮定を変える')).toBeTruthy()
+    expect(within(s).getByTestId('duty-settings-summary').textContent).toBe('拘束 13 時間・点呼 30/15 分・回送 時速 30km')
+    // 仮定の入力は Dialog の中だけ(閉じている間は出さない)
+    expect(within(s).getByRole('button', { name: '勤務時間の設定' })).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByLabelText('入庫後の点呼')).toBeNull()
     expect(s.textContent).toContain('サーバーには送りません')
     expect(s.textContent).not.toContain('あなた')
   })
@@ -66,27 +78,52 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
     expect((screen.getByLabelText('在籍の運転士の数(任意)') as HTMLInputElement).value).toBe('')
   })
 
-  it('推定の仮定(拘束 15 時間・点呼)を変えると store に入り、仮定の文も変わる。既定値に戻せる', () => {
+  it('「勤務時間の設定」で Dialog を開き、拘束 15 時間・点呼を変えると store に入り、仮定の文と欄の要約も変わる。既定値に戻せる', async () => {
     render(<OperationPremise />)
-    fireEvent.click(screen.getByText('勤務の数の推定の仮定を変える'))
-    fireEvent.click(screen.getByRole('radio', { name: '15 時間(延長の上限)' }))
+    openSettings()
+    const dialog = screen.getByRole('dialog', { name: '勤務時間の設定' })
+    expect(document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent).toContain('勤務の数の推定の仮定です')
+    fireEvent.click(within(dialog).getByRole('radio', { name: '15 時間(延長の上限)' }))
     expect(useDriversStore.getState().params.maxBoundMin).toBe(BOUND_LIMIT_MIN.extended)
-    expect(screen.getByRole('list', { name: '推定の仮定' }).textContent).toContain('拘束時間は 15 時間以内')
-    fireEvent.change(screen.getByLabelText('入庫後の点呼'), { target: { value: '75' } })
+    expect(within(dialog).getByRole('list', { name: '推定の仮定' }).textContent).toContain('拘束時間は 15 時間以内')
+    fireEvent.change(within(dialog).getByLabelText('入庫後の点呼'), { target: { value: '75' } })
     expect(useDriversStore.getState().params.postCheckMin).toBe(75)
-    fireEvent.click(screen.getByRole('button', { name: '既定値に戻す' }))
+    fireEvent.change(within(dialog).getByLabelText('回送の速さ'), { target: { value: '40' } })
+    expect(useDriversStore.getState().params.deadheadKmh).toBe(40)
+    // 閉じても値は残り、欄の要約が今の値になる
+    fireEvent.click(within(dialog).getByRole('button', { name: '閉じる' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(useDriversStore.getState().params.postCheckMin).toBe(75)
+    expect(screen.getByTestId('duty-settings-summary').textContent).toBe('拘束 15 時間・点呼 30/75 分・回送 時速 40km')
+    openSettings()
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '既定値に戻す' }))
     expect(useDriversStore.getState().params).toEqual(DUTY_DEFAULTS)
+  })
+
+  it('Dialog は Escape で閉じ、開いたボタンに焦点が戻る。「閉じる」でも同じ', async () => {
+    render(<OperationPremise />)
+    const trigger = openSettings()
+    const dialog = screen.getByRole('dialog', { name: '勤務時間の設定' })
+    // 開いている間は、焦点が Dialog の中にある
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+
+    openSettings()
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '閉じる' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
 
   it('営業所を停留所から選んで置ける(置く欄はこの手順にある)', () => {
     useGtfsStore.setState({ stops: [{ id: '1', name: '旭川駅前', lat: 43.7631, lon: 142.3582, locationType: 0, parentStation: '' }] })
     render(<OperationPremise />)
-    fireEvent.click(screen.getByText('営業所を置く'))
     fireEvent.change(screen.getByLabelText('停留所の名前で探して営業所を置く'), { target: { value: '旭川' } })
     fireEvent.click(within(screen.getByRole('list', { name: '停留所の検索の結果' })).getByRole('button', { name: '旭川駅前' }))
     expect(useDriversStore.getState().places.map((p) => [p.type, p.name])).toEqual([['office', '旭川駅前']])
     // 推定の仮定の文も、置いた場所の数になる
-    fireEvent.click(screen.getByText('勤務の数の推定の仮定を変える'))
-    expect(screen.getByRole('list', { name: '推定の仮定' }).textContent).toContain('営業所(1 か所)')
+    openSettings()
+    expect(within(screen.getByRole('dialog')).getByRole('list', { name: '推定の仮定' }).textContent).toContain('営業所(1 か所)')
   })
 })

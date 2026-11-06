@@ -16,6 +16,7 @@ import {
 } from '@/components/steps/reach/driverText'
 import { PREMISE_SECTION_ID } from '@/components/steps/stepIds'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -27,7 +28,8 @@ import { MAX_ROSTER, MAX_SHORTAGE, useDriversStore } from '@/store/drivers'
  * 要る運転士の数(目安)の推定と判定に使う入力を、この欄にまとめる:
  * - 運転士の数:在籍の運転士の数(任意)と欠員(その日に乗務できない運転士の数)
  * - 営業所(reach/PlacesEditor.tsx。地図で置く操作は、この手順の地図で行う。map/PlacesLayer.tsx)
- * - 勤務の数の推定の仮定(拘束時間の上限・点呼・回送の速さ)
+ * - 勤務の数の推定の仮定(拘束時間の上限・点呼・回送の速さ)。欄には今の値の短い要約だけを出し、「勤務時間の設定」の Dialog で変える
+ *   (11/6 の利用者の指示。前は開閉(details)の中にあった)
  * 結果(減便の前後の勤務の数と判定)は、影響(到達圏)の手順の reach/DriverPanel.tsx に出す。
  * 値は store/drivers.ts(メモリだけ)。GTFS を読み込み直すと運転士の数と場所は消え、仮定は残る
  */
@@ -178,7 +180,18 @@ export function CountField({
   )
 }
 
-/** 「勤務の数の推定の仮定」の開閉。拘束の上限・点呼の分・回送の速さを変えると、store の値が変わって計算し直す */
+/** 勤務の数の推定の仮定を変える Dialog を開くボタンの文と、Dialog の見出し */
+export const DUTY_SETTINGS_TITLE = '勤務時間の設定'
+
+/** 欄に出す、今の仮定の短い要約 */
+function dutySettingsSummary(params: Pick<DutyParams, 'maxBoundMin' | 'preCheckMin' | 'postCheckMin' | 'deadheadKmh'>): string {
+  return `拘束 ${params.maxBoundMin / 60} 時間・点呼 ${params.preCheckMin}/${params.postCheckMin} 分・回送 時速 ${params.deadheadKmh}km`
+}
+
+/**
+ * 「勤務の数の推定の仮定」の要約と、変える Dialog(「勤務時間の設定」)。拘束の上限・点呼の分・回送の速さを変えると、
+ * すぐに store の値が変わって計算し直す(保存のボタンは無い。閉じても値は残る)
+ */
 export function AssumptionFields({
   params,
   places,
@@ -191,79 +204,99 @@ export function AssumptionFields({
   onReset: () => void
 }) {
   return (
-    <details className="text-xs">
-      <summary className="cursor-pointer">
-        <span className="font-medium">勤務の数の推定の仮定を変える</span>
-        <span className="text-muted-foreground">
-          (拘束 {params.maxBoundMin / 60} 時間・点呼 {params.preCheckMin}/{params.postCheckMin} 分・回送 時速 {params.deadheadKmh}km)
+    <div className="flex flex-col gap-1 text-xs">
+      <span className="font-medium">勤務の数の推定の仮定</span>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground" data-testid="duty-settings-summary">
+          {dutySettingsSummary(params)}
         </span>
-      </summary>
-      <div className="mt-2 flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <span id="driver-bound-label" className="text-xs">
-            拘束時間の上限
-          </span>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            spacing={0}
-            aria-labelledby="driver-bound-label"
-            value={String(params.maxBoundMin)}
-            onValueChange={(v) => {
-              const n = Number(v)
-              if (n === BOUND_LIMIT_MIN.standard || n === BOUND_LIMIT_MIN.extended) onParams({ maxBoundMin: n })
-            }}
-          >
-            <ToggleGroupItem value={String(BOUND_LIMIT_MIN.standard)} className={SELECTED_TOGGLE_CLASS}>
-              13 時間(原則)
-            </ToggleGroupItem>
-            <ToggleGroupItem value={String(BOUND_LIMIT_MIN.extended)} className={SELECTED_TOGGLE_CLASS}>
-              15 時間(延長の上限)
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-        <div className="grid grid-cols-2 items-end gap-2">
-          <NumberField
-            id="driver-pre-check"
-            label="出庫前の点呼"
-            value={params.preCheckMin}
-            unit="分"
-            max={MAX_CHECK_MIN}
-            integer
-            parse={parseCheckMinutes}
-            onCommit={(v) => onParams({ preCheckMin: v })}
-          />
-          <NumberField
-            id="driver-post-check"
-            label="入庫後の点呼"
-            value={params.postCheckMin}
-            unit="分"
-            max={MAX_CHECK_MIN}
-            integer
-            parse={parseCheckMinutes}
-            onCommit={(v) => onParams({ postCheckMin: v })}
-          />
-          <NumberField
-            id="driver-deadhead"
-            label="回送の速さ"
-            value={params.deadheadKmh}
-            unit="km/h"
-            max={DEADHEAD_KMH_RANGE.max}
-            integer
-            parse={parseDeadheadKmh}
-            onCommit={(v) => onParams({ deadheadKmh: v })}
-          />
-        </div>
-        <ul className="flex list-disc flex-col gap-0.5 pl-4 text-muted-foreground" aria-label="推定の仮定">
-          {dutyAssumptions(params, places).map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-        <Button type="button" variant="outline" size="sm" className="self-start" onClick={onReset}>
-          既定値に戻す
-        </Button>
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button type="button" variant="outline" size="xs">
+              {DUTY_SETTINGS_TITLE}
+            </Button>
+          </DialogTrigger>
+          <DialogContent showCloseButton={false} className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{DUTY_SETTINGS_TITLE}</DialogTitle>
+              <DialogDescription>勤務の数の推定の仮定です。値を変えると、すぐに要る運転士の数(目安)を計算し直します。</DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="flex flex-col gap-1">
+                <span id="driver-bound-label" className="text-xs">
+                  拘束時間の上限
+                </span>
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  size="sm"
+                  spacing={0}
+                  aria-labelledby="driver-bound-label"
+                  value={String(params.maxBoundMin)}
+                  onValueChange={(v) => {
+                    const n = Number(v)
+                    if (n === BOUND_LIMIT_MIN.standard || n === BOUND_LIMIT_MIN.extended) onParams({ maxBoundMin: n })
+                  }}
+                >
+                  <ToggleGroupItem value={String(BOUND_LIMIT_MIN.standard)} className={SELECTED_TOGGLE_CLASS}>
+                    13 時間(原則)
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value={String(BOUND_LIMIT_MIN.extended)} className={SELECTED_TOGGLE_CLASS}>
+                    15 時間(延長の上限)
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+              <div className="grid grid-cols-2 items-end gap-2">
+                <NumberField
+                  id="driver-pre-check"
+                  label="出庫前の点呼"
+                  value={params.preCheckMin}
+                  unit="分"
+                  max={MAX_CHECK_MIN}
+                  integer
+                  parse={parseCheckMinutes}
+                  onCommit={(v) => onParams({ preCheckMin: v })}
+                />
+                <NumberField
+                  id="driver-post-check"
+                  label="入庫後の点呼"
+                  value={params.postCheckMin}
+                  unit="分"
+                  max={MAX_CHECK_MIN}
+                  integer
+                  parse={parseCheckMinutes}
+                  onCommit={(v) => onParams({ postCheckMin: v })}
+                />
+                <NumberField
+                  id="driver-deadhead"
+                  label="回送の速さ"
+                  value={params.deadheadKmh}
+                  unit="km/h"
+                  max={DEADHEAD_KMH_RANGE.max}
+                  integer
+                  parse={parseDeadheadKmh}
+                  onCommit={(v) => onParams({ deadheadKmh: v })}
+                />
+              </div>
+              <ul className="flex list-disc flex-col gap-0.5 pl-4 text-muted-foreground" aria-label="推定の仮定">
+                {dutyAssumptions(params, places).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" size="sm" onClick={onReset}>
+                既定値に戻す
+              </Button>
+              <DialogClose asChild>
+                <Button type="button" size="sm">
+                  閉じる
+                </Button>
+              </DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
-    </details>
+    </div>
   )
 }

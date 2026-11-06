@@ -30,6 +30,9 @@ import ResearchStep, {
   RESEARCH_START,
   RESEARCH_STARTING,
   OWN_OPERATOR,
+  OPERATOR_RESULT_LABEL,
+  PRIORITY_TITLE,
+  ROW_RESULT_LABEL,
 } from './ResearchStep'
 
 // 停留所は旭川の近くの3つ。施設はその周り(範囲の外のものを1つ含む)。smallFeed の事業者は「テストバス」
@@ -125,6 +128,16 @@ function includes(text: string) {
   return (content: string) => content.includes(text)
 }
 
+/** 候補の行(チェックボックスの名前で探す) */
+function rowOf(name: string): HTMLElement {
+  return screen.getByRole('checkbox', { name, hidden: true }).closest('li')!
+}
+
+/** 行の下に出す、調べた結果(開閉の details。名前は「◯◯の調査の結果」) */
+function rowResult(name: string): HTMLDetailsElement {
+  return within(rowOf(name)).getByRole('group', { name: `${name}の調査の結果`, hidden: true }) as HTMLDetailsElement
+}
+
 function checkedNames(): string[] {
   const list = screen.getByRole('group', { name: '調べる対象の候補' })
   return within(list)
@@ -197,23 +210,46 @@ describe('ResearchStep', () => {
     expect(screen.getByText(includes('国土数値情報(バス停留所 P11・学校 P29・医療機関 P04)を加工して作成'))).toBeTruthy()
   })
 
-  it('重要拠点の優先順位を並べ替えられ、データの無い種類は「データ未対応」と出す。並べ替えると既定の選び方が変わる', () => {
+  it('重要拠点の優先順位は、欄に今の順の要約とボタンを出し、Dialog の中で並べ替えられる。データの無い種類は「データ未対応」と出す。並べ替えると既定の選び方が変わる', async () => {
     act(() => useResearchStore.setState({ maxTargets: 1 }))
     setup()
-    const priority = screen.getByRole('list', { name: '重要拠点の優先順位', hidden: true })
-    const items = within(priority).getAllByRole('listitem', { hidden: true })
+    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 入院設備のある病院、2 鉄道駅・空港、3 高校・特別支援学校 ほか 7 種類')
+    // 並べ替えの一覧は Dialog の中だけ(閉じている間は出さない)
+    expect(screen.queryByRole('list', { name: PRIORITY_TITLE, hidden: true })).toBeNull()
+    const trigger = screen.getByRole('button', { name: PRIORITY_TITLE })
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: PRIORITY_TITLE })
+    const priority = within(dialog).getByRole('list', { name: PRIORITY_TITLE })
+    const items = within(priority).getAllByRole('listitem')
     expect(items).toHaveLength(10)
     expect(items[0].textContent).toContain('入院設備のある病院')
     expect(within(priority).getAllByText('データ未対応')).toHaveLength(4)
     expect(items[1].textContent).toContain('空港はデータ未対応')
-    expect(checkedNames()).toEqual(['テスト総合病院'])
+    expect((within(dialog).getByRole('button', { name: '既定の並びに戻す' }) as HTMLButtonElement).disabled).toBe(true)
 
-    // 高校・特別支援学校を2つ上げる(1位に)
-    fireEvent.click(screen.getByRole('button', { name: '高校・特別支援学校を上へ', hidden: true }))
-    fireEvent.click(screen.getByRole('button', { name: '高校・特別支援学校を上へ', hidden: true }))
-    expect(within(priority).getAllByRole('listitem', { hidden: true })[0].textContent).toContain('高校・特別支援学校')
+    // 高校・特別支援学校を2つ上げる(1位に)。端に着いたら、焦点は下へのボタンに移る
+    fireEvent.click(within(dialog).getByRole('button', { name: '高校・特別支援学校を上へ' }))
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('高校・特別支援学校を上へ')
+    fireEvent.click(within(dialog).getByRole('button', { name: '高校・特別支援学校を上へ' }))
+    expect(within(priority).getAllByRole('listitem')[0].textContent).toContain('高校・特別支援学校')
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('高校・特別支援学校を下へ')
+    expect((within(dialog).getByRole('button', { name: '既定の並びに戻す' }) as HTMLButtonElement).disabled).toBe(false)
+
+    // Escape で閉じ、開いたボタンに焦点が戻る。要約も今の順になる
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 高校・特別支援学校、2 入院設備のある病院、3 鉄道駅・空港 ほか 7 種類(変更あり)')
     expect(checkedNames()).toEqual(['テスト高等学校'])
-    expect(screen.getByRole('button', { name: '既定の並びに戻す', hidden: true })).toBeTruthy()
+
+    // 「既定の並びに戻す」で戻し、「閉じる」で閉じても焦点はボタンに戻る
+    fireEvent.click(trigger)
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '既定の並びに戻す' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '閉じる' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+    expect(checkedNames()).toEqual(['テスト総合病院'])
   })
 
   it('まとまりの開閉は利用者が決め、最後の1件を外しても閉じない。外から選ばれたまとまりは開く', () => {
@@ -281,7 +317,18 @@ describe('ResearchStep', () => {
 
     // 始めた後と、保存が進んだときに、保存済みの結果を読む
     await waitFor(() => expect(research.overview).toHaveBeenCalled())
-    const card = await screen.findByRole('listitem', { name: 'テスト高等学校の調査の結果' })
+    // 結果は別のまとまりではなく、その施設の行の下に出す(最初は開いておく)
+    await waitFor(() => expect(rowResult('テスト高等学校')).toBeTruthy())
+    const card = rowResult('テスト高等学校')
+    expect(card.open).toBe(true)
+    expect(card.querySelector('summary')?.textContent).toBe(`${ROW_RESULT_LABEL}(事実 1 件・出典 1 件)`)
+    expect(screen.queryByRole('heading', { name: /調査の結果/ })).toBeNull()
+    expect(screen.getByTestId('research-result-note').textContent).toContain('調べた結果(1 件)は、各対象の行の下に出します。')
+    expect(screen.getByRole('group', { name: '高校・特別支援学校', hidden: true }).querySelector('summary')?.textContent).toContain('(選んだ 1 件・調べた結果 1 件)')
+    // 行には結果のあることのバッジも出す
+    expect(within(rowOf('テスト高等学校')).getByText(/調査済み・見つかった/)).toBeTruthy()
+    // 結果の無い行には出さない
+    expect(within(rowOf('テスト総合病院')).queryByRole('group', { hidden: true })).toBeNull()
     expect(card.textContent).toContain('始業')
     expect(card.textContent).toContain('8時40分')
     expect(card.textContent).toContain('冬は時刻が変わる')
@@ -381,9 +428,11 @@ describe('ResearchStep', () => {
     expect(research.start).not.toHaveBeenCalled()
     expect(fake.api.create).not.toHaveBeenCalled()
     expect(checkedNames()).toEqual(['テスト総合病院'])
-    const card = screen.getByRole('listitem', { name: 'テスト総合病院の調査の結果' })
+    const card = rowResult('テスト総合病院')
     expect(card.textContent).toContain('デモ用の保存済みの結果')
-    expect(card.textContent).toContain('一部だけ見つかった')
+    expect(card.open).toBe(true)
+    // どこから来た結果か・見つかったかは、行のバッジに出す
+    expect(within(rowOf('テスト総合病院')).getByText('保存済み(デモ)・一部だけ見つかった')).toBeTruthy()
     expect(card.textContent).toContain('確認日時 2026年11月6日 09:00')
     // 保存済みの対象は調べ直さない旨
     expect(screen.getByText(/保存済みの対象は調べ直さず/)).toBeTruthy()
@@ -463,7 +512,7 @@ describe('ResearchStep', () => {
     expect(screen.getByRole('button', { name: '読み込み直す' }).getAttribute('aria-busy')).toBeNull()
   })
 
-  it('施設の行・調査の結果のカードに、マウスとキーボードの焦点が当たると地図の強調を付け、外れると解く', async () => {
+  it('施設の行(行の下の調べた結果を含む)に、マウスとキーボードの焦点が当たると地図の強調を付け、外れると解く', async () => {
     const { research } = setup()
     const highlighted = () => useMapStore.getState().highlightedTargetId
     const row = screen.getByRole('checkbox', { name: 'テスト総合病院' }).closest('li')!
@@ -486,17 +535,27 @@ describe('ResearchStep', () => {
     fireEvent.mouseLeave(row)
     expect(highlighted()).toBe('P04:clinic')
 
-    // 調査の結果のカード
+    // 行の下の調べた結果(開閉の見出しと出典のリンクの焦点も、その行の強調になる)
+    fireEvent.mouseLeave(screen.getByRole('checkbox', { name: 'テスト内科' }).closest('li')!)
     fireEvent.click(screen.getByRole('button', { name: RESEARCH_START }))
     await waitFor(() => expect(research.overview).toHaveBeenCalled())
-    const card = await screen.findByRole('listitem', { name: 'テスト高等学校の調査の結果' })
-    expect(card.tabIndex).toBe(0)
-    act(() => card.focus())
+    await waitFor(() => expect(rowResult('テスト高等学校')).toBeTruthy())
+    const card = rowResult('テスト高等学校')
+    const summary = card.querySelector('summary')!
+    act(() => summary.focus())
     expect(highlighted()).toBe('P29:high')
-    act(() => card.blur())
+    act(() => summary.blur())
     expect(highlighted()).toBeNull()
-    fireEvent.mouseEnter(card)
+    const link = within(card).getByRole('link', { name: /学校の案内/ })
+    act(() => link.focus())
     expect(highlighted()).toBe('P29:high')
+    act(() => link.blur())
+    fireEvent.mouseEnter(rowOf('テスト高等学校'))
+    expect(highlighted()).toBe('P29:high')
+    // 開閉しても、行のチェックボックスは変わらない(結果は label の外に置く)
+    expect(checkedNames()).toContain('テスト高等学校')
+    fireEvent.click(summary)
+    expect(checkedNames()).toContain('テスト高等学校')
   })
 
   it('手順を離れたら(部品が外れたら)、強調を解く', () => {
@@ -553,6 +612,26 @@ describe('ResearchStep の一覧の畳み方', () => {
     expect(names('診療所')).toHaveLength(7)
     // ほかのまとまりは開かない
     expect(names(OTHERS)).toHaveLength(5)
+  })
+  it('調べた結果のある対象は、選んでいなくても「続きを表示」の後ろに隠さず、行の下に結果を出す', () => {
+    setup()
+    act(() =>
+      useResearchStore.getState().mergeResults([
+        {
+          targetId: 'P29:e7',
+          kind: 'school',
+          name: '小学校7',
+          status: 'found',
+          facts: [{ label: '始業', value: '8時30分', source: 1 }],
+          sources: [{ url: 'https://example.jp/e7', title: '学校の案内' }],
+          note: '',
+          checkedAt: '2026-11-06T10:05:00+09:00',
+          origin: 'web',
+        },
+      ]),
+    )
+    expect(names(OTHERS)).toHaveLength(8)
+    expect(screen.getByRole('group', { name: '小学校7の調査の結果', hidden: true }).textContent).toContain('8時30分')
   })
 })
 
@@ -686,7 +765,16 @@ describe('ResearchStep の周辺の事業者', () => {
     expect(movement.textContent).not.toContain('会社の概要')
     expect(movement.textContent).toContain('確認日時 2026年11月3日 18:58・デモ用の保存済みの結果')
     expect(within(movement).getByRole('link', { name: /報道/ }).getAttribute('href')).toBe('https://example.jp/news')
-    // 減便などの事実が無ければ、そう出す
+    // 調べた結果のすべて(減便の動き以外の事実も)は、事業者の行の下に、最初は閉じて出す
+    const all = within(big).getByRole('group', { name: 'おおきいバスの調査の結果', hidden: true }) as HTMLDetailsElement
+    expect(all.open).toBe(false)
+    expect(all.querySelector('summary')?.textContent).toBe(`${OPERATOR_RESULT_LABEL}(事実 3 件・出典 2 件)`)
+    expect(all.textContent).toContain('会社の概要')
+    expect(all.textContent).toContain('市内の路線バス')
+    expect(screen.queryByRole('heading', { name: /調査の結果/ })).toBeNull()
+    // 減便などの事実が無ければ、そう出す(ほかの事実は行の下の「調べた結果のすべて」で見る)
+    expect(MOVEMENT_NONE).toContain(`「${OPERATOR_RESULT_LABEL}」`)
+    expect(within(detail('P11:となりバス')).getByRole('group', { name: 'となりバスの調査の結果', hidden: true }).textContent).toContain('問い合わせ先')
     expect(detail('P11:となりバス').textContent).toContain(MOVEMENT_NONE)
     expect(detail('P11:となりバス').textContent).toContain('確認日時 2026年11月3日 19:00')
   })

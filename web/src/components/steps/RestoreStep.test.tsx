@@ -342,7 +342,7 @@ describe('RestoreStep', () => {
       expect(screen.queryByRole('region', { name: '平日に戻した便' })).toBeNull()
       const line = () => screen.getByTestId('driver-line').textContent ?? ''
       expect(line()).toContain(expected())
-      expect(line()).toMatch(/欠員 20 → (足りる目安です|あと \d+ 足りない目安です)。$/)
+      expect(line()).toMatch(/(欠員 20 → (足りる目安です|あと \d+ 足りない目安です)|欠員 20 に対して、あと \d+ 足りない目安です)。$/)
       // 1行は候補の一覧より上に出す
       const candidateList = candidates()
       expect(screen.getByTestId('driver-line').compareDocumentPosition(candidateList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -354,7 +354,7 @@ describe('RestoreStep', () => {
       expect(screen.getAllByTestId('driver-line')).toHaveLength(1)
       expect(line()).toContain(expected())
       expect(line()).toContain('2026年11月4日(水)')
-      expect(line()).toMatch(/欠員 20 → (足りる目安です|あと \d+ 足りない目安です)。$/)
+      expect(line()).toMatch(/(欠員 20 → (足りる目安です|あと \d+ 足りない目安です)|欠員 20 に対して、あと \d+ 足りない目安です)。$/)
 
       fireEvent.click(candidateBoxes().find((b) => idOf(b) === 'R2_0900_WK')!)
       fireEvent.click(screen.getByRole('button', { name: '選んだ 1 便を平日に戻す' }))

@@ -19,7 +19,7 @@ import {
   shortDateTime,
   UNDO_NOTE,
 } from '../editText'
-import { DiffCounts, Notice47Table, RouteDiffList, StartBandTable } from './DiffTables'
+import { ADDED_TEXT_CLASS, DiffCounts, Notice47Table, REMOVED_TEXT_CLASS, RouteDiffList, StartBandTable } from './DiffTables'
 import { PairList } from './PairList'
 import { totals } from './stats'
 import type { OpDraft } from './types'
@@ -188,8 +188,9 @@ export function PolicySummary({
         <div>
           <dt className="inline">平日便:</dt>
           <dd className="inline">
-            <FromTo before={before} after={after} emphasizeDecrease={after < before} /> 便(なくなる便 {diff.removed.length}・加わる便{' '}
-            {diff.added.length}・同じ便 {diff.same.length})
+            <FromTo before={before} after={after} emphasizeDecrease={after < before} /> 便(
+            <span className={diff.removed.length > 0 ? REMOVED_TEXT_CLASS : undefined}>なくなる便 {diff.removed.length}</span>・
+            <span className={diff.added.length > 0 ? ADDED_TEXT_CLASS : undefined}>加わる便 {diff.added.length}</span>・同じ便 {diff.same.length})
           </dd>
         </div>
         <div className={diff.vanishingRoutes > 0 ? 'font-semibold text-destructive' : undefined}>

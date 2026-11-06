@@ -3,7 +3,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RouteDiff, TripBrief, WeekdayDiff } from '@/gtfs/edit/diff'
 import type { Form2Result } from '@/gtfs/edit/form2'
-import { DiffCounts, ExcludedRoutes, Notice47Table, RouteDiffList } from './DiffTables'
+import { ADDED_TEXT_CLASS, DiffCounts, ExcludedRoutes, Notice47Table, REMOVED_TEXT_CLASS, RouteDiffList } from './DiffTables'
 
 afterEach(cleanup)
 
@@ -65,6 +65,15 @@ const result = {
 } as unknown as Form2Result
 
 describe('DiffCounts(平日の便数の前後と内訳)', () => {
+  it('なくなる便は赤、加わる便は緑で示す(内訳の文字と比べる棒)', () => {
+    const { container } = render(<DiffCounts diff={diff} result={result} />)
+    expect(screen.getByText('なくなる便 3 便').className).toContain(REMOVED_TEXT_CLASS)
+    expect(screen.getByText('加わる便 1 便').className).toContain(ADDED_TEXT_CLASS)
+    expect(ADDED_TEXT_CLASS).toContain('emerald')
+    expect(container.querySelector('.bg-destructive')).not.toBeNull()
+    expect(container.querySelector('.bg-emerald-600')).not.toBeNull()
+  })
+
   it('先頭に平日の便数の前 → 後を出し、消える・入る・残るの便数を並べる', () => {
     render(<DiffCounts diff={diff} result={result} />)
     const group = screen.getByLabelText('平日便の件数')

@@ -88,6 +88,12 @@ export function ExcludedRoutes({
 }
 
 /** 比べる棒の1本分(前または後)。残る便は灰色、消える便は赤、入る便は主の色。全体の幅は前後で大きい方を 100% にそろえる */
+/** なくなる便は赤(destructive)、加わる便は緑で示す(2026-11-06 の利用者の指示)。文字だけでも分かるよう、名前は必ず添える */
+export const REMOVED_TEXT_CLASS = 'text-destructive'
+export const ADDED_TEXT_CLASS = 'text-emerald-700 dark:text-emerald-400'
+const REMOVED_BAR_CLASS = 'bg-destructive'
+const ADDED_BAR_CLASS = 'bg-emerald-600 dark:bg-emerald-500'
+
 function CompareBar({ label, same, other, otherKind, scale }: { label: string; same: number; other: number; otherKind: 'removed' | 'added'; scale: number }) {
   const pct = (n: number) => (scale > 0 ? (n / scale) * 100 : 0)
   return (
@@ -95,7 +101,7 @@ function CompareBar({ label, same, other, otherKind, scale }: { label: string; s
       <span className="w-11 shrink-0 text-xs text-muted-foreground">{label}</span>
       <div className="flex h-3 min-w-0 flex-1 overflow-hidden rounded-sm bg-muted">
         <div className="bg-muted-foreground/50" style={{ width: `${pct(same)}%` }} />
-        <div className={otherKind === 'removed' ? 'bg-destructive' : 'bg-primary'} style={{ width: `${pct(other)}%` }} />
+        <div className={otherKind === 'removed' ? REMOVED_BAR_CLASS : ADDED_BAR_CLASS} style={{ width: `${pct(other)}%` }} />
       </div>
     </div>
   )
@@ -144,9 +150,9 @@ export function DiffCounts({ diff, result }: { diff: WeekdayDiff; result: Form2R
           )}
         </p>
         <p className="mt-1 tabular-nums" aria-label="なくなる便・加わる便・同じ便の内訳">
-          <span className={removed > 0 ? 'font-semibold text-destructive' : undefined}>なくなる便 {num(removed)} 便</span>
+          <span className={removed > 0 ? `font-semibold ${REMOVED_TEXT_CLASS}` : undefined}>なくなる便 {num(removed)} 便</span>
           <span aria-hidden="true">・</span>
-          <span className={added > 0 ? 'font-semibold text-primary' : undefined}>加わる便 {num(added)} 便</span>
+          <span className={added > 0 ? `font-semibold ${ADDED_TEXT_CLASS}` : undefined}>加わる便 {num(added)} 便</span>
           <span aria-hidden="true">・</span>
           <span>同じ便 {num(same)} 便</span>
         </p>
@@ -269,8 +275,8 @@ function RouteDiffRow({ route: r, diff }: { route: RouteDiff; diff: WeekdayDiff 
           </span>
         </summary>
         <div className="flex flex-col gap-1 py-1 pl-2">
-          <TripList title={`なくなる便(${removed.length} 便)`} trips={removed} />
-          <TripList title={`加わる便(${added.length} 便)`} trips={added} />
+          <TripList title={`なくなる便(${removed.length} 便)`} trips={removed} titleClass={REMOVED_TEXT_CLASS} />
+          <TripList title={`加わる便(${added.length} 便)`} trips={added} titleClass={ADDED_TEXT_CLASS} />
           {added.length > 0 && (
             <p className="text-[11px] text-amber-900">
               入れ替えに使うダイヤに、季節によって走らなくなった便が残っていることがあります。加わる便の系統と時刻を確かめてください。
@@ -283,11 +289,11 @@ function RouteDiffRow({ route: r, diff }: { route: RouteDiff; diff: WeekdayDiff 
 }
 
 /** 便の一覧(始発時刻、始発 → 終着、行き先、trip_id) */
-function TripList({ title, trips }: { title: string; trips: readonly TripBrief[] }) {
+function TripList({ title, trips, titleClass }: { title: string; trips: readonly TripBrief[]; titleClass?: string }) {
   if (trips.length === 0) return null
   return (
     <div>
-      <p className="font-medium">{title}</p>
+      <p className={titleClass ? `font-medium ${titleClass}` : 'font-medium'}>{title}</p>
       <ul className="flex flex-col">
         {trips.map((t) => (
           <li key={`${t.feed}-${t.tripId}`} className="break-words">

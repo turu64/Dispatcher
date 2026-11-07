@@ -105,7 +105,7 @@ describe('OperationPremise(運行の前提の手順の運行の前提の欄)', (
     fireEvent.change(screen.getByLabelText('在籍の運転士の数'), { target: { value: '120' } })
     fireEvent.click(button)
     expect(useDriversStore.getState().roster).toBe(120)
-    expect(screen.getByRole('status').textContent).toContain('在籍の運転士の数は、入れてあった数のままです。')
+    expect(screen.getByRole('status').textContent).toContain('在籍の運転士の数は入れてあった数のままです。')
   })
 
   it('store の値が外から変わると(GTFS の読み込み直しで消えると)、欄の文字も合わせる', () => {
@@ -120,7 +120,7 @@ describe('OperationPremise(運行の前提の手順の運行の前提の欄)', (
     render(<OperationPremise />)
     openSettings()
     const dialog = screen.getByRole('dialog', { name: '勤務時間の設定' })
-    expect(document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent).toContain('勤務の数の推定の仮定です')
+    expect(document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent).toContain('勤務の数を推定する仮定です')
     fireEvent.click(within(dialog).getByRole('radio', { name: '15 時間(延長の上限)' }))
     expect(useDriversStore.getState().params.maxBoundMin).toBe(BOUND_LIMIT_MIN.extended)
     expect(within(dialog).getByRole('list', { name: '推定の仮定' }).textContent).toContain('拘束時間は 15 時間以内')

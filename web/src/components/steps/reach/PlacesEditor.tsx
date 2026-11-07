@@ -71,7 +71,7 @@ export function PlacesEditorView({
     <section className="flex flex-col gap-3 text-xs" data-testid="places-editor" aria-label="営業所を置く">
       <div className="flex flex-col gap-3">
         <p className="text-muted-foreground">
-          勤務は最初と最後の停留所から最寄りの営業所へ回送するとみなすため、営業所はすべて置いてください。
+          勤務では最初と最後の停留所から最寄りの営業所へ回送するとみなすため、営業所はすべて置いてください。
         </p>
         <div className="flex flex-col gap-1">
           {placing ? (

@@ -118,7 +118,7 @@ export function OperationPremiseView({
         <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="premise-on-duty">
           <span className="text-muted-foreground">1日に出勤する運転士の数(目安)</span>
           {onDuty === null ? (
-            <span className="text-muted-foreground">在籍を入れると出します</span>
+            <span className="text-muted-foreground">在籍の運転士の数を入れると出します</span>
           ) : (
             <Badge variant="secondary" className="tabular-nums">
               {onDuty} 人
@@ -166,7 +166,7 @@ function SampleButton({ onApply }: { onApply: () => boolean }) {
           setMessage(
             filled
               ? `道北バスのサンプルの営業所を ${DOHOKU_SAMPLE_OFFICE_COUNT} か所置き、在籍の運転士の数に ${DOHOKU_SAMPLE_ROSTER} を入れました。`
-              : `道北バスのサンプルの営業所を ${DOHOKU_SAMPLE_OFFICE_COUNT} か所置きました。在籍の運転士の数は、入れてあった数のままです。`,
+              : `道北バスのサンプルの営業所を ${DOHOKU_SAMPLE_OFFICE_COUNT} か所置きました。在籍の運転士の数は入れてあった数のままです。`,
           )
         }}
       >
@@ -256,7 +256,7 @@ export function AssumptionFields({
 }) {
   return (
     <div className="flex flex-col gap-1.5 text-xs">
-      <span className="text-muted-foreground">勤務の数の推定の仮定</span>
+      <span className="text-muted-foreground">勤務の数を推定する仮定</span>
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="sr-only" data-testid="duty-settings-summary">
           {dutySettingsSummary(params)}
@@ -276,7 +276,7 @@ export function AssumptionFields({
           <DialogContent showCloseButton={false} className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-md">
             <DialogHeader>
               <DialogTitle>{DUTY_SETTINGS_TITLE}</DialogTitle>
-              <DialogDescription>勤務の数の推定の仮定です。値を変えると、すぐに要る運転士の数(目安)を計算し直します。</DialogDescription>
+              <DialogDescription>勤務の数を推定する仮定です。値を変えると、要る運転士の数(目安)をすぐに計算し直します。</DialogDescription>
             </DialogHeader>
             <div className="flex flex-col gap-3 text-xs">
               <div className="flex flex-col gap-1">

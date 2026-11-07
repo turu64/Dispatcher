@@ -127,7 +127,10 @@ export const useResearchStore = create<ResearchState>()((set, get) => ({
     if (get().demo !== loading) return 0
     const usable = list.filter((r) => candidateIds.has(r.targetId))
     get().mergeResults(usable)
-    if (usable.length > 0) set({ selected: usable.map((r) => r.targetId).slice(0, get().maxTargets) })
+    // 上限(maxTargets)は周辺のバス事業者を除いて数える(事業者は上限なしに選べる)
+    const others = usable.filter((r) => r.kind !== 'operator').map((r) => r.targetId).slice(0, get().maxTargets)
+    const operators = usable.filter((r) => r.kind === 'operator').map((r) => r.targetId)
+    if (usable.length > 0) set({ selected: [...others, ...operators] })
     set({ demo: { status: 'ready', count: usable.length } })
     return usable.length
   },

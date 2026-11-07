@@ -252,7 +252,7 @@ describe('ResearchStep', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(trigger))
     expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 高校・特別支援学校、2 入院設備のある病院、3 鉄道駅・空港 ほか 6 種類(変更あり)')
-    expect(checkedNames()).toEqual(['テスト高等学校'])
+    expect(checkedNames()).toEqual(['となりバス', 'テスト高等学校'])
 
     // 「既定の並びに戻す」で戻し、「閉じる」で閉じても焦点はボタンに戻る
     fireEvent.click(trigger)
@@ -260,7 +260,7 @@ describe('ResearchStep', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '閉じる' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(trigger))
-    expect(checkedNames()).toEqual(['テスト総合病院'])
+    expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院'])
   })
 
   it('重要拠点の優先順位は、行をドラッグして並べ替えられる(ほかの行の上に来たらその位置へ動かす)', () => {
@@ -319,11 +319,12 @@ describe('ResearchStep', () => {
     expect(group('診療所').open).toBe(true)
   })
 
-  it('上限より多くは選べない。選び直したら「既定の選び方に戻す」で戻せる', () => {
-    act(() => useResearchStore.setState({ maxTargets: 4 }))
+  it('上限(周辺のバス事業者を除く)より多くは選べない。選び直したら「既定の選び方に戻す」で戻せる', () => {
+    act(() => useResearchStore.setState({ maxTargets: 3 }))
     setup()
     fireEvent.click(screen.getByRole('checkbox', { name: 'テスト学校', hidden: true }))
-    expect(screen.getByRole('alert').textContent).toContain('4 件まで')
+    expect(screen.getByRole('alert').textContent).toContain('3 件まで')
+    expect(screen.getByText(/学校・病院など 3 \/ 3 件・周辺のバス事業者 1 件/)).toBeTruthy()
     expect(checkedNames()).not.toContain('テスト学校')
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'テスト内科', hidden: true }))
@@ -725,9 +726,10 @@ describe('ResearchStep の周辺の事業者', () => {
   it('読み込んだ GTFS の事業者をいちばん上に、次に重なりのある事業者を重なりの数の多い順に置き、重なりの無い事業者は「近くに停留所なし」と出して後ろに回す', () => {
     loadFile(OPERATOR_FILE)
     setup()
-    const rows = operatorRows()
-    expect(rows.slice(0, 3)).toEqual(['テストバス', 'おおきいバス', 'となりバス'])
-    expect(rows.indexOf('とおいバス')).toBeGreaterThan(2)
+    // 「近くに停留所なし」の事業者は「続きを表示」の後ろにまとめる
+    expect(operatorRows()).toEqual(['テストバス', 'おおきいバス', 'となりバス'])
+    fireEvent.click(within(screen.getByRole('group', { name: '周辺のバス事業者', hidden: true })).getByRole('button', { name: '続きを表示(残り 1 件)' }))
+    expect(operatorRows()).toEqual(['テストバス', 'おおきいバス', 'となりバス', 'とおいバス'])
     const far = screen.getByRole('checkbox', { name: 'とおいバス' }).closest('li')!
     expect(far.textContent).toContain(NO_NEARBY_STOPS)
     expect(screen.getByRole('checkbox', { name: 'おおきいバス' }).closest('li')!.textContent).not.toContain(NO_NEARBY_STOPS)
@@ -735,11 +737,16 @@ describe('ResearchStep の周辺の事業者', () => {
     expect(screen.queryByTestId('operator-detail-P11:テストバス')).toBeNull()
   })
 
-  it('既定の選び方でも、重なりの多い事業者から選ぶ', () => {
+  it('既定では、近くに停留所がある事業者を上限にかかわらずすべて選び、「近くに停留所なし」の事業者は選ばない', () => {
     loadFile(OPERATOR_FILE)
-    act(() => useResearchStore.setState({ maxTargets: 4 }))
+    act(() => useResearchStore.setState({ maxTargets: 2 }))
     setup()
-    expect(checkedNames()).toEqual(['おおきいバス', 'テスト総合病院', 'テスト高等学校', 'テスト内科'])
+    expect(checkedNames()).toEqual(['おおきいバス', 'となりバス', 'テスト総合病院', 'テスト高等学校'])
+    // 事業者は上限に数えずに選べる(学校・病院などは上限に達している)
+    fireEvent.click(within(screen.getByRole('group', { name: '周辺のバス事業者', hidden: true })).getByRole('button', { name: '続きを表示(残り 1 件)' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'とおいバス', hidden: true }))
+    expect(checkedNames()).toContain('とおいバス')
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('事業者の行に、こちらの停留所との重なり(数と系統名)と、時刻が無いことの断り書きを出す', () => {

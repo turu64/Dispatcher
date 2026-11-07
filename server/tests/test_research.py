@@ -533,8 +533,8 @@ def test_post_research_keeps_the_targets_registered_from_saved_results(monkeypat
     [
         ([SCHOOL], 400, "本文は target_ids だけ"),
         ({"target_ids": [SCHOOL], "names": ["ブラウザの名前"]}, 400, "本文は target_ids だけ"),
-        ({"target_ids": []}, 400, "1〜30 件"),
-        ({"target_ids": SCHOOL}, 400, "1〜30 件"),
+        ({"target_ids": []}, 400, "1〜80 件"),
+        ({"target_ids": SCHOOL}, 400, "1〜80 件"),
         ({"target_ids": [1]}, 400, "target_id の文字列"),
         ({"target_ids": [SCHOOL, "P29:無い学校"]}, 400, "参照データに無い対象があります:P29:無い学校"),
     ],
@@ -555,7 +555,16 @@ def test_post_research_respects_the_max_targets(monkeypatch: pytest.MonkeyPatch,
     handle = create(client)
     response = client.post("/api/claude/session/research", json={"target_ids": [SCHOOL, HOSPITAL, CLINIC]}, headers=headers(handle))
     assert response.status_code == 400
-    assert response.json()["detail"] == "調べる対象は 2 件までにしてください(選んだのは 3 件)"
+    assert response.json()["detail"] == "調べる対象(周辺のバス事業者を除く)は 2 件までにしてください(選んだのは 3 件)"
+
+
+def test_post_research_does_not_count_operators_in_the_max_targets(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic) -> None:
+    enable(monkeypatch)
+    monkeypatch.setenv("DISPATCHER_RESEARCH_MAX_TARGETS", "2")
+    handle = create(client)
+    response = client.post("/api/claude/session/research", json={"target_ids": [SCHOOL, HOSPITAL, OPERATOR]}, headers=headers(handle))
+    assert response.status_code == 200
+    assert response.json()["total"] == 3
 
 
 def test_post_research_without_ref_data_is_503(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic, tmp_path: Path) -> None:

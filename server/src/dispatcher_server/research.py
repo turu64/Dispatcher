@@ -66,6 +66,9 @@ MAX_NAME_CHARS = 200
 MAX_FACTS = 12
 MAX_SOURCES = 5
 MAX_RESULT_IDS = 50
+# 1回の調査で送れる周辺のバス事業者の数の上限。学校・病院などの上限(DISPATCHER_RESEARCH_MAX_TARGETS)とは別に数える
+# (2026-11-07 に利用者の指示で、事業者は上限なしに選べるようにした。費用は1セッションの上限額で守り、これは入力の大きさの守りだけ)
+MAX_OPERATOR_TARGETS = 50
 MAX_LABEL_CHARS = 20
 MAX_VALUE_CHARS = 200
 MAX_TITLE_CHARS = 100
@@ -301,10 +304,14 @@ def progress(row_id: str, now: float | None = None) -> dict[str, int]:
 
 
 def parse_start_ids(value: Any) -> list[str]:
-    """POST /api/claude/session/research の target_ids を確かめ、参照データにある対象の ID の並び(重なりを除く)を返す。"""
+    """POST /api/claude/session/research の target_ids を確かめ、参照データにある対象の ID の並び(重なりを除く)を返す。
+
+    上限は、周辺のバス事業者(operator)以外が DISPATCHER_RESEARCH_MAX_TARGETS 件、事業者が MAX_OPERATOR_TARGETS 件。
+    """
     max_targets = settings.research_max_targets()
-    if not isinstance(value, list) or not value:
-        raise ResearchInputError(400, f"target_ids は 1〜{max_targets} 件の文字列の配列にしてください")
+    max_all = max_targets + MAX_OPERATOR_TARGETS
+    if not isinstance(value, list) or not value or len(value) > max_all * 2:
+        raise ResearchInputError(400, f"target_ids は 1〜{max_all} 件の文字列の配列にしてください")
     ids: list[str] = []
     seen: set[str] = set()
     for item in value:
@@ -313,14 +320,18 @@ def parse_start_ids(value: Any) -> list[str]:
         if item not in seen:
             seen.add(item)
             ids.append(item)
-    if len(ids) > max_targets:
-        raise ResearchInputError(400, f"調べる対象は {max_targets} 件までにしてください(選んだのは {len(ids)} 件)")
     index = load_targets()
     if not index:
         raise ResearchInputError(503, MSG_NO_REF)
     unknown = [target_id for target_id in ids if target_id not in index]
     if unknown:
         raise ResearchInputError(400, f"参照データに無い対象があります:{_ids_text(unknown)}")
+    operators = sum(1 for target_id in ids if index[target_id].kind == "operator")
+    others = len(ids) - operators
+    if others > max_targets:
+        raise ResearchInputError(400, f"調べる対象(周辺のバス事業者を除く)は {max_targets} 件までにしてください(選んだのは {others} 件)")
+    if operators > MAX_OPERATOR_TARGETS:
+        raise ResearchInputError(400, f"調べる周辺のバス事業者は {MAX_OPERATOR_TARGETS} 件までにしてください(選んだのは {operators} 件)")
     return ids
 
 

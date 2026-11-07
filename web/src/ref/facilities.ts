@@ -18,7 +18,7 @@ import { priorityCategory, type PriorityKey } from '@/store/priority'
 /** 停留所の外接矩形に足す余白(m) */
 export const FACILITY_MARGIN_M = 2000
 
-/** 1回の調査の対象の上限(サーバーの DISPATCHER_RESEARCH_MAX_TARGETS の既定と同じ。サーバーが返す値があればそちらを使う) */
+/** 1回の調査の対象(周辺のバス事業者を除く)の上限(サーバーの DISPATCHER_RESEARCH_MAX_TARGETS の既定と同じ。サーバーが返す値があればそちらを使う) */
 export const DEFAULT_MAX_TARGETS = 30
 
 export type FacilityKind = 'operator' | 'school' | 'hospital' | 'clinic'
@@ -381,9 +381,11 @@ export function compareOperators(a: ResearchCandidate, b: ResearchCandidate): nu
 export const DEFAULT_SELECT_WALK_M = 1200
 
 /**
- * 既定で選ぶ対象(target_id の並び)。種類ごとの列を、重要拠点の優先順位の順に並べ、その後ろに周辺のバス事業者
- * (読み込んだ GTFS の事業者を除く。こちらの停留所との重なりの多い順。compareOperators)の列を置く。列の先頭から1件ずつ順に取る巡回を、max 件になるまで繰り返す
+ * 既定で選ぶ対象(target_id の並び)。周辺のバス事業者以外は、種類ごとの列を重要拠点の優先順位の順に並べ、
+ * 列の先頭から1件ずつ順に取る巡回を、max 件になるまで繰り返す
  * (優先順位の高い種類ほど先に、多く選ばれる。病院の多い市街地で上限が病院だけで埋まらないようにするため)。
+ * その後ろに、周辺のバス事業者を max とは別に、こちらの停留所の近くに停留所がある事業者(「近くに停留所なし」でないもの。
+ * 読み込んだ GTFS の事業者を除く)をすべて、compareOperators の順に足す(2026-11-07 に利用者の指示)。
  * 種類の中は compareWithinCategory の順。休校中などの学校、優先順位の外の施設(種別が分からない学校)、
  * 停留所から DEFAULT_SELECT_WALK_M より遠い施設は選ばない
  */
@@ -393,8 +395,6 @@ export function defaultSelection(candidates: readonly ResearchCandidate[], order
     const group = candidates.filter((c) => c.category === key && !c.closed && c.nearestStopM <= DEFAULT_SELECT_WALK_M).sort(compareWithinCategory)
     if (group.length > 0) queues.push(group)
   }
-  const operators = candidates.filter((c) => c.facility.kind === 'operator' && !c.ownOperator).sort(compareOperators)
-  if (operators.length > 0) queues.push(operators)
   const picked: string[] = []
   for (let round = 0; picked.length < max; round++) {
     let any = false
@@ -406,7 +406,25 @@ export function defaultSelection(candidates: readonly ResearchCandidate[], order
     }
     if (!any) break
   }
-  return picked
+  const operators = candidates.filter((c) => c.facility.kind === 'operator' && !c.ownOperator && c.overlap !== null).sort(compareOperators)
+  return [...picked, ...operators.map((c) => c.facility.targetId)]
+}
+
+/** 調べる対象の上限(maxTargets)に数える対象か(周辺のバス事業者は数えない) */
+export function countsTowardLimit(c: Pick<ResearchCandidate, 'facility'>): boolean {
+  return c.facility.kind !== 'operator'
+}
+
+/**
+ * 周辺のバス事業者のまとまりで最初に出す件数。「近くに停留所なし」の事業者(並びの後ろにまとまる)は、選んだものと
+ * 調べた結果のあるものを除いて「続きを表示」の後ろに回す
+ */
+export function operatorShownCount(items: readonly ResearchCandidate[], kept: ReadonlySet<string>): number {
+  let last = -1
+  items.forEach((c, i) => {
+    if (c.overlap !== null || kept.has(c.facility.targetId)) last = i
+  })
+  return last + 1
 }
 
 // ---- 一覧のまとまり ----

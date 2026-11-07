@@ -47,7 +47,8 @@ describe.skipIf(!ready)('施設の候補(道北バス)', () => {
 
   it('候補があり、既定の選び方は上限まで・自社を除く・同じ入力で同じ並び', () => {
     expect(candidates.length).toBeGreaterThan(0)
-    expect(selected.length).toBeLessThanOrEqual(DEFAULT_MAX_TARGETS)
+    // 上限は周辺のバス事業者を除いて数える
+    expect(selected.filter((id) => candidates.find((c) => c.facility.targetId === id)?.facility.kind !== 'operator').length).toBeLessThanOrEqual(DEFAULT_MAX_TARGETS)
     expect(new Set(selected).size).toBe(selected.length)
     const own = candidates.filter((c) => c.ownOperator).map((c) => c.facility.targetId)
     expect(own.length).toBeGreaterThan(0)

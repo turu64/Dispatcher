@@ -172,16 +172,17 @@ describe('範囲と候補', () => {
 describe('defaultSelection', () => {
   const cands = () => researchCandidates(merged(), STOPS, ['道北バス株式会社'])
 
-  it('優先順位の高い種類から1件ずつ巡回して取り、周辺の事業者(自社を除く)は最後の列。病院は病床の多い順', () => {
+  it('優先順位の高い種類から1件ずつ巡回して取り、周辺の事業者(自社を除く)は上限の外で最後にすべて足す。病院は病床の多い順', () => {
     expect(defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 30)).toEqual([
-      // 1巡目:病院・高校・大学・診療所・事業者
+      // 1巡目:病院・高校・大学・診療所
       'P04:hosp-big',
       'P29:high',
       'P29:univ',
       'P04:clinic',
-      'P11:ほかのバス',
       // 2巡目
       'P04:hosp-small',
+      // 周辺の事業者(上限に数えない)
+      'P11:ほかのバス',
     ])
   })
 
@@ -193,8 +194,8 @@ describe('defaultSelection', () => {
     expect(picked).not.toContain('P11:道北バス(株)')
   })
 
-  it('上限で切る', () => {
-    expect(defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 3)).toEqual(['P04:hosp-big', 'P29:high', 'P29:univ'])
+  it('上限で切る(周辺の事業者は上限に数えない)', () => {
+    expect(defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 3)).toEqual(['P04:hosp-big', 'P29:high', 'P29:univ', 'P11:ほかのバス'])
   })
 
   it('優先順位を並べ替えると、既定の選び方も変わる', () => {
@@ -202,7 +203,7 @@ describe('defaultSelection', () => {
     order = movePriority(order, 'high_school', -1)
     order = movePriority(order, 'high_school', -1)
     expect(order.slice(0, 3)).toEqual(['high_school', 'inpatient_hospital', 'station_airport'])
-    expect(defaultSelection(cands(), order, 2)).toEqual(['P29:high', 'P04:hosp-big'])
+    expect(defaultSelection(cands(), order, 2)).toEqual(['P29:high', 'P04:hosp-big', 'P11:ほかのバス'])
   })
 
   it('同じ入力ならいつも同じ並び(候補の並びに左右されない)', () => {
@@ -340,7 +341,8 @@ describe('周辺の事業者の並び(重なり)', () => {
     const order = [...list].sort(compareOperators).map((c) => c.facility.targetId)
     expect(order).toEqual(['P11:three', 'P11:one-more', 'P11:one', 'P11:none'])
     expect(groupCandidates(list, DEFAULT_PRIORITY_ORDER)[0].items.map((c) => c.facility.targetId)).toEqual(order)
-    expect(defaultSelection(list, DEFAULT_PRIORITY_ORDER, 2)).toEqual(['P11:three', 'P11:one-more'])
+    // 既定では、重なりのある事業者を上限にかかわらずすべて選び、「近くに停留所なし」(重なりが null)は選ばない
+    expect(defaultSelection(list, DEFAULT_PRIORITY_ORDER, 2)).toEqual(['P11:three', 'P11:one-more', 'P11:one'])
   })
 
   it('読み込んだ GTFS の事業者は、重なりや距離にかかわらずいちばん上に置く(既定の選び方には入れない)', () => {

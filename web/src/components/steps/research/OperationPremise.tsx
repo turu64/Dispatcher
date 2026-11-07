@@ -1,3 +1,4 @@
+import { Settings2, Sparkles } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import NumberField from '@/components/NumberField'
 import { SELECTED_TOGGLE_CLASS } from '@/components/selectedToggle'
@@ -15,6 +16,7 @@ import {
   WORK_DAYS_LABEL,
 } from '@/components/steps/reach/driverText'
 import { PREMISE_SECTION_ID } from '@/components/steps/stepIds'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -87,6 +89,7 @@ export function OperationPremiseView({
   /** 営業所を置く欄(store を使うので外から渡す) */
   placesEditor?: ReactNode
 }) {
+  const onDuty = roster === null ? null : Math.floor((roster * workDays) / 7)
   return (
     <section
       id={PREMISE_SECTION_ID}
@@ -94,37 +97,47 @@ export function OperationPremiseView({
       className="flex flex-col gap-3 rounded-sm text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       aria-label={PREMISE_TITLE}
     >
-      <p className="text-xs text-muted-foreground">
-        手順「影響(到達圏)」の「要る運転士の数(目安)」の推定と判定に使います。値はこの画面の中だけに持ち、サーバーには送りません。GTFS
-        を読み込み直すと、運転士の数と置いた場所は消えます(週の出勤日数と仮定は残ります)。
-      </p>
       {onApplySample && <SampleButton onApply={onApplySample} />}
       {/* 手順の欄の中で枠を重ねず、見出しと区切り線で分ける(2026-11-07 に利用者の指示) */}
-      <div className="flex flex-col gap-2 border-t pt-3" role="group" aria-labelledby="premise-drivers-title">
+      <div className="flex flex-col gap-3 border-t pt-3" role="group" aria-labelledby="premise-drivers-title">
         <h3 id="premise-drivers-title" className="font-medium">
           {PREMISE_DRIVERS_TITLE}
         </h3>
-        <CountField
-          id="driver-roster"
-          label={ROSTER_LABEL}
-          value={roster}
-          max={MAX_ROSTER}
-          placeholder="例:150"
-          parse={parseRoster}
-          onCommit={onRoster}
-        />
-        <WorkDaysField value={workDays} onCommit={onWorkDays} />
-        <p className="text-xs text-muted-foreground">
-          乗務できる運転士の数(目安)を、在籍 × 週の出勤日数 ÷ 7 − 欠員(小数は切り捨て)で数え、減便後に要る勤務の数と比べます。在籍の運転士の数を入れないと、足りるかの目安は出しません。欠員(その日に乗務できない運転士の数)は、手順「減便の方針」で入れます。
-        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <CountField
+            id="driver-roster"
+            label={ROSTER_LABEL}
+            value={roster}
+            max={MAX_ROSTER}
+            placeholder="例:150"
+            parse={parseRoster}
+            onCommit={onRoster}
+          />
+          <WorkDaysField value={workDays} onCommit={onWorkDays} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="premise-on-duty">
+          <span className="text-muted-foreground">1日に出勤する運転士の数(目安)</span>
+          {onDuty === null ? (
+            <span className="text-muted-foreground">在籍を入れると出します</span>
+          ) : (
+            <Badge variant="secondary" className="tabular-nums">
+              {onDuty} 人
+            </Badge>
+          )}
+          <span className="text-muted-foreground">欠員は手順「減便の方針」で引きます</span>
+        </div>
         <AssumptionFields params={params} places={places} onParams={onParams} onReset={onResetParams} />
       </div>
-      <div className="flex flex-col gap-2 border-t pt-3" role="group" aria-labelledby="premise-places-title">
-        <h3 id="premise-places-title" className="font-medium">
+      <div className="flex flex-col gap-3 border-t pt-3" role="group" aria-label={PREMISE_PLACES_TITLE}>
+        <h3 id="premise-places-title" className="flex items-center gap-2 font-medium">
           {PREMISE_PLACES_TITLE}
+          <Badge variant="outline" className="tabular-nums">
+            {places.length} か所
+          </Badge>
         </h3>
         {placesEditor}
       </div>
+      <p className="text-xs text-muted-foreground">値はこの画面の中だけに持ち、サーバーには送りません。</p>
     </section>
   )
 }
@@ -147,6 +160,7 @@ function SampleButton({ onApply }: { onApply: () => boolean }) {
         variant="outline"
         size="sm"
         className="h-auto max-w-full py-1 text-left whitespace-normal"
+        title={`営業所:${names}`}
         onClick={() => {
           const filled = onApply()
           setMessage(
@@ -156,11 +170,9 @@ function SampleButton({ onApply }: { onApply: () => boolean }) {
           )
         }}
       >
+        <Sparkles aria-hidden="true" />
         {DOHOKU_SAMPLE_BUTTON}
       </Button>
-      <span className="text-muted-foreground">
-        営業所({names})で今の一覧を置き換え、在籍の運転士の数が空なら {DOHOKU_SAMPLE_ROSTER} を入れます(道北バスの在籍は約 {DOHOKU_SAMPLE_ROSTER} 人)。
-      </span>
       {message && <p role="status">{message}</p>}
     </div>
   )
@@ -206,7 +218,7 @@ function WorkDaysField({ value, onCommit }: { value: number; onCommit: (value: n
           }}
         />
         <span className="shrink-0 text-xs text-muted-foreground">
-          日({WORK_DAYS_RANGE.min}〜{WORK_DAYS_RANGE.max}。週休2日なら 5)
+          日({WORK_DAYS_RANGE.min}〜{WORK_DAYS_RANGE.max})
         </span>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
@@ -220,6 +232,11 @@ export const DUTY_SETTINGS_TITLE = '勤務時間の設定'
 /** 欄に出す、今の仮定の短い要約 */
 function dutySettingsSummary(params: Pick<DutyParams, 'maxBoundMin' | 'preCheckMin' | 'postCheckMin' | 'deadheadKmh'>): string {
   return `拘束 ${params.maxBoundMin / 60} 時間・点呼 ${params.preCheckMin}/${params.postCheckMin} 分・回送 時速 ${params.deadheadKmh}km`
+}
+
+/** 欄に出す、今の仮定のバッジ(読み上げは dutySettingsSummary の1文) */
+function dutySettingsBadges(params: Pick<DutyParams, 'maxBoundMin' | 'preCheckMin' | 'postCheckMin' | 'deadheadKmh'>): string[] {
+  return [`拘束 ${params.maxBoundMin / 60} 時間`, `点呼 ${params.preCheckMin}/${params.postCheckMin} 分`, `回送 時速 ${params.deadheadKmh}km`]
 }
 
 /**
@@ -238,15 +255,21 @@ export function AssumptionFields({
   onReset: () => void
 }) {
   return (
-    <div className="flex flex-col gap-1 text-xs">
-      <span className="font-medium">勤務の数の推定の仮定</span>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-muted-foreground" data-testid="duty-settings-summary">
+    <div className="flex flex-col gap-1.5 text-xs">
+      <span className="text-muted-foreground">勤務の数の推定の仮定</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="sr-only" data-testid="duty-settings-summary">
           {dutySettingsSummary(params)}
         </span>
+        {dutySettingsBadges(params).map((b) => (
+          <Badge key={b} variant="outline" aria-hidden="true">
+            {b}
+          </Badge>
+        ))}
         <Dialog>
           <DialogTrigger asChild>
-            <Button type="button" variant="outline" size="xs">
+            <Button type="button" variant="ghost" size="xs">
+              <Settings2 aria-hidden="true" />
               {DUTY_SETTINGS_TITLE}
             </Button>
           </DialogTrigger>

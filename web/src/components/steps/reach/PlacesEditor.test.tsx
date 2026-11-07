@@ -69,11 +69,12 @@ describe('searchStops(停留所の名前で探す)', () => {
 })
 
 describe('PlacesEditorView(営業所を置く欄)', () => {
-  it('見出しは「営業所を置く」で、折りたたまずに出す。種類の選択は無く、車庫・休憩施設の語を出さない', () => {
+  it('欄の名前は「営業所を置く」で、折りたたまずに出す。種類の選択は無く、車庫・休憩施設の語を出さない', () => {
     renderView({ places: [PLACE] })
     const editor = screen.getByRole('region', { name: /^営業所を置く/ })
     expect(editor).toBe(screen.getByTestId('places-editor'))
-    expect(screen.getByRole('heading', { name: /^営業所を置く/ }).textContent).toBe('営業所を置く(1 か所)')
+    // 見出しと件数は運行の前提の欄の「営業所の情報」に出す(この欄には見出しを置かない)
+    expect(screen.queryByRole('heading')).toBeNull()
     // 折りたたまない:地図で置く・停留所から選ぶ・一覧が最初から見える
     expect(editor.querySelector('details, summary')).toBeNull()
     expect(screen.getByRole('button', { name: '地図で営業所を置く' })).toBeTruthy()
@@ -83,7 +84,8 @@ describe('PlacesEditorView(営業所を置く欄)', () => {
     expect(screen.queryByRole('button', { name: /道北バスのサンプル/ })).toBeNull()
     expect(screen.queryByRole('radio')).toBeNull()
     expect(editor.textContent).not.toMatch(/車庫|休憩施設/)
-    expect(editor.textContent).toContain('営業所を1つでも置くと、営業所から遠い停留所で 1 時間 30 分より長く待つすき間は、営業所へ戻って休むとみなします。')
+    // 営業所から遠い停留所で長く待つすき間の扱いは、「勤務時間の設定」の推定の仮定に書く(この欄には書かない)
+    expect(editor.textContent).not.toContain('より長く待つすき間')
   })
 
   it('「地図で営業所を置く」を押すと、営業所を置き始める', () => {
@@ -130,12 +132,13 @@ describe('PlacesEditorView(営業所を置く欄)', () => {
     expect(props.onRemove).toHaveBeenCalledWith('p1')
   })
 
-  it('JSON の書き出し・読み込みは無く、GTFS を読み込み直すと一覧が空になることを書く', () => {
+  it('JSON の書き出し・読み込みは無く、営業所はすべて置くよう書く', () => {
     renderView({ places: [PLACE] })
     const editor = screen.getByTestId('places-editor')
     expect(editor.textContent).not.toContain('JSON')
     expect(editor.querySelector('input[type="file"]')).toBeNull()
-    expect(editor.textContent).toContain('場所はこの画面の中だけに持ち、サーバーには送りません。GTFS を読み込み直すと一覧は空になります。')
+    // サーバーに送らないことは、運行の前提の欄の下に1行で書く
+    expect(editor.textContent).toContain('営業所はすべて置いてください')
     expect(editor.textContent).not.toContain('あなた')
   })
 

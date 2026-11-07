@@ -43,7 +43,7 @@ describe('OperationPremise(運行の前提の手順の運行の前提の欄)', (
     expect(within(s).getByLabelText('在籍の運転士の数')).toBeTruthy()
     // 欠員は減便の方針の手順(policy/ShortageSection.tsx)で入れる
     expect(within(s).queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
-    expect(s.textContent).toContain('欠員(その日に乗務できない運転士の数)は、手順「減便の方針」で入れます。')
+    expect(within(s).getByTestId('premise-on-duty').textContent).toContain('欠員は手順「減便の方針」で引きます')
     expect((within(s).getByLabelText('1人あたりの週の出勤日数') as HTMLInputElement).value).toBe('5')
     expect(within(s).getByTestId('places-editor')).toBeTruthy()
     // サンプルの GTFS でなければ、道北バスのサンプルのボタンは出さない
@@ -94,7 +94,8 @@ describe('OperationPremise(運行の前提の手順の運行の前提の欄)', (
     expect(button.className).toContain('whitespace-normal')
     expect(button.className).toContain('h-auto')
     expect(button.className).not.toContain('whitespace-nowrap')
-    expect(section().textContent).toContain('在籍の運転士の数が空なら 150 を入れます')
+    // 置く営業所の名前はボタンの title に出す(説明の文は出さない)
+    expect(button.getAttribute('title')).toContain('名寄出張所')
     fireEvent.click(button)
     expect(useDriversStore.getState().roster).toBe(150)
     expect(useDriversStore.getState().places.map((p) => p.name)).toEqual(DOHOKU_SAMPLE_PLACES.map((p) => p.name))

@@ -31,6 +31,7 @@ import ResearchStep, {
   RESEARCH_START,
   RESEARCH_STARTING,
   OWN_OPERATOR,
+  OWN_OPERATOR_FIXED,
   PRIORITY_TITLE,
   RESEARCH_SUMMARY_TITLE,
   RESULT_ALL_LABEL,
@@ -208,6 +209,14 @@ describe('ResearchStep', () => {
     expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト内科'])
     expect(screen.getByText(OWN_OPERATOR)).toBeTruthy()
     expect(screen.getByText(/選んだ対象/).textContent).toContain('4')
+    // 読み込んだ GTFS の事業者のチェックボックスは、変更できない「-」(indeterminate)で、選んだ数に入れない
+    const own = screen.getByRole('checkbox', { name: 'テストバス', hidden: true }) as HTMLInputElement
+    expect(own.disabled).toBe(true)
+    expect(own.indeterminate).toBe(true)
+    expect(own.getAttribute('title')).toBe(OWN_OPERATOR_FIXED)
+    act(() => useResearchStore.getState().setSelected(['P11:テストバス', 'P04:hosp']))
+    expect(checkedNames()).toEqual(['テスト総合病院'])
+    expect(screen.getByText(/選んだ対象/).textContent).toContain('1')
     // 出典(国土数値情報を加工した旨)
     expect(screen.getByText(includes('国土数値情報(バス停留所 P11・学校 P29・医療機関 P04)を加工して作成'))).toBeTruthy()
   })

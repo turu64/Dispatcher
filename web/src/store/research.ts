@@ -221,7 +221,13 @@ export function useResearchView(): ResearchView {
     return base.map((c) => (c.facility.kind === 'operator' && !c.ownOperator ? { ...c, overlap: overlaps.get(c.facility.targetId) ?? null } : c))
   }, [list, stops, agencyNames, overlaps])
   const defaults = useMemo(() => defaultSelection(candidates, order, maxTargets), [candidates, order, maxTargets])
-  return { candidates, selectedIds: selected ?? defaults, isDefault: selected === null, maxTargets, overlaps }
+  // 読み込んだ GTFS の事業者は調べる対象にしない(一覧のチェックボックスは変更できない。2026-11-07 に利用者の指示)
+  const selectedIds = useMemo(() => {
+    const own = new Set(candidates.filter((c) => c.ownOperator).map((c) => c.facility.targetId))
+    const ids = selected ?? defaults
+    return own.size > 0 && ids.some((id) => own.has(id)) ? ids.filter((id) => !own.has(id)) : ids
+  }, [candidates, selected, defaults])
+  return { candidates, selectedIds, isDefault: selected === null, maxTargets, overlaps }
 }
 
 /** 減便の方針を承認した後の、発車が減る・なくなるこちらの停留所 */

@@ -48,6 +48,8 @@ export const RESEARCH_DEMO_NONE = 'この GTFS の停留所の周りには、保
 export const RESEARCH_SAVED_NOTE = '保存済みの対象は調べ直さず(Web 検索をせず)、その結果を使います。'
 export const RESEARCH_RESULT_NOTE = '結果は AI が Web で調べたものです。確認日時のあとに変わっていることがあります。出典を開いて確かめてください。'
 export const OWN_OPERATOR = '読み込んだ GTFS の事業者'
+/** 読み込んだ GTFS の事業者のチェックボックスの説明(変更できない・調べる対象にしない) */
+export const OWN_OPERATOR_FIXED = '読み込んだ GTFS の事業者は、調べる対象にしません(変更できません)。'
 /**
  * 行の下に出す、調べた結果の全部の開閉の見出し(最初は閉じておく)。行には要点(学校・病院は判断に使う時刻とバスの案内、
  * 事業者は減便の動き)だけを出す(2026-11-07 に利用者の指示で、事実をすべて開いて並べる形をやめた)
@@ -406,7 +408,23 @@ function CandidateGroupItems({
               className="-mx-1 rounded-sm px-1 py-0.5 hover:bg-muted/60 data-[highlighted=true]:bg-muted"
             >
               <label className="flex items-start gap-1.5">
-                <input type="checkbox" className="mt-0.5" checked={selected.has(id)} onChange={(e) => onToggle(id, e.target.checked)} aria-label={c.facility.name} />
+                {c.ownOperator ? (
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={false}
+                    disabled
+                    readOnly
+                    ref={(el) => {
+                      if (el) el.indeterminate = true
+                    }}
+                    title={OWN_OPERATOR_FIXED}
+                    aria-label={c.facility.name}
+                    aria-description={OWN_OPERATOR_FIXED}
+                  />
+                ) : (
+                  <input type="checkbox" className="mt-0.5" checked={selected.has(id)} onChange={(e) => onToggle(id, e.target.checked)} aria-label={c.facility.name} />
+                )}
                 <FacilitySymbol kind={c.facility.kind} schoolType={c.facility.schoolType} className="mt-0.5 size-3.5 shrink-0" />
                 <span className="min-w-0 flex-1">
                   <span>{c.facility.name}</span>

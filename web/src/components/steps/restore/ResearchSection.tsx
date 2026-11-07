@@ -1,7 +1,8 @@
-import { ArrowDown, ArrowUp, BusFront, Clock, ExternalLink, GripVertical, TriangleAlert } from 'lucide-react'
+import { ArrowDown, ArrowUp, BusFront, Clock, Database, ExternalLink, GripVertical, ListOrdered, RotateCcw, Search, TriangleAlert, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStore, type StoreApi, type UseBoundStore } from 'zustand'
 import { researchSummary, resultHighlights } from '@/components/steps/research/highlights'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -56,7 +57,7 @@ export const OWN_OPERATOR_FIXED = '読み込んだ GTFS の事業者は、調べ
 export const RESULT_ALL_LABEL = '調べた結果のすべて'
 /** 欄の先頭のまとめの見出し */
 export const RESEARCH_SUMMARY_TITLE = '調べた結果のまとめ'
-export const RESEARCH_SUMMARY_NOTE = '読めた時刻は、この手順の判断材料(学校・病院に着く便・出る便)の時間帯に使います。各行には要点だけを出し、事実と出典のすべては「調べた結果のすべて」を開くと見られます。'
+export const RESEARCH_SUMMARY_NOTE = '各行には要点だけを出します。事実と出典のすべては「調べた結果のすべて」で見られます。'
 /** 重要拠点の優先順位の Dialog を開くボタンの文と、Dialog の見出し */
 export const PRIORITY_TITLE = '重要拠点の優先順位'
 export const CLOSED_SCHOOL = '休校中か不明'
@@ -160,7 +161,8 @@ export function PriorityList() {
       </span>
       <Dialog>
         <DialogTrigger asChild>
-          <Button type="button" variant="outline" size="xs">
+          <Button type="button" variant="ghost" size="xs">
+            <ListOrdered aria-hidden="true" />
             {PRIORITY_TITLE}
           </Button>
         </DialogTrigger>
@@ -645,7 +647,7 @@ function FacilityHighlights({ result }: { result: ResearchResult }) {
 function ResearchSummary({ results }: { results: readonly ResearchResult[] }) {
   const rows = researchSummary(results)
   return (
-    <section className="flex flex-col gap-1.5 rounded-md border bg-muted/40 px-3 py-2 text-sm" aria-label={RESEARCH_SUMMARY_TITLE} data-testid="research-summary">
+    <section className="flex flex-col gap-1.5 rounded-md bg-muted/50 px-3 py-2 text-sm" aria-label={RESEARCH_SUMMARY_TITLE} data-testid="research-summary">
       <h4 className="font-medium">
         {RESEARCH_SUMMARY_TITLE}
         <span className="ml-1.5 text-xs font-normal text-muted-foreground">({results.length} 件)</span>
@@ -823,20 +825,23 @@ export function ResearchSection({ chat = useChatStore }: { chat?: ChatStoreHook 
   return (
     <>
       <p className="text-sm text-muted-foreground">
-        停留所の分布の外周に 2km の余白を足した範囲から、周辺のバス事業者・学校・病院を洗い出します。調べる対象を選び、AI に Web
-        で調べてもらうと、通学・通院の時刻(始業・外来の受付など)が出典つきで集まり、この手順の「学校・病院の近く」の時間帯に使います。調べなくても、便は平日に戻せます。
+        停留所の周り 2km のバス事業者・学校・病院を AI が Web で調べ、始業・外来の受付の時刻を「学校・病院の近く」の時間帯に使います。調べなくても、便は平日に戻せます。
       </p>
 
       <PriorityList />
 
       {facilities.status === 'loading' && !retrying && <p className="text-sm text-muted-foreground">周辺の施設を読み込んでいます…</p>}
       {(facilities.status === 'error' || retrying) && (
-        <div className="flex flex-col gap-1.5 rounded-md border border-destructive/40 px-2 py-1.5 text-sm" role="alert">
-          <p>{facilities.status === 'error' ? facilities.message : retryMessage}</p>
-          <Button type="button" variant="outline" size="xs" className="self-start" loading={retrying} loadingLabel="読み込み直しています" onClick={() => void onRetry()}>
-            読み込み直す
-          </Button>
-        </div>
+        <Alert variant="destructive">
+          <TriangleAlert aria-hidden="true" />
+          <AlertDescription className="flex flex-col gap-1.5">
+            <p>{facilities.status === 'error' ? facilities.message : retryMessage}</p>
+            <Button type="button" variant="outline" size="xs" className="self-start" loading={retrying} loadingLabel="読み込み直しています" onClick={() => void onRetry()}>
+              <RotateCcw aria-hidden="true" />
+              読み込み直す
+            </Button>
+          </AlertDescription>
+        </Alert>
       )}
       {stops.length === 0 && <p className="text-sm text-muted-foreground">乗れる停留所がないため、施設を探す範囲を決められません。</p>}
 
@@ -849,24 +854,32 @@ export function ResearchSection({ chat = useChatStore }: { chat?: ChatStoreHook 
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span>
                   選んだ対象 <strong className="tabular-nums">{selectedIds.length}</strong> 件
-                  <span className="ml-1 text-xs text-muted-foreground">
-                    (学校・病院など {pickedOthers} / {maxTargets} 件・周辺のバス事業者 {pickedOperators} 件。候補 {candidates.length} 件)
-                  </span>
                 </span>
+                <Badge variant={pickedOthers >= maxTargets ? 'secondary' : 'outline'} className="tabular-nums">
+                  学校・病院など {pickedOthers} / {maxTargets} 件
+                </Badge>
+                <Badge variant="outline" className="tabular-nums">
+                  周辺のバス事業者 {pickedOperators} 件
+                </Badge>
+                <Badge variant="outline" className="tabular-nums">
+                  候補 {candidates.length} 件
+                </Badge>
                 {!isDefault && (
-                  <Button type="button" variant="outline" size="xs" onClick={() => useResearchStore.getState().setSelected(null)}>
+                  <Button type="button" variant="ghost" size="xs" onClick={() => useResearchStore.getState().setSelected(null)}>
+                    <RotateCcw aria-hidden="true" />
                     既定の選び方に戻す
                   </Button>
                 )}
                 {selectedIds.length > 0 && (
                   <Button type="button" variant="ghost" size="xs" onClick={() => useResearchStore.getState().setSelected([])}>
+                    <X aria-hidden="true" />
                     すべて外す
                   </Button>
                 )}
               </div>
               {isDefault && (
                 <p className="text-xs text-muted-foreground">
-                  既定では、重要拠点の優先順位の高い種類から1件ずつ順に、停留所から {DEFAULT_SELECT_WALK_M.toLocaleString('ja-JP')}m 以内の施設を選んでいます(停留所に近い順)。ここまでで {maxTargets} 件までです。周辺のバス事業者は件数に数えず、こちらの停留所の近くに停留所がある事業者をすべて選んでいます(読み込んだ GTFS の事業者を除く)。「近くに停留所なし」の事業者は「続きを表示」の後ろにまとめています。
+                  既定では、優先順位の高い種類から停留所の {DEFAULT_SELECT_WALK_M.toLocaleString('ja-JP')}m 以内の施設を選び、周辺のバス事業者は近くに停留所があるものをすべて選んでいます。
                 </p>
               )}
               {limitNote && (
@@ -879,7 +892,7 @@ export function ResearchSection({ chat = useChatStore }: { chat?: ChatStoreHook 
             </>
           )}
 
-          <div className="flex flex-col gap-1.5 rounded-md border px-2 py-2">
+          <div className="flex flex-col gap-1.5 border-t pt-3">
             <p className="text-xs text-muted-foreground">{RESEARCH_SEND_NOTE}GTFS のファイルは送りません。</p>
             {cachedSelected > 0 && <p className="text-xs text-muted-foreground">{RESEARCH_SAVED_NOTE}</p>}
             <div className="flex flex-wrap gap-2">
@@ -891,6 +904,7 @@ export function ResearchSection({ chat = useChatStore }: { chat?: ChatStoreHook 
                 disabled={selectedIds.length === 0 || sending || progress.active}
                 onClick={() => void onStart()}
               >
+                <Search aria-hidden="true" />
                 {RESEARCH_START}
               </Button>
               <Button
@@ -902,6 +916,7 @@ export function ResearchSection({ chat = useChatStore }: { chat?: ChatStoreHook 
                 disabled={candidates.length === 0}
                 onClick={onDemo}
               >
+                <Database aria-hidden="true" />
                 {RESEARCH_DEMO}
               </Button>
             </div>

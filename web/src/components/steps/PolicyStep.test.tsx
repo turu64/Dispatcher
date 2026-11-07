@@ -293,7 +293,7 @@ describe('PolicyStep', () => {
     await waitFor(() => expect(document.activeElement).toBe(hole('終了日')))
     expect(hole('開始日').getAttribute('aria-label')).toBe('開始日:10月20日(火)')
     expect(hole('終了日').getAttribute('aria-label')).toBe('終了日:11月20日(金)')
-    expect(screen.getByText(/出力の有効期間は 2026年10月20日\(火\)〜2026年11月20日\(金\)\(32日\)/)).toBeTruthy()
+    expect(screen.getByTestId('output-validity').textContent).toBe('出力の有効期間2026年10月20日(火)〜2026年11月20日(金)(32日)')
     // 終了日のカレンダーには、開始日〜終了日の帯を示す
     const again = periodCalendar('終了日')
     expect(dayIn(again, '20261020')?.dataset.rangeStart).toBe('true')
@@ -1179,13 +1179,15 @@ describe('PolicyStep の欠員の欄', () => {
   it('在籍の運転士の数が無ければ、手順「運行の前提」で入れる案内を出し、あれば乗務できる運転士の数(目安)の数え方を出す', () => {
     render(<PolicyStep />)
     expect(within(region()).getByTestId('shortage-supply').textContent).toBe(
-      '在籍の運転士の数は、手順「運行の前提」で入れます。入れると、乗務できる運転士の数(目安)をここにも出します。',
+      '在籍の運転士の数は、手順「運行の前提」で入れます。',
     )
+    expect(within(region()).getByTestId('shortage-available').textContent).toContain('—')
     act(() => useDriversStore.getState().setRoster(150))
     fireEvent.change(input(), { target: { value: '19' } })
     expect(within(region()).getByTestId('shortage-supply').textContent).toBe(
       '乗務できる運転士の数(目安)は、在籍 150 × 週の出勤日数 5 ÷ 7 = 107(小数は切り捨て)から欠員 19 を引いた 88 です。',
     )
+    expect(within(region()).getByTestId('shortage-available').textContent).toContain('88 人')
     expect(within(region()).queryByTestId('shortage-supply-warning')).toBeNull()
     // 欠員がその日に出勤する運転士の数より多ければ、数を確かめる注意を出す
     fireEvent.change(input(), { target: { value: '200' } })

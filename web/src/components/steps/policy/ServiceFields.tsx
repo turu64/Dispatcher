@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { activeDaysIn, type ServiceInfo } from '@/gtfs/edit/services'
 import type { GtfsFeed } from '@/gtfs/load'
@@ -30,9 +31,16 @@ export function ServiceSelect({
   const changedGuess = override && guess !== null && guess !== override.guessAtPick && guess !== override.value
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor={id} className="text-xs">
-        {label}
-      </Label>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Label htmlFor={id} className="text-xs">
+          {label}
+        </Label>
+        {!override && guess !== null && (
+          <Badge variant="secondary" className="text-[10px]">
+            曜日の列から推定
+          </Badge>
+        )}
+      </div>
       <select
         id={id}
         className="h-8 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
@@ -46,7 +54,6 @@ export function ServiceSelect({
           </option>
         ))}
       </select>
-      {!override && guess !== null && <p className="text-xs text-muted-foreground">曜日の列から推定しました。</p>}
       {changedGuess && <p className="text-xs text-amber-900 dark:text-amber-300">期間を変えたため、推定は {guess} になりました。</p>}
     </div>
   )

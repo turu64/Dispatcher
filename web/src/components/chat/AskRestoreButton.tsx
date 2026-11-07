@@ -1,3 +1,4 @@
+import { Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { SENDING, useChatStore } from '@/store/chat'
@@ -35,12 +36,13 @@ export function AskRestoreButton({ blocked = null, store = useChatStore }: { blo
             .finally(() => setPending(false))
         }}
       >
+        <Sparkles aria-hidden="true" />
         AI に候補を聞く
       </Button>
       {note ? (
         <p className="text-xs text-muted-foreground">{note}</p>
       ) : (
-        <p className="text-xs text-muted-foreground">AI が、判断材料と停留所名から平日に戻したほうがよい便を選び、理由つきの下書きにします。承認は利用者が押します。</p>
+        <p className="text-xs text-muted-foreground">AI が便を選び、理由つきの下書きにします。承認は利用者が押します。</p>
       )}
     </div>
   )

@@ -140,7 +140,7 @@ describe('編集の画面の流れ', () => {
     // 方針は1つの文の穴を埋める形。期間は文の日付の穴に出る(カレンダーは穴から Popover で開く)
     expect(within(policy).getByRole('button', { name: '開始日:10月20日(火)' })).toBeTruthy()
     expect(within(policy).getByRole('combobox', { name: '減便の期間の終わり' }).textContent).toBe('当面の間')
-    expect(within(policy).getByText(/期間の中の祝日:/).textContent).toContain('勤労感謝の日')
+    expect(within(policy).getByTestId('holidays-in-period').textContent).toContain('勤労感謝の日')
     fireEvent.click(within(policy).getByRole('button', { name: '対象便を確かめる' }))
 
     // ---- 対象便を確かめる(下書き)。全曜日で便がなくなる系統(R3)があるので、確かめのチェックまで進めない ----
@@ -177,7 +177,7 @@ describe('編集の画面の流れ', () => {
     expect(within(reach).queryByText('下書き')).toBeNull()
     const zero = within(reach).getByRole('region', { name: '到達できなくなる区画・発車がなくなる停留所・便がなくなる系統' })
     expect(zero.textContent).toContain('学校前')
-    expect(zero.textContent).toContain('便がなくなる系統:1 系統')
+    expect(zero.textContent).toContain('便がなくなる系統1うち全日 1')
     // 日付は出力の有効期間の中だけ。選べる範囲は減便後の GTFS の運行期間(期間の開始日から)で、比較する日付もその中にある。
     // 範囲の文は地図の操作盤の Popover に出る(map/BandControl.test.tsx が確かめる)。手順の側には今の設定の1行が出る
     const selectable = selectablePeriod(useReachStore.getState())
@@ -209,7 +209,7 @@ describe('編集の画面の流れ', () => {
     expect(added.textContent).toContain('休校日運休(学)')
     expect(added.textContent).toContain('平日に戻した便 1 便、営業運行時間の合計 0時間20分')
     // 足し戻すと、S9 は運行がゼロの停留所でなくなる
-    await waitFor(() => expect(within(openStep('reach', REACH)).getByRole('region', { name: '到達できなくなる区画・発車がなくなる停留所・便がなくなる系統' }).textContent).toContain('発車がなくなる停留所:0 件'))
+    await waitFor(() => expect(within(openStep('reach', REACH)).getByRole('region', { name: '到達できなくなる区画・発車がなくなる停留所・便がなくなる系統' }).textContent).toContain('発車がなくなる停留所0便がなくなる系統0'))
 
     // ---- 元に戻す:足し戻しの前(方針だけ)に戻る ----
     openStep('policy', POLICY)

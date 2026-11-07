@@ -1,3 +1,4 @@
+import { PrinterIcon } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import StepSection from '@/components/StepSection'
 import { Button } from '@/components/ui/button'
@@ -129,12 +130,13 @@ export default function ChangeOrder() {
         <p className="text-sm text-muted-foreground">減便の方針を承認すると、承認した内容を1枚にまとめます。</p>
       ) : (
         <>
-          <div className="print-hide flex flex-col gap-1.5">
-            <Button type="button" className="self-start" onClick={() => window.print()}>
+          <div className="print-hide flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <Button type="button" onClick={() => window.print()}>
+              <PrinterIcon aria-hidden="true" />
               印刷する
             </Button>
             <p className="text-xs text-muted-foreground">
-              印刷の画面で送信先を「PDF に保存」にすると、PDF にできます。A4 縦1枚に収まるように作っていますが、平日に戻した便や変わる系統が多いときや、周辺の事業者の動きが長いときは2枚目に続きます(便は省かずにすべて載せます。事業者の動きは事業者の区切りで2枚目に送ります)。
+              送信先を「PDF に保存」にすると PDF になります(A4 縦。便が多いときは2枚目に続きます)。
               {draft && `承認待ちの${draftName(draft.id)} は反映していません。`}
             </p>
           </div>

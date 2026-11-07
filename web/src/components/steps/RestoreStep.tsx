@@ -1,6 +1,8 @@
+import { CalendarCheck, Check, Search, Undo2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import StepSection from '@/components/StepSection'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -47,6 +49,7 @@ import { TripLine } from './restore/TripLine'
 import { RoundTripPanel } from './restore/RoundTripPanel'
 import { CHECK_LIMITS_NOTE, FacilityAccessPanel } from './restore/FacilityAccessPanel'
 import { RESEARCH_SECTION_TITLE, ResearchLoader, ResearchSection } from './restore/ResearchSection'
+import { StatTiles } from './restore/StatTiles'
 
 /** 到達圏を使う2つの手がかりの名前(「停留所の発車がなくなる」と「到達圏が戻る」) */
 const REACH_PAIR = `「${RESTORE_HINT_LABELS.onlyServiceAtStop}」と「${RESTORE_HINT_LABELS.restoresLostCells}」`
@@ -202,13 +205,16 @@ function ResearchDetails() {
   const failed = useChatStore((s) => s.researchError !== null) || facilitiesFailed
   const status = active ? (count > 0 ? `調べた結果 ${count} 件・調べています` : '調べています') : count > 0 ? `調べた結果 ${count} 件` : 'まだ調べていません'
   return (
-    <details className="rounded-md border" data-testid="research-details">
-      <summary className="cursor-pointer px-3 py-2 text-sm">
+    <details className="border-b pb-3" data-testid="research-details">
+      <summary className="cursor-pointer text-sm">
+        <Search className="mr-1.5 inline size-3.5 align-[-2px] text-muted-foreground" aria-hidden="true" />
         <span className="font-medium">{RESEARCH_SECTION_TITLE}</span>
-        <span className="ml-2 text-xs text-muted-foreground">{status}</span>
-        {failed && <span className="ml-1 text-xs text-destructive">・{RESEARCH_DETAILS_FAILED}</span>}
+        <Badge variant={active ? 'secondary' : 'outline'} className="ml-2 align-[1px]">
+          {status}
+        </Badge>
+        {failed && <span className="ml-1 text-xs text-destructive">{RESEARCH_DETAILS_FAILED}</span>}
       </summary>
-      <div className="flex flex-col gap-3 border-t px-3 py-2">
+      <div className="mt-3 flex flex-col gap-3">
         <ResearchSection />
       </div>
     </details>
@@ -306,6 +312,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
     const present = new Set(candidates.map((c) => startBandOf(c.trip.firstSeconds)))
     return START_BAND_LABELS.filter((b) => present.has(b))
   }, [candidates])
+  const hintedCount = useMemo(() => candidates.filter((c) => c.detail.hints.length > 0).length, [candidates])
   const hintsPresent = useMemo(() => {
     const present = new Set(candidates.flatMap((c) => c.detail.hints))
     return (Object.keys(RESTORE_HINT_LABELS) as RestoreHint[]).filter((h) => present.has(h))
@@ -445,15 +452,21 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   return (
     <div className="flex min-w-0 flex-col gap-3">
       {claudeDraft && <ClaudeDraftBanner draft={claudeDraft} />}
-      <p className="text-sm">
-        なくなる平日便 <span className="tabular-nums">{candidates.length}</span> 便から選びます。系統ごとにまとめ、全曜日で便がなくなる系統を先に出します。
-        系統を開くと、判断材料のある便を方向ごとに時刻の順に出します。
-      </p>
+      {/* 説明の文の代わりに、主な数を小さな枠で出す(2026-11-07 に利用者の指示。読み込みの手順と同じ形) */}
+      <StatTiles
+        label="平日に戻す便の数"
+        tiles={[
+          { label: 'なくなる平日便', value: candidates.length },
+          { label: '判断材料あり', value: hintedCount },
+          { label: '平日に戻した便', value: version.report.addBack.accepted.length },
+        ]}
+      />
       {/* 勤務の数の目安の今の値と欠員との比較。最初の1便を戻す前から出し、便を戻すたびに書き直す(D04) */}
       <DriverLine />
       <AskRestoreButton blocked={policyDraft ? '減便の方針の下書きを承認するか、やめてから聞いてください。' : null} />
       <AiPicks picks={aiPicks} selected={selectedSet} onSelect={select} />
-      <div className="flex flex-col gap-3 rounded-md border px-2 py-1.5" role="group" aria-label="往復と学校・病院の確認">
+      {/* 手順の欄の中で枠を重ねず、区切り線で分ける */}
+      <div className="flex flex-col gap-3 border-t pt-3" role="group" aria-label="往復と学校・病院の確認">
         <RoundTripPanel
           base={base.feed}
           edited={checkFeed}
@@ -475,87 +488,98 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         />
         <p className="text-xs text-muted-foreground">{CHECK_LIMITS_NOTE}</p>
       </div>
-      <fieldset className="grid grid-cols-2 gap-2" aria-label="候補の絞り込み">
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor="restore-route" className="text-xs">
-            系統
-          </Label>
-          <select id="restore-route" className="h-8 min-w-0 rounded-md border bg-background px-1 text-xs" value={route} onChange={(e) => setRoute(e.target.value)}>
-            <option value="">すべて</option>
-            {routes.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor="restore-band" className="text-xs">
-            始発の時間帯
-          </Label>
-          <select id="restore-band" className="h-8 min-w-0 rounded-md border bg-background px-1 text-xs" value={band} onChange={(e) => setBand(e.target.value)}>
-            <option value="">すべて</option>
-            {bands.map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor="restore-stop" className="text-xs">
-            停留所名(一部)
-          </Label>
-          <Input id="restore-stop" className="h-8 text-xs" value={stopName} onChange={(e) => setStopName(e.target.value)} />
-        </div>
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor="restore-hint" className="text-xs">
-            判断材料
-          </Label>
-          <select
-            id="restore-hint"
-            className="h-8 min-w-0 rounded-md border bg-background px-1 text-xs"
-            value={activeHint}
-            onChange={(e) => setHint(e.target.value as RestoreHint | '')}
-          >
-            <option value="">すべて</option>
-            {hintsPresent.map((h) => (
-              <option key={h} value={h}>
-                {RESTORE_HINT_LABELS[h]}
-              </option>
-            ))}
-          </select>
-        </div>
-      </fieldset>
+      <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
+        <h3 className="text-sm font-medium">平日に戻す便の候補</h3>
+        <fieldset className="grid grid-cols-2 gap-2" aria-label="候補の絞り込み">
+          <div className="flex min-w-0 flex-col gap-1">
+            <Label htmlFor="restore-route" className="text-xs">
+              系統
+            </Label>
+            <select id="restore-route" className="h-8 min-w-0 rounded-md border bg-background px-1 text-xs" value={route} onChange={(e) => setRoute(e.target.value)}>
+              <option value="">すべて</option>
+              {routes.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <Label htmlFor="restore-band" className="text-xs">
+              始発の時間帯
+            </Label>
+            <select id="restore-band" className="h-8 min-w-0 rounded-md border bg-background px-1 text-xs" value={band} onChange={(e) => setBand(e.target.value)}>
+              <option value="">すべて</option>
+              {bands.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <Label htmlFor="restore-stop" className="text-xs">
+              停留所名(一部)
+            </Label>
+            <Input id="restore-stop" className="h-8 text-xs" value={stopName} onChange={(e) => setStopName(e.target.value)} />
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <Label htmlFor="restore-hint" className="text-xs">
+              判断材料
+            </Label>
+            <select
+              id="restore-hint"
+              className="h-8 min-w-0 rounded-md border bg-background px-1 text-xs"
+              value={activeHint}
+              onChange={(e) => setHint(e.target.value as RestoreHint | '')}
+            >
+              <option value="">すべて</option>
+              {hintsPresent.map((h) => (
+                <option key={h} value={h}>
+                  {RESTORE_HINT_LABELS[h]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </fieldset>
 
-      <p className="text-xs text-muted-foreground">
-        {compareDate && editedTimeline
-          ? `減便後の最大間隔は、比較する日付(${formatDateJa(compareDate)})の、承認済みの減便後の便で数えています。比較する日付は、地図の下の操作盤で変えられます。`
-          : '比較する日付が決まると、方向ごとに減便後の最大間隔を出します。比較する日付は、地図の下の操作盤で選べます。'}
-      </p>
-      <div ref={candidatesRef} className="flex min-w-0 flex-col">
-      <CandidateGroups
-        groups={groups}
-        isOpen={(id) => filtering || opened.includes(id)}
-        onToggle={(id) => {
-          // 絞り込みで開いている系統を閉じるときは、絞り込みを外すまで閉じたことにしない(開いた一覧にも入れない)
-          if (!filtering) setOpened((o) => toggle(o, id))
-        }}
-        showsAll={(id) => showAll.includes(id)}
-        onShowAll={(id) => setShowAll((s) => (s.includes(id) ? s : [...s, id]))}
-        selected={selectedSet}
-        onSelect={select}
-        aiIds={new Set(aiPicks.map((p) => p.candidate.trip.tripId))}
-      />
-      </div>
-      {candidates.length > 0 && <p className="text-xs text-muted-foreground">{BAND_HINT_NOTE}</p>}
-      {(reachStatus.kind === 'absent' || hintsPresent.includes('onlyServiceAtStop') || hintsPresent.includes('restoresLostCells')) &&
-        candidates.length > 0 && <p className="text-xs text-muted-foreground">{reachStatus.text}</p>}
-      {candidates.length > 0 && (
-        <section className="flex flex-col gap-0.5 text-xs text-muted-foreground" aria-label="学校・病院の判断材料">
-          <p>{facilityStatus}</p>
-          {ctx?.facilities &&
-            (tally.list.length > 0 ? (
+        {!(compareDate && editedTimeline) && (
+          <p className="text-xs text-muted-foreground">比較する日付が決まると、方向ごとに減便後の最大間隔を出します。比較する日付は、地図の下の操作盤で選べます。</p>
+        )}
+        <div ref={candidatesRef} className="flex min-w-0 flex-col">
+        <CandidateGroups
+          groups={groups}
+          isOpen={(id) => filtering || opened.includes(id)}
+          onToggle={(id) => {
+            // 絞り込みで開いている系統を閉じるときは、絞り込みを外すまで閉じたことにしない(開いた一覧にも入れない)
+            if (!filtering) setOpened((o) => toggle(o, id))
+          }}
+          showsAll={(id) => showAll.includes(id)}
+          onShowAll={(id) => setShowAll((s) => (s.includes(id) ? s : [...s, id]))}
+          selected={selectedSet}
+          onSelect={select}
+          aiIds={new Set(aiPicks.map((p) => p.candidate.trip.tripId))}
+        />
+        </div>
+        {/* 出していない理由(状態)は見えるところに残し、数え方の説明は閉じた欄にまとめる */}
+        {candidates.length > 0 && reachStatus.kind === 'absent' && <p className="text-xs text-muted-foreground">{reachStatus.text}</p>}
+        {candidates.length > 0 && !ctx?.facilities && <p className="text-xs text-muted-foreground">{facilityStatus}</p>}
+        {candidates.length > 0 && (
+          <details className="text-xs" data-testid="restore-hint-notes">
+            <summary className="cursor-pointer text-muted-foreground">判断材料の数え方</summary>
+            <div className="mt-1 flex flex-col gap-1 text-muted-foreground">
+              {compareDate && editedTimeline && (
+                <p>{`減便後の最大間隔は、比較する日付(${formatDateJa(compareDate)})の、承認済みの減便後の便で数えています。比較する日付は、地図の下の操作盤で変えられます。`}</p>
+              )}
+              <p>{BAND_HINT_NOTE}</p>
+              {reachStatus.kind === 'note' && (hintsPresent.includes('onlyServiceAtStop') || hintsPresent.includes('restoresLostCells')) && <p>{reachStatus.text}</p>}
+              {ctx?.facilities && <p>{facilityStatus}</p>}
+            </div>
+          </details>
+        )}
+        {candidates.length > 0 && ctx?.facilities && (
+          <section className="flex flex-col gap-0.5 text-xs text-muted-foreground" aria-label="学校・病院の判断材料">
+            {tally.list.length > 0 ? (
               <p>
                 当たる便の数:
                 {tally.list.map((t) => `${t.name}(${t.label})${t.trips} 便`).join('、')}
@@ -563,39 +587,43 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
               </p>
             ) : (
               <p>候補の便で、学校・病院の時間帯に当たる便はありません。</p>
-            ))}
-        </section>
-      )}
-      <SelectedTrips
-        trips={selectedNow.map((id) => candidateById.get(id)!)}
-        school={schoolSet}
-        schoolNotes={schoolNotes}
-        onSchool={(id, checked) => setSchool((s) => (checked ? (s.includes(id) ? s : [...s, id]) : s.filter((x) => x !== id)))}
-        onRemove={(id) => select(id, false)}
-      />
-
-      <SelectedFacilityReasons trips={selectedNow.map((id) => candidateById.get(id)!)} onUse={setReason} />
-
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="restore-reason" className="text-xs">
-          平日に戻す理由
-        </Label>
-        <Input id="restore-reason" placeholder="例:高校の通学" value={reason} onChange={(e) => setReason(e.target.value)} aria-describedby="restore-reason-note" />
-        <p id="restore-reason-note" className="text-xs text-muted-foreground">
-          選んだ便すべてに入れます。入力は任意です。
-        </p>
+            )}
+          </section>
+        )}
       </div>
-      {policyDraft && <p className="text-sm text-destructive">減便の方針の下書きを承認するか、やめてから便を平日に戻してください。</p>}
-      {confirmBox('add') ?? (
-        <Button type="button" className="self-start" disabled={selectedNow.length === 0 || policyDraft} onClick={addBack}>
-          選んだ {selectedNow.length} 便を平日に戻す
-        </Button>
-      )}
-      {message && (
-        <Alert variant={message.ok ? 'default' : 'destructive'} role={message.ok ? 'status' : 'alert'}>
-          <AlertDescription>{message.text}</AlertDescription>
-        </Alert>
-      )}
+      <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
+        <SelectedTrips
+          trips={selectedNow.map((id) => candidateById.get(id)!)}
+          school={schoolSet}
+          schoolNotes={schoolNotes}
+          onSchool={(id, checked) => setSchool((s) => (checked ? (s.includes(id) ? s : [...s, id]) : s.filter((x) => x !== id)))}
+          onRemove={(id) => select(id, false)}
+        />
+
+        <SelectedFacilityReasons trips={selectedNow.map((id) => candidateById.get(id)!)} onUse={setReason} />
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="restore-reason" className="text-xs">
+            平日に戻す理由
+          </Label>
+          <Input id="restore-reason" placeholder="例:高校の通学" value={reason} onChange={(e) => setReason(e.target.value)} aria-describedby="restore-reason-note" />
+          <p id="restore-reason-note" className="text-xs text-muted-foreground">
+            選んだ便すべてに入ります(任意)。
+          </p>
+        </div>
+        {policyDraft && <p className="text-sm text-destructive">減便の方針の下書きを承認するか、やめてから便を平日に戻してください。</p>}
+        {confirmBox('add') ?? (
+          <Button type="button" className="self-start" disabled={selectedNow.length === 0 || policyDraft} onClick={addBack}>
+            <CalendarCheck aria-hidden="true" />
+            選んだ {selectedNow.length} 便を平日に戻す
+          </Button>
+        )}
+        {message && (
+          <Alert variant={message.ok ? 'default' : 'destructive'} role={message.ok ? 'status' : 'alert'}>
+            <AlertDescription>{message.text}</AlertDescription>
+          </Alert>
+        )}
+      </div>
 
       <AddedBackList
         base={base}
@@ -650,9 +678,7 @@ function SelectedFacilityReasons({ trips, onUse }: { trips: readonly Candidate[]
     <section className="flex flex-col gap-1 text-xs" aria-label="選んだ便の近くの学校・病院">
       <h3 className="font-medium">選んだ便の近くの学校・病院</h3>
       {!single && (
-        <p className="text-muted-foreground">
-          平日に戻す理由は、選んだ便すべてに入ります。この文を理由の欄に入れる「理由に使う」は、1便だけ選んだときに使えます。
-        </p>
+        <p className="text-muted-foreground">「理由に使う」は、1便だけ選んだときに使えます。</p>
       )}
       <ul className="flex flex-col divide-y rounded-md border">
         {rows.map(({ c, matched, texts }) => (
@@ -672,7 +698,7 @@ function SelectedFacilityReasons({ trips, onUse }: { trips: readonly Candidate[]
             {single && (
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 className="h-6 px-1.5 text-xs"
                 onClick={() => onUse(texts[0])}
@@ -720,7 +746,7 @@ function AddedBackList({
   if (version.plan.addBackTripIds.length === 0) return null
 
   return (
-    <section className="flex flex-col gap-2 border-t pt-2" aria-label="平日に戻した便">
+    <section className="flex flex-col gap-2 border-t pt-3" aria-label="平日に戻した便">
       <h3 className="text-sm font-medium">平日に戻した便({report.accepted.length} 便)</h3>
       {confirm}
       <p className="text-xs">{restoreTotalsText(totals)}</p>
@@ -739,7 +765,8 @@ function AddedBackList({
                   </span>
                 )}
               </span>
-              <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onWithdraw(id)} aria-label={`${id} を平日に戻す操作を取り消す`}>
+              <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onWithdraw(id)} aria-label={`${id} を平日に戻す操作を取り消す`}>
+                <Undo2 aria-hidden="true" />
                 取り消す
               </Button>
             </li>
@@ -755,7 +782,8 @@ function AddedBackList({
                 <span className="min-w-0 break-words">
                   <span className="font-mono">{tripId}</span>:{reason}
                 </span>
-                <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onWithdraw(tripId)} aria-label={`${tripId} を一覧から除く`}>
+                <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onWithdraw(tripId)} aria-label={`${tripId} を一覧から除く`}>
+                  <X aria-hidden="true" />
                   除く
                 </Button>
               </li>
@@ -773,7 +801,7 @@ function ClaudeDraftBanner({ draft }: { draft: Extract<Draft, { kind: 'op' }> })
   const op = draft.record.op
   const what = op.type === 'addBack' ? `${op.items.length} 便を平日に戻す` : op.type === 'withdrawAddBack' ? `${op.tripIds.length} 便を平日に戻す操作を取り消す` : ''
   return (
-    <div className="flex flex-col gap-1.5 rounded-md border border-dashed px-2 py-1.5 text-xs">
+    <div className="flex flex-col gap-1.5 rounded-md border border-dashed border-primary/50 bg-primary/5 px-2 py-1.5 text-xs">
       <p>
         {draftName(draft.id)}(AI の提案):{what}。地図と表は、この下書きの結果を「下書き」として出しています。
       </p>
@@ -788,9 +816,11 @@ function ClaudeDraftBanner({ draft }: { draft: Extract<Draft, { kind: 'op' }> })
             setMessage(r.ok ? null : r.message)
           }}
         >
+          <Check aria-hidden="true" />
           承認する
         </Button>
-        <Button type="button" size="sm" variant="outline" onClick={() => useEditStore.getState().discard()}>
+        <Button type="button" size="sm" variant="ghost" onClick={() => useEditStore.getState().discard()}>
+          <X aria-hidden="true" />
           やめる
         </Button>
       </div>

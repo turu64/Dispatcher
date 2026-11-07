@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { ExternalLink } from 'lucide-react'
+import { ChevronDown, ChevronRight, ExternalLink, Sparkles } from 'lucide-react'
 import { checkedAtText, safeUrl } from '@/claude/research'
 import { Button } from '@/components/ui/button'
 import type { AddBackItem } from '@/gtfs/edit/ops'
@@ -86,9 +86,11 @@ export function FacilityEvidence({ near }: { near: NearFacility }) {
           aria-label={`${f.name}の調べた要点`}
           onClick={() => setOpen((o) => !o)}
         >
-          <span aria-hidden="true" className="w-3 text-muted-foreground">
-            {open ? '▾' : '▸'}
-          </span>
+          {open ? (
+            <ChevronDown className="size-3 text-muted-foreground" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="size-3 text-muted-foreground" aria-hidden="true" />
+          )}
           調べた要点
         </button>
         <span className="text-muted-foreground">窓は{windowSourceText(f)}</span>
@@ -153,11 +155,12 @@ export function AiPicks({
 }) {
   if (picks.length === 0) return null
   return (
-    <section className="flex flex-col gap-1 rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5 text-xs" aria-label="AI のおすすめ">
-      <h3 className="font-medium">AI のおすすめ({picks.length} 便)</h3>
-      <p className="text-muted-foreground">
-        AI の下書きにある便です。下書きをそのまま承認するか、ここで一部を選んで平日に戻せます。選んで戻すと、AI の下書きは破棄します。
-      </p>
+    <section className="flex flex-col gap-1 rounded-md bg-primary/5 px-2 py-1.5 text-xs" aria-label="AI のおすすめ">
+      <h3 className="flex items-center gap-1.5 font-medium">
+        <Sparkles className="size-3.5 text-primary" aria-hidden="true" />
+        AI のおすすめ({picks.length} 便)
+      </h3>
+      <p className="text-muted-foreground">一部だけを選んで平日に戻すと、AI の下書きは破棄します。</p>
       <ul className="flex flex-col divide-y rounded-md border bg-background">
         {picks.map(({ candidate: c, item }) => (
           <li key={c.trip.tripId} className="px-2 py-1">
@@ -233,7 +236,7 @@ export function SelectedTrips({
           </li>
         ))}
       </ul>
-      <p className="text-muted-foreground">休校日運休(学)は、学校の休業日に走らせない便の印です。GTFS には入れず、変更指示書と周知文に使います。</p>
+      <p className="text-muted-foreground">休校日運休(学)の印は GTFS には入れず、変更指示書と周知文に使います。</p>
     </section>
   )
 }

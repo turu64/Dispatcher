@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react'
+import { CalendarRange, Check, ListRestart, Pencil, Undo2, X } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { EditRecord, Form2Plan, PolicyReason } from '@/gtfs/edit/ops'
 import type { Form2Result } from '@/gtfs/edit/form2'
 import { form2Texts, timingNotices } from '@/gtfs/validate/edit'
 import { appToday } from '@/lib/dates'
+import { cn } from '@/lib/utils'
 import { blockingIssues, diffOf, draftName, useEditStore, type BaseGtfs } from '@/store/edit'
 import { draftActor, replaceClaudeDraftMessage } from '../editActions'
 import { FromTo, InlineConfirm, IssueList, NoteList } from '../editParts'
@@ -53,6 +56,7 @@ export function PolicyReview({ draft, onCommitted }: { draft: OpDraft; onCommitt
           </AlertDescription>
         </Alert>
         <Button type="button" variant="outline" className="self-start" onClick={discard}>
+          <X aria-hidden="true" />
           やめる
         </Button>
       </section>
@@ -109,7 +113,7 @@ export function PolicyReview({ draft, onCommitted }: { draft: OpDraft; onCommitt
           全曜日で便がなくなる系統があることを確かめました
         </label>
       )}
-      {blocking.length > 0 && <p className="text-sm text-destructive">誤りがあるため、この内容では承認できません。</p>}
+      {blocking.length > 0 && <p className="text-sm font-medium text-destructive">誤りがあるため、この内容では承認できません。</p>}
       {message && (
         <Alert variant="destructive">
           <AlertDescription>{message}</AlertDescription>
@@ -117,9 +121,11 @@ export function PolicyReview({ draft, onCommitted }: { draft: OpDraft; onCommitt
       )}
       <div className="flex flex-wrap gap-2">
         <Button type="button" disabled={!canCommit} onClick={commit}>
+          <Check aria-hidden="true" />
           承認する
         </Button>
-        <Button type="button" variant="outline" onClick={discard}>
+        <Button type="button" variant="ghost" onClick={discard}>
+          <X aria-hidden="true" />
           やめる
         </Button>
       </div>
@@ -147,18 +153,23 @@ export function PolicySummary({
   const names = new Map(diff.byRoute.map((r) => [r.routeId, r.routeName]))
   return (
     <section className="flex flex-col gap-2" aria-label="承認した減便の方針">
-      <dl className="flex flex-col gap-0.5 text-sm">
-        <div>
-          <dt className="inline">承認した減便の方針:</dt>
-          <dd className="inline font-medium">{POLICY_KIND_LABELS[plan.kind]}</dd>
+      <dl className="flex flex-col gap-1 text-sm">
+        <div className="flex flex-wrap items-center gap-x-1">
+          <dt className="text-muted-foreground">承認した減便の方針:</dt>
+          <dd>
+            <Badge>{POLICY_KIND_LABELS[plan.kind]}</Badge>
+          </dd>
         </div>
-        <div>
-          <dt className="inline">期間:</dt>
-          <dd className="inline">{periodText(plan.period.start, plan.period.end)}</dd>
+        <div className="flex flex-wrap items-center gap-x-1">
+          <dt className="text-muted-foreground">期間:</dt>
+          <dd className="flex items-center gap-1">
+            <CalendarRange className="size-3.5 text-muted-foreground" aria-hidden="true" />
+            {periodText(plan.period.start, plan.period.end)}
+          </dd>
         </div>
         {plan.pairs === undefined ? (
           <div>
-            <dt className="inline">service:</dt>
+            <dt className="inline text-muted-foreground">service:</dt>
             <dd className="inline">
               平日 <span className="font-mono">{plan.weekdayService}</span> ← {REPLACEMENT_LABELS[plan.kind]}{' '}
               <span className="font-mono">{plan.replacementService}</span>
@@ -166,42 +177,58 @@ export function PolicySummary({
           </div>
         ) : (
           <div>
-            <dt>ダイヤ:{groupSentence(plan, version.report)}</dt>
+            <dt>
+              <span className="text-muted-foreground">ダイヤ:</span>
+              {groupSentence(plan, version.report)}
+            </dt>
             <dd>
               <PairList settings={plan} report={version.report} />
             </dd>
           </div>
         )}
         <div>
-          <dt className="inline">除外した系統:</dt>
+          <dt className="inline text-muted-foreground">除外した系統:</dt>
           <dd className="inline">
             {plan.excludedRoutes.length === 0 ? 'なし' : plan.excludedRoutes.map((r) => names.get(r) ?? r).join('、')}
           </dd>
         </div>
         <div>
-          <dt className="inline">理由:</dt>
+          <dt className="inline text-muted-foreground">理由:</dt>
           <dd className="inline">
             {reasonCategoryLabel(reason) ?? '選んでいません'}
             {reason?.note && `(${reason.note})`}
           </dd>
         </div>
-        <div>
-          <dt className="inline">平日便:</dt>
-          <dd className="inline">
-            <FromTo before={before} after={after} emphasizeDecrease={after < before} /> 便(
-            <span className={diff.removed.length > 0 ? REMOVED_TEXT_CLASS : undefined}>なくなる便 {diff.removed.length}</span>・
-            <span className={diff.added.length > 0 ? ADDED_TEXT_CLASS : undefined}>加わる便 {diff.added.length}</span>・同じ便 {diff.same.length})
-          </dd>
-        </div>
-        <div className={diff.vanishingRoutes > 0 ? 'font-semibold text-destructive' : undefined}>
-          <dt className="inline">全曜日で便がなくなる系統:</dt>
-          <dd className="inline">{diff.vanishingRoutes} 系統</dd>
-        </div>
+      </dl>
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="承認した減便の方針の便数">
+        <SummaryTile label="平日便">
+          <FromTo before={before} after={after} emphasizeDecrease={after < before} /> 便
+        </SummaryTile>
+        <SummaryTile label="なくなる便" className={diff.removed.length > 0 ? REMOVED_TEXT_CLASS : undefined}>
+          {diff.removed.length}
+        </SummaryTile>
+        <SummaryTile label="加わる便" className={diff.added.length > 0 ? ADDED_TEXT_CLASS : undefined}>
+          {diff.added.length}
+        </SummaryTile>
+        <SummaryTile label="全曜日で便がなくなる系統" className={diff.vanishingRoutes > 0 ? 'text-destructive' : undefined}>
+          {diff.vanishingRoutes} 系統
+        </SummaryTile>
       </dl>
       <Button type="button" variant="outline" size="sm" className="self-start" onClick={onChange}>
+        <Pencil aria-hidden="true" />
         減便の方針を変える
       </Button>
     </section>
+  )
+}
+
+/** 承認した減便の方針の便数の小さな枠(見出し + 太い数) */
+function SummaryTile({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col rounded-md bg-muted/50 px-2 py-1.5">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className={cn('text-base font-semibold tabular-nums', className)}>{children}</dd>
+    </div>
   )
 }
 
@@ -241,7 +268,7 @@ export function EditHistoryPanel() {
   }
 
   return (
-    <section className="flex flex-col gap-2 border-t pt-2" aria-label="編集の履歴">
+    <section className="flex flex-col gap-2 border-t pt-3" aria-label="編集の履歴">
       <h3 className="text-sm font-medium">編集の履歴(承認済み)</h3>
       <ol className="flex list-decimal flex-col gap-0.5 pl-5 text-xs">
         {history.map((r, i) => (
@@ -251,15 +278,17 @@ export function EditHistoryPanel() {
         ))}
       </ol>
       {undoDraft && (
-        <div className="flex flex-col gap-1.5 rounded-md border border-dashed px-2 py-1.5 text-xs">
+        <div className="flex flex-col gap-1.5 rounded-md bg-muted/50 px-2 py-1.5 text-xs">
           <p>
             {draftName(undoDraft.id)}{draftActor(undoDraft) === 'claude' && '(AI の提案)'}:最後の操作を元に戻します。地図と表には、戻したあとの状態を「下書き」として表示しています。
           </p>
           <div className="flex gap-2">
             <Button type="button" size="sm" onClick={() => useEditStore.getState().commit()}>
+              <Check aria-hidden="true" />
               元に戻す操作を承認する
             </Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => useEditStore.getState().discard()}>
+            <Button type="button" size="sm" variant="ghost" onClick={() => useEditStore.getState().discard()}>
+              <X aria-hidden="true" />
               やめる
             </Button>
           </div>
@@ -289,9 +318,11 @@ export function EditHistoryPanel() {
       ) : (
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" disabled={history.length === 0} onClick={undo}>
+            <Undo2 aria-hidden="true" />
             元に戻す
           </Button>
-          <Button type="button" variant="outline" size="sm" disabled={history.length === 0} onClick={undoAll}>
+          <Button type="button" variant="ghost" size="sm" disabled={history.length === 0} onClick={undoAll}>
+            <ListRestart aria-hidden="true" />
             すべて戻す
           </Button>
         </div>

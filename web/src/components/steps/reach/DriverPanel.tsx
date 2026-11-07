@@ -1,4 +1,4 @@
-import { CircleCheck, Info, TriangleAlert } from 'lucide-react'
+import { CircleCheck, Info, Settings2, TriangleAlert, UserMinus } from 'lucide-react'
 import { jumpToPremise, jumpToShortage } from '@/components/steps/stepIds'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -9,8 +9,8 @@ import { formatDateJa } from '@/lib/dates'
 import { useDriverComparison, useDriversStore, type DriverComparison } from '@/store/drivers'
 import {
   assumptionsSummary,
-  DRIVER_PANEL_LEAD,
   DRIVER_PANEL_TITLE,
+  DRIVER_PANEL_LEAD,
   driverCaveats,
   formatDiff,
   formatHours,
@@ -63,7 +63,7 @@ export function DriverView({
 }) {
   const { verdict } = comparison
   return (
-    <section className="flex flex-col gap-2 rounded-lg border px-3 py-2 text-sm" aria-labelledby="driver-panel-title">
+    <section className="flex flex-col gap-2 border-t pt-3 text-sm" aria-labelledby="driver-panel-title">
       <h3 id="driver-panel-title" className="font-medium">
         {DRIVER_PANEL_TITLE}
         {comparison.draft && (
@@ -80,7 +80,9 @@ export function DriverView({
           {ROSTER_HINT}
         </p>
       )}
-      <p className="text-xs">比較する日付:{formatDateJa(comparison.date)}</p>
+      <p className="text-xs text-muted-foreground">
+        比較する日付:<span className="text-foreground tabular-nums">{formatDateJa(comparison.date)}</span>
+      </p>
       <DriverTable comparison={comparison} />
       {comparison.placesEffect && (
         <p className="text-xs" data-testid="places-effect">
@@ -89,23 +91,17 @@ export function DriverView({
       )}
       <DutyWarning comparison={comparison} />
       <SupplyDetails comparison={comparison} />
-      <ul className="flex list-disc flex-col gap-0.5 pl-4 text-xs text-muted-foreground" aria-label="要る運転士の数の断り書き">
-        {driverCaveats(params, places).map((line) => (
-          <li key={line}>{line}</li>
-        ))}
-      </ul>
       <AssumptionsList comparison={comparison} params={params} places={places} />
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onOpenPremise}>
+          <Settings2 aria-hidden="true" />
           {PREMISE_JUMP}
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={onOpenShortage}>
+        <Button type="button" variant="ghost" size="sm" onClick={onOpenShortage}>
+          <UserMinus aria-hidden="true" />
           {SHORTAGE_JUMP}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">
-        在籍の運転士の数・週の出勤日数・営業所の位置・推定の仮定は手順「運行の前提」で、欠員は手順「減便の方針」で変えられます。
-      </p>
     </section>
   )
 }
@@ -264,12 +260,12 @@ export function DriverTable({ comparison }: { comparison: DriverComparison }) {
           )}
         </TableBody>
       </Table>
-      <p className="text-xs text-muted-foreground">
-        {SERVICE_HOURS_NOTE}
-        {operatorRuns !== null && OPERATOR_RUNS_NOTE}
-        {unknown > 0 && `時刻が読めない便 ${unknown} 便は、勤務の数に入れていません。`}
-        {!after && '減便後の GTFS ができると、減便後と差の列を足します。'}
-      </p>
+      {(unknown > 0 || !after) && (
+        <p className="text-xs text-muted-foreground">
+          {unknown > 0 && `時刻が読めない便 ${unknown} 便は、勤務の数に入れていません。`}
+          {!after && '減便後の GTFS ができると、減便後と差の列を足します。'}
+        </p>
+      )}
     </>
   )
 }
@@ -293,21 +289,41 @@ function SupplyDetails({ comparison }: { comparison: DriverComparison }) {
   )
 }
 
-/** 使った仮定の短い一覧と、開閉の中の詳しい一覧 */
+/** 使った仮定のバッジと、開閉の中の断り書き・数え方・詳しい仮定の一覧 */
 function AssumptionsList({ comparison, params, places }: { comparison: DriverComparison; params: DutyParams; places: readonly DutyPlace[] }) {
+  const summary = assumptionsSummary(params, places)
   return (
-    <div className="flex flex-col gap-1 text-xs">
-      <p>
-        <span className="text-muted-foreground">使った仮定:</span>
-        <span data-testid="assumptions-summary">{assumptionsSummary(params, places).join('・')}</span>
-      </p>
+    <div className="flex flex-col gap-1.5 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted-foreground">使った仮定</span>
+        {/* 読み上げには1つの文で渡し、バッジは目で見る用 */}
+        <span className="sr-only" data-testid="assumptions-summary">
+          {summary.join('・')}
+        </span>
+        {summary.map((line) => (
+          <Badge key={line} variant="secondary" className="tabular-nums" aria-hidden="true">
+            {line}
+          </Badge>
+        ))}
+      </div>
       <details>
-        <summary className="cursor-pointer text-muted-foreground">使った仮定をすべて見る</summary>
-        <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-4 text-muted-foreground" aria-label="使った仮定">
-          {comparison.assumptions.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
+        <summary className="cursor-pointer text-muted-foreground">断り書きと数え方・使った仮定をすべて見る</summary>
+        <div className="mt-1 flex flex-col gap-1 text-muted-foreground">
+          <ul className="flex list-disc flex-col gap-0.5 pl-4" aria-label="要る運転士の数の断り書き">
+            {driverCaveats(params, places).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <p>
+            {SERVICE_HOURS_NOTE}
+            {comparison.operatorRuns !== null && OPERATOR_RUNS_NOTE}
+          </p>
+          <ul className="flex list-disc flex-col gap-0.5 pl-4" aria-label="使った仮定">
+            {comparison.assumptions.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
       </details>
     </div>
   )

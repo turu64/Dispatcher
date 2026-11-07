@@ -12,6 +12,7 @@ import {
   type RoundTripWindow,
 } from '@/gtfs/edit/roundTrip'
 import { formatDateJa } from '@/lib/dates'
+import { StatTiles } from './StatTiles'
 
 /** 最初に出す、問題のある方向の行の数(候補の一覧が下に押し出されすぎないように少なくする) */
 const FIRST_ROWS = 3
@@ -136,15 +137,25 @@ export function RoundTripPanel({
         <p>
           {formatDateJa(date)}の減便前と減便後{draftLabel ? `(${draftLabel})` : ''}を、系統の方向(始発 → 終着)ごとに比べました。
         </p>
-        <p className="tabular-nums" aria-label="往復の問題の数">
+        {/* 数は小さな枠で出し、読み上げは1文にする */}
+        <p className="sr-only" aria-label="往復の問題の数">
           {ROUND_TRIP_PROBLEM_KINDS.map((k) => `${ROUND_TRIP_PROBLEM_LABELS[k]} ${result.counts[k]}`).join('・')}
         </p>
+        <StatTiles
+          hidden
+          className="grid-cols-2"
+          tiles={ROUND_TRIP_PROBLEM_KINDS.map((k) => ({
+            label: ROUND_TRIP_PROBLEM_LABELS[k],
+            value: result.counts[k],
+            tone: BADGE_VARIANT[k] === 'destructive' && result.counts[k] > 0 ? ('warn' as const) : undefined,
+          }))}
+        />
         <p className="text-muted-foreground">
           循環・片道のため往復を確かめていない系統:{result.routes.noReverse}
           {result.routes.afterOnly > 0 && `。減便後にだけ便がある系統:${result.routes.afterOnly}`}
         </p>
         {rows.withProblems.length === 0 ? (
-          <p className="rounded-md border px-2 py-1.5 text-muted-foreground">問題のある方向はありません。</p>
+          <p className="text-muted-foreground">問題のある方向はありません。</p>
         ) : (
           <ul className="flex flex-col divide-y rounded-md border" aria-label="問題のある方向">
             {shown.map((row) => (
@@ -153,7 +164,7 @@ export function RoundTripPanel({
           </ul>
         )}
         {rest > 0 && (
-          <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setShowAllProblems(true)}>
+          <Button type="button" variant="ghost" size="sm" className="self-start" onClick={() => setShowAllProblems(true)}>
             さらに表示(残り {rest} 件)
           </Button>
         )}
@@ -165,13 +176,16 @@ export function RoundTripPanel({
               ))}
             </ul>
           ) : (
-            <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setShowOthers(true)}>
+            <Button type="button" variant="ghost" size="sm" className="self-start" onClick={() => setShowOthers(true)}>
               問題のない方向も見る({rows.others.length} 方向)
             </Button>
           ))}
-        <p className="text-muted-foreground">
-          「帰りの便がない」は、減便後に行きの方向に{windowText(morning)}の便があり、逆向きの{windowText(evening)}の便が 0 便になる方向です(減便前は 1 便以上)。始発・終発は、{shiftMin} 分以上ずれたものを出します。方向は始発と終着の停留所名の組で分け、逆向きは同じ系統、なければほかの系統から探します。
-        </p>
+        <details>
+          <summary className="cursor-pointer text-muted-foreground">判定のしかた</summary>
+          <p className="mt-1 text-muted-foreground">
+            「帰りの便がない」は、減便後に行きの方向に{windowText(morning)}の便があり、逆向きの{windowText(evening)}の便が 0 便になる方向です(減便前は 1 便以上)。始発・終発は、{shiftMin} 分以上ずれたものを出します。方向は始発と終着の停留所名の組で分け、逆向きは同じ系統、なければほかの系統から探します。
+          </p>
+        </details>
       </>
     )
   }

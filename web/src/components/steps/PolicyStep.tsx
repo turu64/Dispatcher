@@ -55,39 +55,42 @@ export default function PolicyStep() {
       ) : (
         <>
           <ShortageSection />
-          {showForm && (
-            // 確かめている間も入力は残す(「やめる」で戻ったときに、入れた値のまま直せるように)
-            <div hidden={reviewing !== null}>
-              <PolicyForm
-                key={`${baseKeyOf(base)}-${editing ? history.length : 0}-${aiSeed?.id ?? ''}`}
-                base={base}
-                initial={seedOp ? seedOp.settings : editing ? plan : null}
-                initialReason={seedOp ? seedOp.reason : editing ? reason : null}
-                onCancel={plan && editing ? () => setEditing(false) : undefined}
+          {/* 欠員の欄とは枠を重ねず、区切り線で分ける */}
+          <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
+            {showForm && (
+              // 確かめている間も入力は残す(「やめる」で戻ったときに、入れた値のまま直せるように)
+              <div hidden={reviewing !== null}>
+                <PolicyForm
+                  key={`${baseKeyOf(base)}-${editing ? history.length : 0}-${aiSeed?.id ?? ''}`}
+                  base={base}
+                  initial={seedOp ? seedOp.settings : editing ? plan : null}
+                  initialReason={seedOp ? seedOp.reason : editing ? reason : null}
+                  onCancel={plan && editing ? () => setEditing(false) : undefined}
+                />
+              </div>
+            )}
+            {reviewing && (
+              <PolicyReview
+                draft={reviewing}
+                onCommitted={() => {
+                  setEditing(false)
+                  setAiSeed(null)
+                }}
               />
-            </div>
-          )}
-          {reviewing && (
-            <PolicyReview
-              draft={reviewing}
-              onCommitted={() => {
-                setEditing(false)
-                setAiSeed(null)
-              }}
-            />
-          )}
-          {plan && version && !editing && !reviewing && (
-            <PolicySummary
-              base={base}
-              plan={plan}
-              reason={reason}
-              version={version}
-              onChange={() => {
-                setEditing(true)
-                setAiSeed(null)
-              }}
-            />
-          )}
+            )}
+            {plan && version && !editing && !reviewing && (
+              <PolicySummary
+                base={base}
+                plan={plan}
+                reason={reason}
+                version={version}
+                onChange={() => {
+                  setEditing(true)
+                  setAiSeed(null)
+                }}
+              />
+            )}
+          </div>
           <EditHistoryPanel />
         </>
       )}

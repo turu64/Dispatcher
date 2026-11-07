@@ -1,4 +1,7 @@
+import { CalendarRange, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import HolidayCalendar from '@/components/HolidayCalendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -336,8 +339,12 @@ export function PeriodChecks({
   return (
     <>
       {validity && (
-        <p className="text-xs">
-          出力の有効期間は {formatDateJa(validity.start)}〜{formatDateJa(validity.end)}({validity.days}日)になります。
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs" data-testid="output-validity">
+          <span className="text-muted-foreground">出力の有効期間</span>
+          <span className="flex items-center gap-1 font-medium tabular-nums">
+            <CalendarRange className="size-3.5 text-muted-foreground" aria-hidden="true" />
+            {formatDateJa(validity.start)}〜{formatDateJa(validity.end)}({validity.days}日)
+          </span>
         </p>
       )}
       {periodProblems.length > 0 && (
@@ -366,26 +373,38 @@ function HolidaysInPeriod({ state, validity }: { state: HolidayState; validity: 
   if (state.status === 'loading') return <p className="text-xs text-muted-foreground">祝日一覧を読み込み中…</p>
   if (state.status !== 'ready') {
     return (
-      <div className="flex flex-col gap-1.5 rounded-md border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
-        <p>
-          <span aria-hidden="true">! </span>祝日一覧を読めないため、祝日の確認をしていません。
-          {state.status === 'error' && <>({state.message})</>}
-        </p>
-        <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => void useHolidayStore.getState().load()}>
-          祝日一覧を読み込み直す
-        </Button>
-      </div>
+      <Alert className="border-amber-400 bg-amber-50 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-200">
+        <TriangleAlert aria-hidden="true" />
+        <AlertDescription className="flex flex-col items-start gap-1.5 text-xs text-current">
+          <p>
+            祝日一覧を読めないため、祝日の確認をしていません。
+            {state.status === 'error' && <>({state.message})</>}
+          </p>
+          <Button type="button" variant="outline" size="xs" onClick={() => void useHolidayStore.getState().load()}>
+            <RefreshCw aria-hidden="true" />
+            祝日一覧を読み込み直す
+          </Button>
+        </AlertDescription>
+      </Alert>
     )
   }
   if (!validity) return null
   const list = holidaysBetween(state.list, validity.start, validity.end)
   const uncovered = uncoveredRanges(state.list, validity.start, validity.end)
   return (
-    <div className="text-xs">
-      <p>
-        期間の中の祝日:
-        {list.length === 0 ? 'ありません' : list.map((h) => `${formatDateJa(h.date)} ${h.name}`).join('、')}
-      </p>
+    <div className="flex flex-col gap-1 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5" data-testid="holidays-in-period">
+        <span className="text-muted-foreground">期間の中の祝日</span>
+        {list.length === 0 ? (
+          <span>ありません</span>
+        ) : (
+          list.map((h) => (
+            <Badge key={h.date} variant="outline" className="tabular-nums">
+              {formatDateJa(h.date)} {h.name}
+            </Badge>
+          ))
+        )}
+      </div>
       {uncovered.map((r) => (
         <p key={r.start} className="text-amber-900 dark:text-amber-300">
           <span aria-hidden="true">! </span>

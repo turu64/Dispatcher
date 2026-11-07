@@ -1,6 +1,8 @@
+import { CircleCheckIcon, DownloadIcon } from 'lucide-react'
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import StepSection from '@/components/StepSection'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -171,15 +173,18 @@ export default function ExportStep() {
       ) : (
         <>
           {version && <ExportSummary base={base} version={version} customVersion={versionProblem ? '' : customVersion} />}
-          <FeedVersionField before={version?.report.feedVersion.before ?? feedInfoVersion(base)} problem={versionProblem} previewAt={previewAt} />
-          <p className="text-xs" data-testid="trip-id-note">
-            {tripIdNote(plan?.kind ?? null)}
-          </p>
-          <IssueList issues={preview} title="出力の前の検証" />
-          {blocked && <p className="text-sm text-muted-foreground">{blocked}</p>}
-          <Button type="button" className="self-start" disabled={blocked !== null} loading={busy} loadingLabel="出力中" onClick={() => void onExport()}>
-            GTFS を出力する
-          </Button>
+          <div className={version ? 'flex flex-col gap-3 border-t pt-3' : 'flex flex-col gap-3'}>
+            <FeedVersionField before={version?.report.feedVersion.before ?? feedInfoVersion(base)} problem={versionProblem} previewAt={previewAt} />
+            <p className="text-xs text-muted-foreground" data-testid="trip-id-note">
+              {tripIdNote(plan?.kind ?? null)}
+            </p>
+            <IssueList issues={preview} title="出力の前の検証" />
+            {blocked && <p className="text-sm text-muted-foreground">{blocked}</p>}
+            <Button type="button" className="self-start" disabled={blocked !== null} loading={busy} loadingLabel="出力中" onClick={() => void onExport()}>
+              <DownloadIcon aria-hidden="true" />
+              GTFS を出力する
+            </Button>
+          </div>
           {error && (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>
@@ -187,8 +192,9 @@ export default function ExportStep() {
           )}
           <IssueList issues={exportIssues} title="出力のときの検証" />
           {exported && (
-            <div role="status" className="flex flex-col gap-1 rounded-md border px-2 py-1.5 text-xs">
-              <p>
+            <div role="status" className="flex flex-col gap-1 rounded-md bg-muted/50 px-2 py-1.5 text-xs">
+              <p className="flex flex-wrap items-center gap-x-1">
+                <CircleCheckIcon className="size-3.5 text-emerald-600" aria-hidden="true" />
                 出力しました:<span className="font-mono break-all">{exported.fileName}</span>(feed_version {exported.feedVersion}、作成{' '}
                 {generatedAtText(exported.generatedAt)})
               </p>
@@ -230,7 +236,7 @@ function FeedVersionField({ before, problem, previewAt }: { before: string; prob
         className="font-mono"
       />
       <p id="export-feed-version-help" className="text-xs text-muted-foreground">
-        入力の feed_version は {before || '(空)'}。空欄のときは、入力が空か 12 桁なら出力した日時、それ以外は「入力の値_dispatcher_出力した日時」にします。
+        入力の feed_version は {before || '(空)'}。空欄なら、入力が空か 12 桁のときは出力した日時、それ以外は「入力の値_dispatcher_出力した日時」にします。
         公開先が新しい版と見なすよう、入力より大きい値にしてください。
       </p>
       {problem && <p className="text-xs text-destructive">{problem}</p>}
@@ -255,30 +261,50 @@ function ExportSummary({ base, version, customVersion }: { base: BaseGtfs; versi
   const texts = form2Texts(version, today)
   return (
     <div className="flex flex-col gap-2">
-      <dl className="flex flex-col gap-0.5 text-sm" aria-label="出力する GTFS">
-        <div>
-          <dt className="inline">有効期間:</dt>
-          <dd className="inline">
-            {formatDateJa(report.validity.start)}〜{formatDateJa(report.validity.end)}({report.validity.days}日)
+      {/* 見出しの「:」は読み上げと文の検索のために残し、見た目では隠す */}
+      <dl className="grid grid-cols-2 gap-2 text-sm" aria-label="出力する GTFS">
+        <div className="col-span-2 flex flex-col rounded-md bg-muted/50 px-2 py-1.5">
+          <dt className="text-xs text-muted-foreground">
+            有効期間<span className="sr-only">:</span>
+          </dt>
+          <dd className="font-semibold tabular-nums">
+            {formatDateJa(report.validity.start)}〜{formatDateJa(report.validity.end)}
+            <span className="ml-1 text-xs font-normal text-muted-foreground">({report.validity.days}日)</span>
           </dd>
         </div>
-        <div>
-          <dt className="inline">feed_version:</dt>
-          <dd className="inline">
-            {report.feedVersion.before || '(空)'} →{' '}
-            {customVersion !== '' ? <span className="font-mono break-all">{customVersion}</span> : `出力した日時の値(承認したときの例 ${report.feedVersion.after})`}
-          </dd>
-        </div>
-        <div>
-          <dt className="inline">平日便:</dt>
-          <dd className="inline">
+        <div className="flex flex-col rounded-md bg-muted/50 px-2 py-1.5">
+          <dt className="text-xs text-muted-foreground">
+            平日便<span className="sr-only">:</span>
+          </dt>
+          <dd className="text-base font-semibold">
             <FromTo before={before} after={after} emphasizeDecrease={after < before} /> 便
           </dd>
         </div>
-        <div className={vanishing.length > 0 ? 'font-semibold text-destructive' : undefined}>
-          <dt className="inline">全曜日で便がなくなる系統:</dt>
-          <dd className="inline">
-            {vanishing.length} 系統{vanishing.length > 0 && `(${vanishing.map((r) => r.routeName).join('、')})`}
+        <div className={`flex flex-col rounded-md px-2 py-1.5 ${vanishing.length > 0 ? 'bg-destructive/10 text-destructive' : 'bg-muted/50'}`}>
+          <dt className={`text-xs ${vanishing.length > 0 ? '' : 'text-muted-foreground'}`}>
+            全曜日で便がなくなる系統<span className="sr-only">:</span>
+          </dt>
+          <dd className="text-base font-semibold tabular-nums">
+            {vanishing.length} 系統
+            {vanishing.length > 0 && <span className="text-xs font-normal">({vanishing.map((r) => r.routeName).join('、')})</span>}
+          </dd>
+        </div>
+        <div className="col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <dt className="text-xs text-muted-foreground">
+            feed_version<span className="sr-only">:</span>
+          </dt>
+          <dd className="flex flex-wrap items-center gap-1">
+            <Badge variant="outline" className="font-mono break-all">
+              {report.feedVersion.before || '(空)'}
+            </Badge>
+            {' → '}
+            {customVersion !== '' ? (
+              <Badge variant="secondary" className="font-mono break-all">
+                {customVersion}
+              </Badge>
+            ) : (
+              <span className="text-xs text-muted-foreground">出力した日時の値(承認したときの例 {report.feedVersion.after})</span>
+            )}
           </dd>
         </div>
       </dl>
@@ -297,8 +323,8 @@ function ExportSummary({ base, version, customVersion }: { base: BaseGtfs; versi
 function Attribution({ base, generatedAt }: { base: BaseGtfs; generatedAt: string | null }) {
   const text = attributionOf(base.sample, generatedAt).screen
   return (
-    <section className="flex flex-col gap-1 text-xs" aria-label="出力の出典">
-      <h3 className="font-medium">出力の出典</h3>
+    <section className="flex flex-col gap-1 border-t pt-3 text-xs" aria-label="出力の出典">
+      <h3 className="text-sm font-medium">出力の出典</h3>
       <p className="break-words">{text}</p>
       <p className="text-muted-foreground">
         ZIP には同じ内容を ATTRIBUTION.md として入れます{generatedAt === null && '(加工日時は出力した日時になります)'}。

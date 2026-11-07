@@ -1,7 +1,10 @@
+import { PrinterIcon, TriangleAlertIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import StepSection from '@/components/StepSection'
 import { SELECTED_TOGGLE_CLASS } from '@/components/selectedToggle'
 import { periodText, REASON_LABELS, REPLACEMENT_LABELS } from '@/components/steps/editText'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -490,22 +493,25 @@ function NoticeBody({
   return (
     <>
       {draftId !== null && (
-        <p className="print-hide rounded-md border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
-          承認待ちの{draftName(draftId)} があります。周知文は承認済みの内容で作っています。
-        </p>
+        <Alert role="status" className="print-hide border-amber-400 bg-amber-50 text-amber-950">
+          <AlertDescription className="text-xs text-amber-950">
+            承認待ちの{draftName(draftId)} があります。周知文は承認済みの内容で作っています。
+          </AlertDescription>
+        </Alert>
       )}
       {date === null ? (
         <p className="text-sm text-destructive">期間の中に平日ダイヤが走る日がないため、掲示の時刻を出せません。減便の期間を確かめてください。</p>
       ) : (
         <>
-          <p className="print-hide text-sm">
-            時刻を集計する対象日:<span className="font-medium">{formatDateJa(date)}</span>
-            <span className="text-xs text-muted-foreground">
-              (期間の中で、平日ダイヤが走る最初の日です。この日と同じダイヤで走る日は同じ時刻になります)
-            </span>
+          <p className="print-hide flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            <span className="text-xs text-muted-foreground">時刻を集計する日</span>
+            <Badge variant="outline" className="tabular-nums">
+              {formatDateJa(date)}
+            </Badge>
+            <span className="text-xs text-muted-foreground">期間の中で平日ダイヤが走る最初の日</span>
           </p>
 
-          <div className="print-hide flex flex-col gap-1.5">
+          <div className="print-hide flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <span className="text-sm font-medium" id="notice-view-label">
               文案の種類
             </span>
@@ -528,7 +534,7 @@ function NoticeBody({
             </ToggleGroup>
           </div>
 
-          <div className="print-hide grid gap-3 sm:grid-cols-2">
+          <div className="print-hide grid gap-3 border-t pt-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="notice-announce-date">公示日</Label>
               <Input
@@ -551,9 +557,12 @@ function NoticeBody({
           <div className="print-hide flex flex-col gap-1.5">
             <Label htmlFor="notice-late-reason">公示から実施まで{NOTICE_LEAD_DAYS}日を切るときの理由</Label>
             {lateWarning && (
-              <p role="status" className="rounded-md border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
-                公示から実施まで{NOTICE_LEAD_DAYS}日を切っています(運輸規則第6条第1項)。緊急やむを得ない理由を書いてください。扱いは運輸支局に確認してください。
-              </p>
+              <Alert role="status" className="border-amber-400 bg-amber-50 text-amber-950">
+                <TriangleAlertIcon aria-hidden="true" />
+                <AlertDescription className="text-xs text-amber-950">
+                  公示から実施まで{NOTICE_LEAD_DAYS}日を切っています(運輸規則第6条第1項)。緊急やむを得ない理由を書いてください。扱いは運輸支局に確認してください。
+                </AlertDescription>
+              </Alert>
             )}
             <Textarea
               id="notice-late-reason"
@@ -565,13 +574,13 @@ function NoticeBody({
 
           {view === 'stop' ? (
             <>
-              <div className="print-hide flex flex-col gap-1.5">
-                <Label htmlFor="notice-stop-query">停留所を選ぶ(名前の一部か stop_id)</Label>
+              <div className="print-hide flex flex-col gap-1.5 border-t pt-3">
+                <Label htmlFor="notice-stop-query">停留所を選ぶ</Label>
                 <Input
                   id="notice-stop-query"
                   type="search"
                   value={query}
-                  placeholder="例:駅前"
+                  placeholder="名前の一部か stop_id(例:駅前)"
                   onChange={(e) => {
                     setQuery(e.target.value)
                     setLimit(PAGE_SIZE)
@@ -624,9 +633,10 @@ function NoticeBody({
               {selectedStop && alt ? (
                 <>
                   <div className="print-hide flex flex-col gap-1.5">
-                    <Label htmlFor="notice-stop-note">代わりに使える交通の自由記入(他事業者のバス・鉄道・タクシーなど。この停留所の掲示に載ります)</Label>
+                    <Label htmlFor="notice-stop-note">代わりに使える交通の自由記入</Label>
                     <Textarea
                       id="notice-stop-note"
+                      placeholder="他事業者のバス・鉄道・タクシーなど。この停留所の掲示に載ります"
                       value={stopNotes[selectedStop.stopId] ?? ''}
                       onChange={(e) => setStopNotes((prev) => ({ ...prev, [selectedStop.stopId]: e.target.value }))}
                     />
@@ -649,12 +659,15 @@ function NoticeBody({
                       excludedRoutes: result.plan.excludedRoutes,
                     }}
                   />
-                  <Button className="print-hide self-start" onClick={() => window.print()}>
-                    この掲示を印刷する
-                  </Button>
-                  <p className="print-hide text-xs text-muted-foreground" data-testid="sheet-pages-note">
-                    系統や近くの停留所が多い停留所は、A4 縦で2枚以上に続きます(系統ごとの時刻の途中では紙を分けません)。
-                  </p>
+                  <div className="print-hide flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                    <Button onClick={() => window.print()}>
+                      <PrinterIcon aria-hidden="true" />
+                      この掲示を印刷する
+                    </Button>
+                    <p className="text-xs text-muted-foreground" data-testid="sheet-pages-note">
+                      系統や近くの停留所が多いときは、A4 縦で2枚以上に続きます。
+                    </p>
+                  </div>
                 </>
               ) : (
                 <p className="print-hide text-sm text-muted-foreground">停留所を選ぶと、その停留所の掲示を1枚ずつ表示して印刷できます。</p>
@@ -662,7 +675,7 @@ function NoticeBody({
             </>
           ) : (
             <>
-              <div className="print-hide grid gap-3">
+              <div className="print-hide grid gap-3 border-t pt-3">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="notice-place">場所(対象の地域・路線)</Label>
                   <Input id="notice-place" value={place} placeholder="例:○○市内の全路線" onChange={(e) => setPlace(e.target.value)} />
@@ -681,11 +694,12 @@ function NoticeBody({
                 under7={under7}
               />
               <Button className="print-hide self-start" onClick={() => window.print()}>
+                <PrinterIcon aria-hidden="true" />
                 この告知文を印刷する
               </Button>
             </>
           )}
-          <p className="print-hide text-xs text-muted-foreground">
+          <p className="print-hide border-t pt-3 text-xs text-muted-foreground">
             この文案は、運輸規則第17条の公示事項を雛形にしたもので、法定の様式ではありません。Dispatcher は届出・公示の要否を判定しません。運輸支局に確認してください。時刻・本数・距離はコードが出した値で、AI は書いていません。
           </p>
         </>

@@ -59,11 +59,10 @@ function textOf(html: string): string {
 describe('ReachSettingLine(表の上の、今の比較する日付と時間帯の幅)', () => {
   const PERIOD = { start: '20261001', end: '20261130' }
 
-  it('今の比較する日付と時間帯の幅を1行で出し、地図の下の操作盤で変えることと、計算し直すものを添える', () => {
+  it('今の比較する日付と時間帯の幅を1行で出し、地図の下の操作盤で変えることを添える', () => {
     const text = textOf(renderToString(<ReachSettingLine date="20261109" stepHours={3} period={PERIOD} comparing={false} />))
     expect(text).toContain('比較する日付:|2026年11月9日(月)・3時間ごと|')
     expect(text).toContain('地図の下の操作盤で変えられます。')
-    expect(text).toContain('比較する日付と時間帯の幅を変えると、到達圏の表・便を平日に戻す判断材料・AI による影響の要約も計算し直します。')
   })
 
   it('1時間ごとならそう出す', () => {
@@ -107,9 +106,10 @@ describe('ReachSummaryTable', () => {
     expect(text).toContain('起点の停留所 |1,460| 件。')
     expect(text).toContain('起点にしなかった停留所:stop_times.txt に出てこない 122 件、乗れる行がない(すべて終点か pickup_type が 1。降車専用)10 件。')
     expect(text).not.toContain('駅舎・出入口')
-    expect(text).toContain('|調べた区画(125m 四方のセル):|4(都市部 1・郊外 1・中山間・地方 2)、推計人口 200 人|')
-    expect(text).toContain('|徒歩圏に停留所・駅がある区画(セル):|3、推計人口 180 人(表の割合の分母)|')
-    expect(text).toContain('|徒歩圏に停留所・駅がない区画(セル):|1、推計人口 20 人|')
+    expect(text).toContain('|調べた区画|4|推計人口 200 人|')
+    expect(text).toContain('|徒歩圏に停留所・駅がある区画|3|推計人口 180 人|')
+    expect(text).toContain('|徒歩圏に停留所・駅がない区画|1|推計人口 20 人|')
+    expect(text).toContain('125m 四方の区画(都市部 1・郊外 1・中山間・地方 2)。表の割合の分母は、徒歩圏に停留所・駅がある区画です。')
   })
 
   it('除いた停留所は、何を除いたのかを分けて書く(0 件のものは書かない)', () => {
@@ -249,12 +249,14 @@ describe('減便の前後の比較', () => {
 
   it('一日を通して乗れなくなる場所と、運行がゼロになる停留所・系統を出す(全日の件数を先に)', () => {
     const text = textOf(renderToString(<ZeroServiceSummary snapshot={compared(false)} />))
-    expect(text).toContain('一日を通して到達できなくなる区画:|0| 区画(推計人口 0 人)')
-    expect(text).toContain('発車がなくなる停留所:|2| 件(うち、出力のどの日にも便が来ない停留所 1 件)')
+    expect(text).toContain('|一日を通して到達できなくなる区画|0|推計人口 0 人|')
+    expect(text).toContain('|発車がなくなる停留所|2|うち全日 1|')
     expect(text).toContain('掲示の撤去と、休止の届出に当たるかを確かめてください')
     expect(text).toContain('|全日| 学校前|S9|(減便前のこの日の発車 1 本)')
     expect(text).toContain('|この日| 駅前|A|(減便前のこの日の発車 5 本)')
-    expect(text).toContain('便がなくなる系統:|1| 系統(うち、全曜日で便がなくなる系統 1)')
+    expect(text).toContain('|便がなくなる系統|1|うち全日 1|')
+    expect(text).toContain('発車がなくなる停留所の一覧(2 件)')
+    expect(text).toContain('Dispatcher は届出の要否を判定しません。')
     expect(text).toContain('路線の休止の届出に当たるかを運輸支局に確認してください')
     expect(text).toContain('(減便前の全便 4 便)')
   })

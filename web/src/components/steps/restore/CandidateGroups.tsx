@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { DirectionGroup, RouteGroup } from './grouping'
@@ -43,7 +44,7 @@ export function CandidateGroups({
   /** AI のおすすめに入っている便 */
   aiIds: ReadonlySet<string>
 }) {
-  if (groups.length === 0) return <p className="rounded-md border px-2 py-1.5 text-xs text-muted-foreground">当てはまる便がありません。</p>
+  if (groups.length === 0) return <p className="text-xs text-muted-foreground">当てはまる便がありません。</p>
   return (
     <div className="flex flex-col gap-1.5" role="group" aria-label="平日に戻す便の候補">
       {groups.map((g, i) => {
@@ -61,9 +62,11 @@ export function CandidateGroups({
               aria-controls={panelId}
               onClick={() => onToggle(g.routeId)}
             >
-              <span aria-hidden="true" className="w-3 text-muted-foreground">
-                {open ? '▾' : '▸'}
-              </span>
+              {open ? (
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              )}
               <span className="font-medium">{g.routeName}</span>
               {g.vanishes && (
                 <Badge variant="destructive" className="px-1 py-0 text-[10px]">
@@ -73,7 +76,7 @@ export function CandidateGroups({
               <span className="text-muted-foreground">
                 なくなる便 {g.candidates.length} 便(判断材料あり {g.hinted} 便)
               </span>
-              {picked > 0 && <span className="font-medium text-primary">選択 {picked} 便</span>}
+              {picked > 0 && <Badge className="px-1.5 py-0 text-[10px]">選択 {picked} 便</Badge>}
             </button>
             {open && (
               <div id={panelId} className="flex flex-col gap-2 border-t px-2 py-1.5">
@@ -114,7 +117,7 @@ export function CandidateGroups({
                 })}
                 {g.hinted === 0 && !all && <p className="text-muted-foreground">判断材料のある便はありません。</p>}
                 {hidden > 0 && !all && (
-                  <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => onShowAll(g.routeId)}>
+                  <Button type="button" variant="ghost" size="sm" className="self-start" onClick={() => onShowAll(g.routeId)}>
                     ほかの便を見る(残り {hidden} 便)
                   </Button>
                 )}

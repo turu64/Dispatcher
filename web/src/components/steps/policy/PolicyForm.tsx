@@ -1,3 +1,4 @@
+import { ListChecks, Settings2, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -303,7 +304,7 @@ export function PolicyForm({
       {/* 入力の中心は1つの文。「[理由] のため、[開始日] から [終了日] までの間、[平日] を [土曜] ダイヤに変更する。」の穴を埋める */}
       <fieldset className="flex min-w-0 flex-col gap-2">
         <legend className="sr-only">減便の内容</legend>
-        <p className="text-xs text-muted-foreground">文の枠を押して選びます。減便の理由は任意です。</p>
+        <p className="text-xs text-muted-foreground">減便の理由は任意です。</p>
         <div data-testid="policy-sentence" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-2 text-sm">
           <ReasonHole
             choice={reasonChoice}
@@ -367,7 +368,7 @@ export function PolicyForm({
               (それまでは、下の詳しい設定で選んだ service だけを入れ替えます)。
             </p>
             {(jevState === 'checking' || jevState === 'sending') && (
-              <Button type="button" variant="outline" size="xs" onClick={stopJev}>
+              <Button type="button" variant="ghost" size="xs" onClick={stopJev}>
                 Jev を待たずに規則だけで進める
               </Button>
             )}
@@ -383,6 +384,7 @@ export function PolicyForm({
             ))}
             {!(detailsOpen && replaceMode === 'manual') && (
               <Button type="button" variant="outline" size="xs" onClick={openManual}>
+                <Wrench aria-hidden="true" />
                 手動で選ぶ
               </Button>
             )}
@@ -406,7 +408,7 @@ export function PolicyForm({
             {(!detailsOpen || (vanishingRoutes > 0 && !routesOpen)) && (
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="xs"
                 onClick={() => {
                   // 押すとこのボタンは消えるので、開いた詳しい設定の見出しへ焦点を移す(焦点を body に落とさない)
@@ -417,6 +419,7 @@ export function PolicyForm({
                   detailsSummaryRef.current?.focus()
                 }}
               >
+                <Settings2 aria-hidden="true" />
                 詳しい設定を開く
               </Button>
             )}
@@ -432,12 +435,15 @@ export function PolicyForm({
         data-testid="policy-details"
       >
         <summary ref={detailsSummaryRef} className="cursor-pointer">
-          詳しい設定(
-          {groupMode
-            ? `ダイヤ:${groupSummary(groupValue, dropped, skipped)}`
-            : `service:${serviceSummary(validity !== null, weekday, replacement, REPLACEMENT_LABELS[kind])}`}
-          、除外する系統:
-          {excluded.length > 0 ? `${excluded.length} 系統` : 'なし'})
+          <span className="font-medium">詳しい設定</span>
+          <span className="text-xs text-muted-foreground">
+            (
+            {groupMode
+              ? `ダイヤ:${groupSummary(groupValue, dropped, skipped)}`
+              : `service:${serviceSummary(validity !== null, weekday, replacement, REPLACEMENT_LABELS[kind])}`}
+            、除外する系統:
+            {excluded.length > 0 ? `${excluded.length} 系統` : 'なし'})
+          </span>
         </summary>
         {/* 開いた中身は、文や確認の結果と同じ高さに見えないよう、左の線で1つのまとまりにする */}
         <div className="mt-2 flex min-w-0 flex-col gap-3 border-l pl-3">
@@ -509,10 +515,11 @@ export function PolicyForm({
       ) : (
         <div className="flex flex-wrap gap-2">
           <Button type="submit" disabled={!settings || hasError}>
+            <ListChecks aria-hidden="true" />
             対象便を確かめる
           </Button>
           {onCancel && (
-            <Button type="button" variant="outline" onClick={onCancel}>
+            <Button type="button" variant="ghost" onClick={onCancel}>
               変えずに戻る
             </Button>
           )}

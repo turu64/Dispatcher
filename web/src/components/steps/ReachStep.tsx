@@ -1,3 +1,4 @@
+import { LoaderCircle, RefreshCw, RotateCcw, TriangleAlert } from 'lucide-react'
 import type { ReactNode } from 'react'
 import NumberField from '@/components/NumberField'
 import { SELECTED_TOGGLE_CLASS } from '@/components/selectedToggle'
@@ -47,7 +48,6 @@ export default function ReachStep() {
 
   return (
     <StepSection title="4. 影響(到達圏)">
-      <p className="text-xs text-muted-foreground">到達圏は、その時間帯に発車がある停留所・鉄道駅へ歩いて行ける範囲です。</p>
       {!feed ? (
         <p className="text-sm text-muted-foreground">GTFS を読み込むと、選んだ日付・時間帯の到達圏を計算します。</p>
       ) : (
@@ -60,7 +60,8 @@ export default function ReachStep() {
             onFallbackChange={(c) => store().setFallbackClass(c)}
           />
           {computing && (
-            <p className="text-sm" role="status">
+            <p className="flex items-center gap-1.5 text-sm text-muted-foreground" role="status">
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
               計算中…
             </p>
           )}
@@ -114,14 +115,14 @@ export function ReachSettingLine({
     )
   }
   return (
-    <p className="text-sm" data-testid="reach-setting">
-      比較する日付:
-      <span className="font-medium">
-        {formatDateJa(date)}・{stepHours}時間ごと
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm" data-testid="reach-setting">
+      <span>
+        比較する日付:
+        <span className="font-medium tabular-nums">
+          {formatDateJa(date)}・{stepHours}時間ごと
+        </span>
       </span>
-      <span className="block text-xs text-muted-foreground">
-        地図の下の操作盤で変えられます。比較する日付と時間帯の幅を変えると、到達圏の表・便を平日に戻す判断材料・AI による影響の要約も計算し直します。
-      </span>
+      <span className="text-xs text-muted-foreground">地図の下の操作盤で変えられます。</span>
     </p>
   )
 }
@@ -183,6 +184,7 @@ export function RefStatus({
         </ToggleGroup>
       </div>
       <Button type="button" variant="outline" size="sm" className="self-start" onClick={onRetry}>
+        <RefreshCw aria-hidden="true" />
         参照データを読み込み直す
       </Button>
     </div>
@@ -212,7 +214,7 @@ export function OriginSummary({ snapshot, invalidStops }: { snapshot: ReachSnaps
   if (origin.nonStop > 0) excluded.push(`駅舎・出入口など(location_type が 0・空以外)${formatCount(origin.nonStop)} 件`)
   if (invalidStops > 0) excluded.push(`stops.txt の緯度経度が読めない ${formatCount(invalidStops)} 件`)
   return (
-    <div className="flex flex-col gap-0.5 text-sm" aria-label="起点の停留所">
+    <div className="flex flex-col gap-0.5" aria-label="起点の停留所">
       <p>
         {formatDateJa(snapshot.date)}、{snapshot.stepHours}時間ごと。起点の停留所{' '}
         <span className="tabular-nums">{formatCount(origin.origins)}</span> 件
@@ -221,7 +223,7 @@ export function OriginSummary({ snapshot, invalidStops }: { snapshot: ReachSnaps
         )}
         。
       </p>
-      <p className="text-xs text-muted-foreground">
+      <p>
         {excluded.length > 0 ? <>起点にしなかった停留所:{excluded.join('、')}。</> : '起点にしなかった停留所はありません。'}
       </p>
     </div>
@@ -247,54 +249,51 @@ export function ReachSummaryTable({
   const { summary, result } = snapshot
   const hasPopulation = !result.usedFallback
   const { cellsByClass } = summary
-  const popText = (n: number) => (hasPopulation ? <>、推計人口 {formatCount(n)} 人</> : null)
+  const tiles = [
+    { key: 'total', label: '調べた区画', cells: summary.totalCells, population: summary.totalPopulation },
+    { key: 'coverable', label: '徒歩圏に停留所・駅がある区画', cells: summary.coverableCells, population: summary.coverablePopulation },
+    ...(hasPopulation
+      ? [{ key: 'nonCoverable', label: '徒歩圏に停留所・駅がない区画', cells: summary.nonCoverableCells, population: summary.nonCoverablePopulation }]
+      : []),
+  ]
 
   return (
     <div className="flex flex-col gap-2">
-      <OriginSummary snapshot={snapshot} invalidStops={invalidStops} />
-      <dl className="flex flex-col gap-0.5 text-sm" aria-label="調べた区画の内訳">
-        <div>
-          <dt className="inline">調べた区画(125m 四方のセル):</dt>
-          <dd className="inline tabular-nums">
-            {formatCount(summary.totalCells)}(都市部 {formatCount(cellsByClass.urban)}・郊外 {formatCount(cellsByClass.suburban)}
-            ・中山間・地方 {formatCount(cellsByClass.rural)}){popText(summary.totalPopulation)}
-          </dd>
-        </div>
-        <div className="pl-3">
-          <dt className="inline">徒歩圏に停留所・駅がある区画(セル):</dt>
-          <dd className="inline tabular-nums">
-            {formatCount(summary.coverableCells)}
-            {popText(summary.coverablePopulation)}(表の割合の分母)
-          </dd>
-        </div>
-        {hasPopulation && (
-          <div className="pl-3">
-            <dt className="inline">徒歩圏に停留所・駅がない区画(セル):</dt>
-            <dd className="inline tabular-nums">
-              {formatCount(summary.nonCoverableCells)}
-              {popText(summary.nonCoverablePopulation)}
-            </dd>
+      <dl className={`grid gap-2 ${hasPopulation ? 'grid-cols-3' : 'grid-cols-2'}`} aria-label="調べた区画の内訳">
+        {tiles.map((t) => (
+          <div key={t.key} className="flex flex-col rounded-md bg-muted/50 px-2 py-1.5">
+            <dt className="text-xs text-muted-foreground">{t.label}</dt>
+            <dd className="text-base font-semibold tabular-nums">{formatCount(t.cells)}</dd>
+            {hasPopulation && <dd className="text-xs text-muted-foreground tabular-nums">推計人口 {formatCount(t.population)} 人</dd>}
           </div>
-        )}
+        ))}
       </dl>
+      <p className="text-xs text-muted-foreground">
+        125m 四方の区画(都市部 {formatCount(cellsByClass.urban)}・郊外 {formatCount(cellsByClass.suburban)}・中山間・地方{' '}
+        {formatCount(cellsByClass.rural)})。表の割合の分母は、徒歩圏に停留所・駅がある区画です。
+      </p>
       {snapshot.baseline && snapshot.comparison ? (
         <CompareTable snapshot={snapshot} selectedHour={selectedHour} />
       ) : (
         <SingleTable snapshot={snapshot} selectedHour={selectedHour} />
       )}
-      <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-        <p>
-          到達圏から外れる区画:徒歩圏に停留所・駅がある区画のうち、その時間帯に発車がある停留所と鉄道駅のどれも、区分ごとの徒歩圏にない区画です。
-          割合の分母は、徒歩圏に停留所・駅がある区画(区分ごとの徒歩圏に、発車の有無を問わず停留所または鉄道駅がある区画)です。
-        </p>
-        {hasPopulation && (
+      <details className="border-t pt-2 text-xs">
+        <summary className="cursor-pointer text-muted-foreground">起点の停留所と区画の数え方</summary>
+        <div className="mt-1.5 flex flex-col gap-1 text-muted-foreground">
+          <OriginSummary snapshot={snapshot} invalidStops={invalidStops} />
           <p>
-            徒歩圏に停留所・駅がない区画:停留所の周辺として調べる範囲には入るものの、区分ごとの徒歩圏に停留所も鉄道駅もない区画です。
-            ダイヤにかかわらず到達できないため、時間帯ごとの数と割合には含めず、地図にも塗りません。
+            到達圏から外れる区画:徒歩圏に停留所・駅がある区画のうち、その時間帯に発車がある停留所と鉄道駅のどれも、区分ごとの徒歩圏にない区画です。
+            割合の分母は、徒歩圏に停留所・駅がある区画(区分ごとの徒歩圏に、発車の有無を問わず停留所または鉄道駅がある区画)です。
           </p>
-        )}
-        {hasPopulation && <p>推計人口は 250m メッシュの人口を 4 等分した値です。</p>}
-      </div>
+          {hasPopulation && (
+            <p>
+              徒歩圏に停留所・駅がない区画:停留所の周辺として調べる範囲には入るものの、区分ごとの徒歩圏に停留所も鉄道駅もない区画です。
+              ダイヤにかかわらず到達できないため、時間帯ごとの数と割合には含めず、地図にも塗りません。
+            </p>
+          )}
+          {hasPopulation && <p>推計人口は 250m メッシュの人口を 4 等分した値です。</p>}
+        </div>
+      </details>
     </div>
   )
 }
@@ -407,8 +406,7 @@ function CompareTable({ snapshot, selectedHour }: { snapshot: ReachSnapshot; sel
         </TableBody>
       </Table>
       <p className="text-xs text-muted-foreground">
-        割合は区画の数で数えます。分母はどちらも、減便前の GTFS で徒歩圏に停留所・駅がある区画({formatCount(denominator)})です。同じ日付の、減便前(読み込んだ
-        GTFS)と減便後{snapshot.draft ? '(承認待ちの下書き)' : ''}を比べています。
+        割合は区画の数で数え、分母はどちらも減便前の GTFS で徒歩圏に停留所・駅がある区画({formatCount(denominator)})です。
       </p>
     </div>
   )
@@ -421,29 +419,56 @@ export function ZeroServiceSummary({ snapshot }: { snapshot: ReachSnapshot }) {
   const hasPopulation = !result.usedFallback
   const feedStops = zeroStops.filter((s) => s.scope === 'feed').length
   const feedRoutes = zeroRoutes.filter((r) => r.scope === 'feed').length
+  const tiles = [
+    {
+      key: 'cells',
+      label: '一日を通して到達できなくなる区画',
+      value: comparison.dayLostCells,
+      sub: hasPopulation ? `推計人口 ${formatCount(comparison.dayLostPopulation)} 人` : null,
+    },
+    { key: 'stops', label: '発車がなくなる停留所', value: zeroStops.length, sub: zeroStops.length > 0 ? `うち全日 ${formatCount(feedStops)}` : null },
+    { key: 'routes', label: '便がなくなる系統', value: zeroRoutes.length, sub: zeroRoutes.length > 0 ? `うち全日 ${formatCount(feedRoutes)}` : null },
+  ]
   return (
-    <section className="flex flex-col gap-2 text-sm" aria-label="到達できなくなる区画・発車がなくなる停留所・便がなくなる系統">
-      <p className={comparison.dayLostCells > 0 ? 'font-medium text-destructive' : undefined}>
-        {comparison.dayLostCells > 0 && <span aria-hidden="true">⚠ </span>}
-        一日を通して到達できなくなる区画:<span className="tabular-nums">{formatCount(comparison.dayLostCells)}</span> 区画
-        {hasPopulation && <>(推計人口 {formatCount(comparison.dayLostPopulation)} 人)</>}
-        <span className="block text-xs font-normal text-muted-foreground">
-          減便前はこの日のどれかの時間帯に到達でき、減便後はどの時間帯にも到達できない区画です。
-        </span>
-      </p>
-      <div>
-        <p className="font-medium">
-          発車がなくなる停留所:<span className="tabular-nums">{formatCount(zeroStops.length)}</span> 件
-          {zeroStops.length > 0 && <>(うち、出力のどの日にも便が来ない停留所 {formatCount(feedStops)} 件)</>}
-        </p>
-        {feedStops > 0 && (
-          <p className="text-xs text-destructive">
-            <span aria-hidden="true">⚠ </span>
-            「全日」の停留所は、出力のどの日にも便が来ません。掲示の撤去と、休止の届出に当たるかを確かめてください。
-          </p>
-        )}
-        {zeroStops.length > 0 && (
-          <ul className="mt-1 flex flex-col text-xs">
+    <section className="flex flex-col gap-2 border-t pt-3 text-sm" aria-label="到達できなくなる区画・発車がなくなる停留所・便がなくなる系統">
+      <dl className="grid grid-cols-3 gap-2">
+        {tiles.map((t) => (
+          <div
+            key={t.key}
+            className={`flex flex-col rounded-md px-2 py-1.5 ${t.value > 0 ? 'bg-destructive/10 text-destructive' : 'bg-muted/50'}`}
+          >
+            <dt className={`text-xs ${t.value > 0 ? '' : 'text-muted-foreground'}`}>{t.label}</dt>
+            <dd className="text-base font-semibold tabular-nums">{formatCount(t.value)}</dd>
+            {t.sub && <dd className={`text-xs tabular-nums ${t.value > 0 ? '' : 'text-muted-foreground'}`}>{t.sub}</dd>}
+          </div>
+        ))}
+      </dl>
+      {(feedStops > 0 || zeroRoutes.length > 0) && (
+        <Alert variant="destructive">
+          <TriangleAlert aria-hidden="true" />
+          <AlertDescription>
+            {feedStops > 0 && <p>「全日」の停留所は、出力のどの日にも便が来ません。掲示の撤去と、休止の届出に当たるかを確かめてください。</p>}
+            {zeroRoutes.length > 0 && <p>この系統は便がなくなります。路線の休止の届出に当たるかを運輸支局に確認してください。</p>}
+          </AlertDescription>
+        </Alert>
+      )}
+      {zeroRoutes.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <ul className="flex flex-col text-xs" aria-label="便がなくなる系統の一覧">
+            {zeroRoutes.map((r) => (
+              <li key={r.routeId} className="break-words">
+                <ScopeMark scope={r.scope} /> {r.name}
+                {r.name !== r.routeId && <span className="ml-1 font-mono text-muted-foreground">{r.routeId}</span>}(
+                {r.scope === 'feed' ? `減便前の全便 ${r.beforeTrips} 便` : `減便前のこの日の便 ${r.beforeTrips} 便`})
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {zeroStops.length > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer font-medium">発車がなくなる停留所の一覧({formatCount(zeroStops.length)} 件)</summary>
+          <ul className="mt-1 flex flex-col">
             {zeroStops.slice(0, MAX_ZERO_STOPS).map((s) => (
               <li key={s.stopId} className="break-words">
                 <ScopeMark scope={s.scope} /> {s.name}
@@ -452,33 +477,11 @@ export function ZeroServiceSummary({ snapshot }: { snapshot: ReachSnapshot }) {
             ))}
             {zeroStops.length > MAX_ZERO_STOPS && <li className="text-muted-foreground">ほか {zeroStops.length - MAX_ZERO_STOPS} 件</li>}
           </ul>
-        )}
-      </div>
-      <div>
-        <p className="font-medium">
-          便がなくなる系統:<span className="tabular-nums">{formatCount(zeroRoutes.length)}</span> 系統
-          {zeroRoutes.length > 0 && <>(うち、全曜日で便がなくなる系統 {formatCount(feedRoutes)})</>}
-        </p>
-        {zeroRoutes.length > 0 && (
-          <>
-            <p className="text-xs text-destructive">
-              <span aria-hidden="true">⚠ </span>
-              この系統は便がなくなります。路線の休止の届出に当たるかを運輸支局に確認してください。
-            </p>
-            <ul className="mt-1 flex flex-col text-xs">
-              {zeroRoutes.map((r) => (
-                <li key={r.routeId} className="break-words">
-                  <ScopeMark scope={r.scope} /> {r.name}
-                  {r.name !== r.routeId && <span className="ml-1 font-mono text-muted-foreground">{r.routeId}</span>}(
-                  {r.scope === 'feed' ? `減便前の全便 ${r.beforeTrips} 便` : `減便前のこの日の便 ${r.beforeTrips} 便`})
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </div>
+        </details>
+      )}
       <p className="text-xs text-muted-foreground">
-        記号:「全日」は出力のどの日にも便がなく、「この日」は選んだ日だけ便が 0 です。Dispatcher は届出の要否を判定しません。
+        「一日を通して」は、減便前はこの日のどれかの時間帯に到達でき、減便後はどの時間帯にも到達できないことです。「全日」は出力のどの日にも便がなく、「この日」は選んだ日だけ便が 0 です。Dispatcher
+        は届出の要否を判定しません。
       </p>
     </section>
   )
@@ -544,9 +547,9 @@ export function ReachConditions({
   onReset: () => void
 }) {
   return (
-    <details className="rounded-lg border px-3 py-2 text-sm">
+    <details className="border-t pt-3 text-sm">
       <summary className="cursor-pointer">
-        <span className="font-medium">徒歩圏の条件</span>
+        <h3 className="inline font-medium">徒歩圏の条件</h3>
         <span className="text-xs text-muted-foreground">
           (停留所/鉄道駅:
           {REGION_CLASSES.map((c) => `${REGION_LABELS[c]} ${params.walkMinutes[c].bus}/${params.walkMinutes[c].rail}分`).join('、')}
@@ -593,7 +596,8 @@ export function ReachConditions({
         <p className="text-xs text-muted-foreground">
           徒歩は分速 {params.speedMPerMin}m、距離は直線で測ります。分数は 0〜{MAX_WALK_MINUTES} 分の整数。
         </p>
-        <Button type="button" variant="outline" size="sm" className="self-start" onClick={onReset}>
+        <Button type="button" variant="ghost" size="sm" className="self-start" onClick={onReset}>
+          <RotateCcw aria-hidden="true" />
           既定値に戻す
         </Button>
       </div>

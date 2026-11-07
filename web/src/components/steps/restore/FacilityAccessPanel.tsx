@@ -6,6 +6,7 @@ import { facilityAccess, type FacilityAccessEntry, type FacilityAccessStopInput,
 import type { HintFacility } from '@/gtfs/edit/restore'
 import type { GtfsFeed } from '@/gtfs/load'
 import { formatDateJa } from '@/lib/dates'
+import { StatTiles } from './StatTiles'
 
 /** 往復と学校・病院の確認で判定しないことの断り書き(画面と README の「できないこと」で同じ趣旨) */
 export const CHECK_LIMITS_NOTE =
@@ -123,12 +124,24 @@ export function FacilityAccessPanel({
     const rest = lost.length - shown.length
     body = (
       <>
-        <p>
+        {/* 読み上げは1文のまま、画面には数を小さな枠で出す */}
+        <p className="sr-only">
           {formatDateJa(date)}の減便前と減便後{draftLabel ? `(${draftLabel})` : ''}で、徒歩圏に停留所がある学校・病院 {result.facilities.length}{' '}
           施設のうち、着く便がなくなる施設 {result.counts.arriveLost}・出る便がなくなる施設 {result.counts.departLost}。
         </p>
+        <p aria-hidden="true">
+          {formatDateJa(date)}の減便前と減便後{draftLabel ? `(${draftLabel})` : ''}を比べました。
+        </p>
+        <StatTiles
+          hidden
+          tiles={[
+            { label: '徒歩圏の学校・病院', value: result.facilities.length },
+            { label: '着く便がなくなる', value: result.counts.arriveLost, tone: result.counts.arriveLost > 0 ? 'warn' : undefined },
+            { label: '出る便がなくなる', value: result.counts.departLost, tone: result.counts.departLost > 0 ? 'warn' : undefined },
+          ]}
+        />
         {lost.length === 0 ? (
-          <p className="rounded-md border px-2 py-1.5 text-muted-foreground">着く便・出る便が 0 便になる学校・病院はありません。</p>
+          <p className="text-muted-foreground">着く便・出る便が 0 便になる学校・病院はありません。</p>
         ) : (
           <ul className="flex flex-col divide-y rounded-md border" aria-label="着く便・出る便がなくなる学校・病院">
             {shown.map((f) => (
@@ -137,7 +150,7 @@ export function FacilityAccessPanel({
           </ul>
         )}
         {rest > 0 && (
-          <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setShowAll(true)}>
+          <Button type="button" variant="ghost" size="sm" className="self-start" onClick={() => setShowAll(true)}>
             さらに表示(残り {rest} 件)
           </Button>
         )}

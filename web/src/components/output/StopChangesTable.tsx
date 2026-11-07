@@ -1,5 +1,8 @@
+import { TriangleAlertIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import StepSection from '@/components/StepSection'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -121,41 +124,47 @@ function StopChangesBody({ result, draft }: { result: StopDiffResult; draft: boo
 
   return (
     <>
-      <p className="text-sm">
-        比較する日付:<span className="font-medium">{formatDateJa(result.date)}</span>
-        <span className="text-xs text-muted-foreground">(手順「影響(到達圏)」で、地図の下の操作盤に選んでいる日付です。ダイヤの種類が同じ日は同じ結果になります)</span>
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        <span className="text-xs text-muted-foreground">比較する日付</span>
+        <Badge variant="outline" className="tabular-nums">
+          {formatDateJa(result.date)}
+        </Badge>
+        <span className="text-xs text-muted-foreground">手順「影響(到達圏)」の地図で選んでいる日付</span>
       </p>
       {draft && (
-        <p className="rounded-md border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
-          承認待ちの下書きで比べています。承認すると確定します。
-        </p>
+        <Alert role="status" className="border-amber-400 bg-amber-50 text-amber-950">
+          <AlertDescription className="text-xs text-amber-950">承認待ちの下書きで比べています。承認すると確定します。</AlertDescription>
+        </Alert>
       )}
 
       <dl className="grid grid-cols-2 gap-2 text-sm" aria-label="停留所の変化の件数">
-        <div className="rounded-lg bg-muted/50 px-3 py-2">
+        <div className="flex flex-col rounded-md bg-muted/50 px-2 py-1.5">
           <dt className="text-xs text-muted-foreground">掲示を差し替える停留所</dt>
-          <dd className="text-lg font-semibold tabular-nums">
+          <dd className="text-base font-semibold tabular-nums">
             {result.repostCount}件<span className="text-xs font-normal text-muted-foreground">(全{total}件中)</span>
           </dd>
         </div>
-        <div className="rounded-lg bg-muted/50 px-3 py-2">
+        <div className="flex flex-col rounded-md bg-muted/50 px-2 py-1.5">
           <dt className="text-xs text-muted-foreground">発車がすべてなくなる停留所</dt>
-          <dd className="text-lg font-semibold tabular-nums">{result.stopsLosingAll}件</dd>
+          <dd className="text-base font-semibold tabular-nums">{result.stopsLosingAll}件</dd>
         </div>
-        <div className="rounded-lg bg-muted/50 px-3 py-2">
+        <div className="flex flex-col rounded-md bg-muted/50 px-2 py-1.5">
           <dt className="text-xs text-muted-foreground">新しく加わる発車時刻がある停留所</dt>
-          <dd className="text-lg font-semibold tabular-nums">{result.stopsWithAdded}件</dd>
+          <dd className="text-base font-semibold tabular-nums">{result.stopsWithAdded}件</dd>
         </div>
-        <div className="rounded-lg bg-muted/50 px-3 py-2">
+        <div className="flex flex-col rounded-md bg-muted/50 px-2 py-1.5">
           <dt className="text-xs text-muted-foreground">なくなる発車時刻がある停留所</dt>
-          <dd className="text-lg font-semibold tabular-nums">{result.stopsWithRemoved}件</dd>
+          <dd className="text-base font-semibold tabular-nums">{result.stopsWithRemoved}件</dd>
         </div>
       </dl>
 
       {result.stopsWithAdded > 0 && (
-        <p className="rounded-md border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
-          新しく加わる発車時刻がある停留所では、減便前の掲示にない時刻に便が発車します。掲示より早い発車は早発になりえます。掲示を差し替えるまでは、利用者に古い時刻を案内しないでください。
-        </p>
+        <Alert className="border-amber-400 bg-amber-50 text-amber-950">
+          <TriangleAlertIcon aria-hidden="true" />
+          <AlertDescription className="text-xs text-amber-950">
+            新しく加わる発車時刻がある停留所では、減便前の掲示にない時刻に便が発車します。掲示より早い発車は早発になりえます。掲示を差し替えるまでは、利用者に古い時刻を案内しないでください。
+          </AlertDescription>
+        </Alert>
       )}
       {result.stopsLosingAll > 0 && (
         <p className="text-xs text-muted-foreground">
@@ -168,20 +177,20 @@ function StopChangesBody({ result, draft }: { result: StopDiffResult; draft: boo
         </p>
       )}
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="stop-changes-query">停留所名(一部)</Label>
-        <Input
-          id="stop-changes-query"
-          type="search"
-          value={query}
-          placeholder="例:駅前"
-          onChange={(e) => {
-            setQuery(e.target.value)
-            setLimit(PAGE_SIZE)
-          }}
-        />
-      </div>
-      <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+      <div className="flex flex-wrap items-end gap-x-4 gap-y-2 border-t pt-3">
+        <div className="flex min-w-40 flex-1 flex-col gap-1.5">
+          <Label htmlFor="stop-changes-query">停留所名(一部)</Label>
+          <Input
+            id="stop-changes-query"
+            type="search"
+            value={query}
+            placeholder="例:駅前"
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setLimit(PAGE_SIZE)
+            }}
+          />
+        </div>
         <div className="flex flex-col gap-1.5">
           <span className="text-sm font-medium" id="stop-changes-sort-label">
             並べ方
@@ -205,7 +214,7 @@ function StopChangesBody({ result, draft }: { result: StopDiffResult; draft: boo
             ))}
           </ToggleGroup>
         </div>
-        <label className="flex items-center gap-1.5 text-sm">
+        <label className="flex h-8 items-center gap-1.5 text-sm">
           <input
             type="checkbox"
             checked={changedOnly}
@@ -254,7 +263,7 @@ function StopChangesBody({ result, draft }: { result: StopDiffResult; draft: boo
         </Button>
       )}
       <p className="text-xs text-muted-foreground">
-        停留所名の下の小さな文字は stop_id です(同じ名前の停留所を見分けるため)。本数は、その日の停留所での発車の数です(各便の終点は数えません)。最大間隔は、始発から最終便までの隣り合う発車の間隔の最大で、系統をまとめて数えます。
+        本数はその日の停留所での発車の数(各便の終点は数えません)、最大間隔は始発から最終便までの隣り合う発車の間隔の最大(系統をまとめて数えます)です。
       </p>
     </>
   )

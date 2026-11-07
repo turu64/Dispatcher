@@ -70,7 +70,7 @@ describe('StopChangesTable', () => {
     render(<StopChangesTable />)
     expect(screen.getByText('2026年11月4日(水)')).toBeTruthy()
     // 比較する日付を選ぶ場所は、手順の名前で案内する(番号は書かない)
-    expect(screen.getByText(/手順「影響\(到達圏\)」で、地図の下の操作盤に選んでいる日付です/)).toBeTruthy()
+    expect(screen.getByText(/手順「影響\(到達圏\)」の地図で選んでいる日付/)).toBeTruthy()
     const a = within(rowOf('駅前'))
     expect(a.getByText('4 → 3')).toBeTruthy()
     expect(a.getByText('07:00 → 07:00')).toBeTruthy()

@@ -96,7 +96,7 @@ function WeekdayRow({ groups, kg, row, feature }: { groups: ServiceGroups; kg: K
     if (edits.length > 0) edit(edits)
   }
   return (
-    <li className="flex flex-col gap-1 rounded-md border px-2 py-1.5" data-service={row.serviceId}>
+    <li className="flex flex-col gap-1 border-t pt-1.5 first:border-t-0 first:pt-0" data-service={row.serviceId}>
       <div className="flex flex-wrap items-baseline gap-x-2">
         <span className="font-mono text-sm break-all" id={rowId(kind, row.serviceId, 'name')}>
           {row.serviceId}
@@ -224,7 +224,7 @@ function OrphanRow({ groups, kg, row, feature }: { groups: ServiceGroups; kg: Ki
   const selectId = rowId(kind, row.serviceId, 'into')
   const jev = row.intoMark === 'conflict' ? jevChoiceOf(groups, kind, row.serviceId).into : undefined
   return (
-    <li className="flex flex-col gap-1 rounded-md border px-2 py-1.5" data-service={row.serviceId}>
+    <li className="flex flex-col gap-1 border-t pt-1.5 first:border-t-0 first:pt-0" data-service={row.serviceId}>
       <div className="flex flex-wrap items-baseline gap-x-2">
         <span className="font-mono text-sm break-all">{row.serviceId}</span>
         <FeatureLine row={row} feature={feature} />
@@ -312,7 +312,7 @@ function ManualFields({ groups, kind }: { groups: ServiceGroups; kind: PolicyKin
         </>
       )}
       <p className="text-xs text-muted-foreground">
-        ここで選んだ値は、AI の相談にも使います。「自動」に戻すと、この種類で手動で選んだ値を捨てて、グループ分けのとおりに戻します。
+        選んだ値は AI の相談にも使います。「自動」に戻すと、手動で選んだ値は消えます。
       </p>
     </div>
   )

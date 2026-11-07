@@ -130,7 +130,7 @@ export function DiffCounts({ diff, result }: { diff: WeekdayDiff; result: Form2R
   const same = diff.same.length
   return (
     <div role="group" aria-label="平日便の件数" className="flex flex-col gap-2 text-sm">
-      <div className="rounded-md border bg-card px-3 py-2">
+      <div className="rounded-md bg-muted/50 px-3 py-2">
         <p className="text-xs text-muted-foreground">平日の便数(減便前 → 減便後)</p>
         <p className="flex flex-wrap items-baseline gap-x-1 tabular-nums">
           <span className="text-2xl font-semibold">{num(before)}</span>

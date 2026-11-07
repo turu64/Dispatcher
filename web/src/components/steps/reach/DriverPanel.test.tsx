@@ -241,7 +241,6 @@ describe('DriverPanel(store とつないだ欄)', () => {
     expect(screen.queryByTestId('places-editor')).toBeNull()
     expect(screen.queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
     expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['運行の前提で設定する', '欠員を入れる(減便の方針)'])
-    expect(screen.getByText(/在籍の運転士の数・週の出勤日数・営業所の位置・推定の仮定は手順「運行の前提」で、欠員は手順「減便の方針」で変えられます/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('前提情報')
     expect(screen.getByTestId('driver-verdict').textContent).toBe('在籍の運転士の数を入れると、足りるかの目安を出します。')
   })

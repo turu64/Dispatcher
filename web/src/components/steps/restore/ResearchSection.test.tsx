@@ -321,7 +321,8 @@ describe('ResearchSection', () => {
     setup()
     fireEvent.click(screen.getByRole('checkbox', { name: 'テスト学校', hidden: true }))
     expect(screen.getByRole('alert').textContent).toContain('3 件まで')
-    expect(screen.getByText(/学校・病院など 3 \/ 3 件・周辺のバス事業者 1 件/)).toBeTruthy()
+    expect(screen.getByText('学校・病院など 3 / 3 件')).toBeTruthy()
+    expect(screen.getByText('周辺のバス事業者 1 件')).toBeTruthy()
     expect(checkedNames()).not.toContain('テスト学校')
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'テスト大学', hidden: true }))

@@ -25,6 +25,16 @@ function openSettings() {
 }
 
 describe('OperationPremise(運行の前提の手順の運行の前提の欄)', () => {
+  it('枠を重ねず、「運転士の情報」と「営業所の情報」の見出しで分ける(在籍・週の出勤日数・仮定は運転士、営業所を置く欄は営業所)', () => {
+    render(<OperationPremise />)
+    const drivers = within(section()).getByRole('group', { name: '運転士の情報' })
+    const places = within(section()).getByRole('group', { name: '営業所の情報' })
+    expect(within(drivers).getByLabelText(/在籍の運転士の数/)).toBeTruthy()
+    expect(within(drivers).getByRole('button', { name: '勤務時間の設定' })).toBeTruthy()
+    expect(within(places).getByTestId('places-editor')).toBeTruthy()
+    expect(section().className).not.toContain('border ')
+  })
+
   it('見出しと、在籍の運転士の数・週の出勤日数の欄、営業所を置く欄、推定の仮定の要約と「勤務時間の設定」のボタンを出す。欠員の欄は無い。焦点を置ける', () => {
     render(<OperationPremise />)
     const s = section()

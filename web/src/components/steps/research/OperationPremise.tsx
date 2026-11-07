@@ -91,18 +91,19 @@ export function OperationPremiseView({
     <section
       id={PREMISE_SECTION_ID}
       tabIndex={-1}
-      className="flex flex-col gap-2 rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-      aria-labelledby="operation-premise-title"
+      className="flex flex-col gap-3 rounded-sm text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      aria-label={PREMISE_TITLE}
     >
-      <h3 id="operation-premise-title" className="font-medium">
-        {PREMISE_TITLE}
-      </h3>
       <p className="text-xs text-muted-foreground">
         手順「影響(到達圏)」の「要る運転士の数(目安)」の推定と判定に使います。値はこの画面の中だけに持ち、サーバーには送りません。GTFS
         を読み込み直すと、運転士の数と置いた場所は消えます(週の出勤日数と仮定は残ります)。
       </p>
       {onApplySample && <SampleButton onApply={onApplySample} />}
-      <div className="flex flex-col gap-2">
+      {/* 手順の欄の中で枠を重ねず、見出しと区切り線で分ける(2026-11-07 に利用者の指示) */}
+      <div className="flex flex-col gap-2 border-t pt-3" role="group" aria-labelledby="premise-drivers-title">
+        <h3 id="premise-drivers-title" className="font-medium">
+          {PREMISE_DRIVERS_TITLE}
+        </h3>
         <CountField
           id="driver-roster"
           label={ROSTER_LABEL}
@@ -113,15 +114,24 @@ export function OperationPremiseView({
           onCommit={onRoster}
         />
         <WorkDaysField value={workDays} onCommit={onWorkDays} />
+        <p className="text-xs text-muted-foreground">
+          乗務できる運転士の数(目安)を、在籍 × 週の出勤日数 ÷ 7 − 欠員(小数は切り捨て)で数え、減便後に要る勤務の数と比べます。在籍の運転士の数を入れないと、足りるかの目安は出しません。欠員(その日に乗務できない運転士の数)は、手順「減便の方針」で入れます。
+        </p>
+        <AssumptionFields params={params} places={places} onParams={onParams} onReset={onResetParams} />
       </div>
-      <p className="text-xs text-muted-foreground">
-        乗務できる運転士の数(目安)を、在籍 × 週の出勤日数 ÷ 7 − 欠員(小数は切り捨て)で数え、減便後に要る勤務の数と比べます。在籍の運転士の数を入れないと、足りるかの目安は出しません。欠員(その日に乗務できない運転士の数)は、手順「減便の方針」で入れます。
-      </p>
-      {placesEditor}
-      <AssumptionFields params={params} places={places} onParams={onParams} onReset={onResetParams} />
+      <div className="flex flex-col gap-2 border-t pt-3" role="group" aria-labelledby="premise-places-title">
+        <h3 id="premise-places-title" className="font-medium">
+          {PREMISE_PLACES_TITLE}
+        </h3>
+        {placesEditor}
+      </div>
     </section>
   )
 }
+
+/** 運行の前提の欄の見出し(2026-11-07 に利用者の指示で、運転士と営業所に分けた) */
+export const PREMISE_DRIVERS_TITLE = '運転士の情報'
+export const PREMISE_PLACES_TITLE = '営業所の情報'
 
 /**
  * 道北バスのサンプルを入れるボタン。営業所の一覧を5か所に置き換え、在籍の運転士の数が空なら 150 を入れる

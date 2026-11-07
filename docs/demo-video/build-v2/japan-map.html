@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="maplibre-gl.css">
+<style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0b1a33}#m{width:3840px;height:2160px;transform:scale(.5);transform-origin:0 0}.maplibregl-ctrl-attrib{display:none}</style></head><body><div id="m"></div><script>addEventListener("error",e=>document.body.dataset.w=e.message+" "+(e.filename||""));addEventListener("unhandledrejection",e=>document.body.dataset.w="rej "+(e.reason&&e.reason.message))</script>
+<script type="module">
+import * as maplibregl from './maplibre-gl.mjs';
+const map = new maplibregl.Map({container:'m', interactive:false, attributionControl:false, preserveDrawingBuffer:true,
+  center:[136.2,36.6], zoom:6.1, bearing:0,
+  style:{version:8, sources:{omt:{type:'vector',url:'https://tile.openstreetmap.jp/data/planet.json'}},
+    layers:[{id:'bg',type:'background',paint:{'background-color':'#2b5283'}},
+            {id:'water',type:'fill',source:'omt','source-layer':'water',paint:{'fill-color':'#0b1a33'}},
+            {id:'bd',type:'line',source:'omt','source-layer':'boundary',filter:['==',['get','admin_level'],2],paint:{'line-color':'#0b1a33','line-width':0}}]}});
+map.on('idle',()=>{document.body.dataset.s='idle'});map.on('error',e=>{document.body.dataset.e=String(e.error&&e.error.message)});window.onerror=(m)=>{document.body.dataset.w=m};
+</script></body></html>

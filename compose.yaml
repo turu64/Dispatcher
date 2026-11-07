@@ -1,0 +1,79 @@
+# Dispatcher の本番の構成(VPS)。開発では使わない(pnpm と uv で動かす。CLAUDE.md)。
+#
+#   web    nginx:ビルドした画面を配り、/api を server に中継する。127.0.0.1 にだけ公開し、
+#          HTTPS は VPS の既存の nginx で終端してここに中継する
+#   server FastAPI(uvicorn。ワーカー1)。ポートは公開しない
+#
+# 秘密(ANTHROPIC_API_KEY・TYPESAFE_AI_VERCEL_KEY・DISPATCHER_SESSION_SECRET など)はイメージに入れない。リポジトリ直下の .env(コミットしない)か、
+# 環境変数で渡す。.env.example に項目と意味がある。
+# 合言葉なしで公開するときは DISPATCHER_PUBLIC=1 を渡す(DISPATCHER_TOKEN も DISPATCHER_PUBLIC も無いと AI は使えない)。
+# 起動:docker compose up -d --build   (ローカルで確かめるときは DISPATCHER_PORT=8080 のように別のポートで)
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    environment:
+      # 外側の nginx(web)が付ける X-Real-IP を接続元として読む。DISPATCHER_DEV は付けない(合言葉なしは DISPATCHER_PUBLIC)
+      DISPATCHER_TRUST_PROXY: "1"
+      DISPATCHER_TOKEN: ${DISPATCHER_TOKEN:-}
+      DISPATCHER_PUBLIC: ${DISPATCHER_PUBLIC:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_WORKSPACE_ID: ${ANTHROPIC_WORKSPACE_ID:-}
+      DISPATCHER_AGENT_ID: ${DISPATCHER_AGENT_ID:-}
+      DISPATCHER_AGENT_VERSION: ${DISPATCHER_AGENT_VERSION:-}
+      DISPATCHER_ENVIRONMENT_ID: ${DISPATCHER_ENVIRONMENT_ID:-}
+      DISPATCHER_SESSION_SECRET: ${DISPATCHER_SESSION_SECRET:-}
+      # 利用制限・料金の上限(空なら既定。docs/interfaces-1105.md §4.11)
+      DISPATCHER_SESSION_BUDGET_CENTS: ${DISPATCHER_SESSION_BUDGET_CENTS:-}
+      DISPATCHER_SESSION_TTL_HOURS: ${DISPATCHER_SESSION_TTL_HOURS:-}
+      DISPATCHER_SESSIONS_PER_IP_HOUR: ${DISPATCHER_SESSIONS_PER_IP_HOUR:-}
+      DISPATCHER_SESSIONS_PER_IP_DAY: ${DISPATCHER_SESSIONS_PER_IP_DAY:-}
+      DISPATCHER_MESSAGES_PER_IP_HOUR: ${DISPATCHER_MESSAGES_PER_IP_HOUR:-}
+      DISPATCHER_SESSIONS_PER_DAY: ${DISPATCHER_SESSIONS_PER_DAY:-}
+      DISPATCHER_DAILY_COST_CENTS: ${DISPATCHER_DAILY_COST_CENTS:-}
+      DISPATCHER_RESEARCH_MAX_TARGETS: ${DISPATCHER_RESEARCH_MAX_TARGETS:-}
+      DISPATCHER_RESEARCH_CACHE_DAYS: ${DISPATCHER_RESEARCH_CACHE_DAYS:-}
+      # TypeSafe AI Jev(Vercel AI Gateway 経由。service のグループ分けの確かめ)。キーが空なら規則だけで分ける
+      TYPESAFE_AI_VERCEL_KEY: ${TYPESAFE_AI_VERCEL_KEY:-}
+      DISPATCHER_JEV_URL: ${DISPATCHER_JEV_URL:-}
+      DISPATCHER_JEV_MODEL: ${DISPATCHER_JEV_MODEL:-}
+      DISPATCHER_JEV_PER_IP_HOUR: ${DISPATCHER_JEV_PER_IP_HOUR:-}
+      DISPATCHER_JEV_PER_IP_DAY: ${DISPATCHER_JEV_PER_IP_DAY:-}
+      DISPATCHER_JEV_TARGETS_PER_DAY: ${DISPATCHER_JEV_TARGETS_PER_DAY:-}
+      DISPATCHER_JEV_COST_CENTS_PER_DAY: ${DISPATCHER_JEV_COST_CENTS_PER_DAY:-}
+      # ボリュームの中の場所(日本語のファイル名)
+      DISPATCHER_SAMPLE_GTFS: /data/sample/dohoku_bus_減便前.zip
+      DISPATCHER_REF_DIR: /data/ref
+      DISPATCHER_DB: /var/lib/dispatcher/dispatcher.sqlite3
+    volumes:
+      # サンプル GTFS(利用者が data/raw/gtfs/ に置いた ZIP。イメージには入れない)
+      - ${DISPATCHER_SAMPLE_DIR:-./data/raw/gtfs}:/data/sample:ro
+      # 参照データ(data/ が data/out/ref/ に書き出した 1次メッシュごとの JSON と祝日一覧)
+      - ${DISPATCHER_REF_HOST_DIR:-./data/out/ref}:/data/ref:ro
+      # SQLite(Web 調査結果のキャッシュ・セッション・利用額)。コンテナを作り直しても残す
+      - dispatcher-db:/var/lib/dispatcher
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      # 外から直接つながないよう 127.0.0.1 にだけ公開する。ローカルでは別のポート(例 8080)にする。
+      # この機械の 8000 番は別のアプリが使っている
+      - "127.0.0.1:${DISPATCHER_PORT:-8080}:80"
+
+volumes:
+  dispatcher-db:

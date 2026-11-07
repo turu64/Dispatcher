@@ -1,0 +1,89 @@
+{
+  "mesh1": "6542",
+  "facilities": [
+    {
+      "target_id": "P29:01234567890A",
+      "kind": "school",
+      "name": "テスト第一高等学校",
+      "municipality": "旭川市",
+      "lat": 43.77,
+      "lon": 142.36,
+      "detail": {
+        "school_type": "高等学校"
+      }
+    },
+    {
+      "target_id": "P04:0123456789ab",
+      "kind": "hospital",
+      "name": "テスト総合病院",
+      "municipality": "旭川市",
+      "lat": 43.76,
+      "lon": 142.37,
+      "detail": {
+        "beds": 120
+      }
+    },
+    {
+      "target_id": "P04:ba9876543210",
+      "kind": "clinic",
+      "name": "テスト内科クリニック",
+      "municipality": "旭川市",
+      "lat": 43.75,
+      "lon": 142.35,
+      "detail": {
+        "beds": 0
+      }
+    },
+    {
+      "target_id": "P11:テストバス",
+      "kind": "operator",
+      "name": "テストバス",
+      "municipality": "",
+      "lat": 43.7,
+      "lon": 142.3,
+      "detail": {
+        "stops": 10,
+        "stops_here": 5,
+        "bbox": [
+          43.6,
+          142.2,
+          43.8,
+          142.4
+        ]
+      }
+    },
+    {
+      "target_id": "P99:形の違う ID",
+      "kind": "school",
+      "name": "読み飛ばす",
+      "municipality": "旭川市",
+      "lat": 43.7,
+      "lon": 142.3,
+      "detail": {
+        "school_type": "高等学校"
+      }
+    },
+    {
+      "target_id": "P29:種類が違う",
+      "kind": "airport",
+      "name": "読み飛ばす",
+      "municipality": "旭川市",
+      "lat": 43.7,
+      "lon": 142.3
+    },
+    {
+      "target_id": "P29:位置が無い",
+      "kind": "school",
+      "name": "読み飛ばす",
+      "municipality": "旭川市",
+      "lat": null,
+      "lon": 142.3,
+      "detail": {
+        "school_type": "高等学校"
+      }
+    }
+  ],
+  "sources": [
+    "テスト用の参照データ(国土数値情報を加工した形)"
+  ]
+}

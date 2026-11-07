@@ -1,0 +1,28 @@
+# Docker のビルドの文脈(リポジトリの最上位)から外すもの。
+# 秘密(.env)と、利用者が置く GTFS・参照データ、手元のビルド結果をイメージに入れない。
+.git
+.github
+.claude
+.vscode
+.mcp.json
+.env
+.env.*
+!.env.example
+**/.DS_Store
+
+# GTFS(ZIP)と参照データはイメージに入れず、compose のボリュームで渡す
+**/*.zip
+data
+docs
+agents
+environments
+
+# 手元のビルド結果・依存(イメージの中で作り直す)
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.venv
+**/__pycache__
+**/.pytest_cache
+server/*.sqlite3
+server/*.db

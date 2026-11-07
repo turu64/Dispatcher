@@ -1,0 +1,24 @@
+[project]
+name = "dispatcher-data"
+version = "0.1.0"
+description = "Dispatcher の参照データ(北海道)の加工"
+authors = [
+    { name = "turu64", email = "contact_dispatcher@turutaru.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "shapely>=2.2.0",
+]
+
+[project.scripts]
+dispatcher-data = "dispatcher_data:main"
+dispatcher-holidays = "dispatcher_data.holidays:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

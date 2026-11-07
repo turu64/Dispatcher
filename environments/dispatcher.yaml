@@ -1,0 +1,11 @@
+# Dispatcher のセッションの実行環境。docs/interfaces-1105.md §2.5
+# - networking は unrestricted(利用者の確認待ち。docs/interfaces-1105.md §11)。
+#   limited で allowed_hosts が空だと、調査役の web_search・web_fetch が何も返さない。調べる施設・事業者のサイトは前もって並べられない
+# - どのエージェントにも bash・ファイル操作を持たせないので、コンテナから外へ出る手段は無い
+# - 適用は ant apply(利用者の承認のうえで)
+name: dispatcher
+description: Dispatcher のアプリ内の Claude(調整役と調査役)のセッション用。組み込みのツールは調査役の Web 検索・Web の読み込みだけ。
+config:
+  type: cloud
+  networking:
+    type: unrestricted

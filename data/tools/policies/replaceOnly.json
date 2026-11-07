@@ -1,0 +1,10 @@
+{
+  "weekdayService": "01",
+  "replacementService": "03",
+  "period": {
+    "start": "20261101",
+    "end": null
+  },
+  "excludedRoutes": [],
+  "addBackTripIds": []
+}

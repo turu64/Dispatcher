@@ -1,0 +1,77 @@
+{
+  // コマンドパレットの「タスク: タスクの実行」から選ぶ。
+  // 「開発サーバーを起動」は既定のビルドタスクなので ⇧⌘B(Ctrl+Shift+B)でも起動できる。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "開発サーバーを起動",
+      "detail": "画面(http://localhost:5173)とサーバー(http://127.0.0.1:8000)を同時に起動する",
+      "dependsOn": ["画面の開発サーバー", "サーバー"],
+      "dependsOrder": "parallel",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "画面の開発サーバー",
+      "detail": "Vite(web/)。/api はサーバーに中継する",
+      "type": "shell",
+      "command": "pnpm dev",
+      "options": { "cwd": "${workspaceFolder}/web" },
+      "isBackground": true,
+      "presentation": { "group": "dev", "panel": "dedicated", "reveal": "always" },
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": { "regexp": "^__never_matches__$" },
+        "background": {
+          "activeBegins": true,
+          "beginsPattern": "vite",
+          "endsPattern": "ready in"
+        }
+      }
+    },
+    {
+      "label": "サーバー",
+      "detail": "FastAPI(server/)。ファイルを変えると再起動する",
+      "type": "shell",
+      "command": "uv run dispatcher-server",
+      "options": { "cwd": "${workspaceFolder}/server" },
+      "isBackground": true,
+      "presentation": { "group": "dev", "panel": "dedicated", "reveal": "always" },
+      "problemMatcher": {
+        "owner": "uvicorn",
+        "pattern": { "regexp": "^__never_matches__$" },
+        "background": {
+          "activeBegins": true,
+          "beginsPattern": "Will watch for changes|Started reloader process",
+          "endsPattern": "Application startup complete"
+        }
+      }
+    },
+    {
+      "label": "依存パッケージを入れる",
+      "detail": "pnpm install(web/)と uv sync(server/、data/)",
+      "type": "shell",
+      "command": "(cd web && pnpm install) && (cd server && uv sync) && (cd data && uv sync)",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "テスト",
+      "detail": "Vitest(web/)と pytest(server/、data/)",
+      "type": "shell",
+      "command": "(cd web && pnpm test) && (cd server && uv run pytest -q) && (cd data && uv run pytest -q)",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "型チェック・lint・テスト",
+      "detail": "CI と同じ内容をまとめて実行する",
+      "type": "shell",
+      "command": "(cd web && pnpm typecheck && pnpm lint && pnpm test) && (cd server && uv run pytest -q) && (cd data && uv run pytest -q)",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

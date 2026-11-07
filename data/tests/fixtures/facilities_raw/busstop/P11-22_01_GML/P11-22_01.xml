@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ksj:Dataset gml:id="P11Dataset"
+ xmlns:ksj="http://nlftp.mlit.go.jp/ksj/schemas/ksj-app"
+ xmlns:gml="http://schemas.opengis.net/gml/3.2.1"
+ xmlns:xlink="http://www.w3.org/1999/xlink"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="https://nlftp.mlit.go.jp/ksj/jpgis/xsd/KsjAppSchema.xsd">
+<gml:description>国土数値情報（バス停留所） データ</gml:description>
+<gml:Point gml:id="n1"><gml:pos>43.76000000 142.36000000</gml:pos></gml:Point>
+<gml:Point gml:id="n2"><gml:pos>43.78000000 142.38000000</gml:pos></gml:Point>
+<gml:Point gml:id="n3"><gml:pos>44.36000000 142.46000000</gml:pos></gml:Point>
+<gml:Point gml:id="n4"><gml:pos>44.38000000 142.48000000</gml:pos></gml:Point>
+<gml:Point gml:id="n5"><gml:pos>43.70000000 142.50000000</gml:pos></gml:Point>
+<gml:Point gml:id="n6"><gml:pos>0.0 0.0</gml:pos></gml:Point>
+<ksj:BusStop gml:id="bs1"><ksj:loc xlink:href="#n1"/><ksj:bsn>旭川駅前</ksj:bsn><ksj:boc>テスト電気軌道（株）</ksj:boc><ksj:bri><ksj:brn>1</ksj:brn><ksj:brt>1</ksj:brt></ksj:bri></ksj:BusStop>
+<ksj:BusStop gml:id="bs2"><ksj:loc xlink:href="#n2"/><ksj:bsn>大学前</ksj:bsn><ksj:boc>テスト電気軌道（株）</ksj:boc><ksj:bri><ksj:brn>1</ksj:brn><ksj:brt>1</ksj:brt></ksj:bri></ksj:BusStop>
+<ksj:BusStop gml:id="bs3"><ksj:loc xlink:href="#n3"/><ksj:bsn>名寄駅前</ksj:bsn><ksj:boc>テスト電気軌道（株）</ksj:boc><ksj:bri><ksj:brn>2</ksj:brn><ksj:brt>1</ksj:brt></ksj:bri></ksj:BusStop>
+<ksj:BusStop gml:id="bs4"><ksj:loc xlink:href="#n4"/><ksj:bsn>公園前</ksj:bsn><ksj:boc>テスト電気軌道（株）</ksj:boc><ksj:bri><ksj:brn>2</ksj:brn><ksj:brt>1</ksj:brt></ksj:bri></ksj:BusStop>
+<ksj:BusStop gml:id="bs5"><ksj:loc xlink:href="#n5"/><ksj:bsn>東川役場</ksj:bsn><ksj:boc>東川町</ksj:boc><ksj:bri><ksj:brn>東川線</ksj:brn><ksj:brt>3</ksj:brt></ksj:bri></ksj:BusStop>
+<ksj:BusStop gml:id="bs6"><ksj:loc xlink:href="#n6"/><ksj:bsn>範囲外</ksj:bsn><ksj:boc>東川町</ksj:boc><ksj:bri><ksj:brn>東川線</ksj:brn><ksj:brt>3</ksj:brt></ksj:bri></ksj:BusStop>
+<ksj:BusStop gml:id="bs7"><ksj:loc xlink:href="#n99"/><ksj:bsn>位置の無い停留所</ksj:bsn><ksj:boc>東川町</ksj:boc><ksj:bri><ksj:brn>東川線</ksj:brn><ksj:brt>3</ksj:brt></ksj:bri></ksj:BusStop>
+</ksj:Dataset>

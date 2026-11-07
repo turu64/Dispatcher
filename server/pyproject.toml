@@ -1,0 +1,31 @@
+[project]
+name = "dispatcher-server"
+version = "0.1.0"
+description = "Dispatcher のサーバー(Claude の中継、利用制限、参照データの配信)"
+authors = [
+    { name = "turu64", email = "contact_dispatcher@turutaru.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=2.4.0",
+    "fastapi>=0.162.0",
+    "httpx2>=2.16.0",
+    "python-dotenv>=1.2.4",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+dispatcher-server = "dispatcher_server:main"
+# デモ用の周辺の施設の調査の結果を取り込む(uv run dispatcher-research-seed <file>)。形は research.py の説明
+dispatcher-research-seed = "dispatcher_server.research:seed_main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+    "pyyaml>=6.0.3",
+]

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "origin": {
+    "base_url": "https://api.anthropic.com",
+    "organization_id": "a2d9b7b8-d0c9-4de3-af11-1417a25b28be",
+    "workspace_id": "wrkspc_01MWdvwHnd1amPdRWELg7wnr"
+  },
+  "resources": {
+    "./agents/coordinator.md": {
+      "kind": "agent",
+      "id": "agent_013ycyoYo5CcDwC7cyWaZGDP",
+      "version": "8",
+      "hash": "f749b2f62845e28e57ef0b43094ba8da",
+      "remote_hash": "2503eb22ac8ed2ea870cdaf67550b9ec"
+    },
+    "./agents/researcher.md": {
+      "kind": "agent",
+      "id": "agent_01CsHrdrSR9itoevdrSpjGUM",
+      "version": "2",
+      "hash": "66193cf3a5e168b31cb67d5987e6b700",
+      "remote_hash": "b14ba6f52c86005a40a49b012c10cbfc"
+    },
+    "./environments/dispatcher.yaml": {
+      "kind": "environment",
+      "id": "env_0175xMSmP4LM1xvScHdx6ixj",
+      "hash": "180841c17bd466c7e3c6dcc15135a99d",
+      "remote_hash": "45727123a0710cc5a3645465dc8b72d8"
+    }
+  }
+}

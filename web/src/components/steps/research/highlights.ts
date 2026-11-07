@@ -78,7 +78,7 @@ export interface SummaryRow {
 /** 調べた結果のまとめ。結果の無い種類の行は出さない */
 export function researchSummary(results: readonly ResearchResult[]): SummaryRow[] {
   const rows: SummaryRow[] = [
-    { key: 'medical', label: '病院・診療所', total: 0, hit: 0, hitLabel: '外来の受付の時刻を読めた' },
+    { key: 'medical', label: '病院', total: 0, hit: 0, hitLabel: '外来の受付の時刻を読めた' },
     { key: 'school', label: '学校', total: 0, hit: 0, hitLabel: '始業・終業の時刻を読めた' },
     { key: 'operator', label: '周辺の事業者', total: 0, hit: 0, hitLabel: '減便・ダイヤ改正などの動きがある' },
   ]

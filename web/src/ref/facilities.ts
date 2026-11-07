@@ -79,14 +79,20 @@ function bboxOf(v: unknown): Bounds | undefined {
  */
 export const EXCLUDED_SCHOOL_TYPES: ReadonlySet<string> = new Set(['幼稚園', '幼保連携型認定こども園', '小学校', '中学校', '義務教育学校'])
 
-/** 施設の1件。形が合わなければ null(読み飛ばす)。調査の対象外の学校(EXCLUDED_SCHOOL_TYPES)も null */
+/**
+ * 前提情報の調査の対象から一旦外す施設の種類。読み込みで外す(2026-11-07 に利用者の指示で診療所を外した。
+ * 参照データには残っているので、戻すときはここから消し、重要拠点の優先順位(store/priority.ts)に戻す)
+ */
+export const EXCLUDED_KINDS: ReadonlySet<string> = new Set(['clinic'])
+
+/** 施設の1件。形が合わなければ null(読み飛ばす)。調査の対象外の学校(EXCLUDED_SCHOOL_TYPES)と種類(EXCLUDED_KINDS)も null */
 export function parseFacility(v: unknown): Facility | null {
   if (!isObj(v)) return null
   const { target_id: targetId, kind, name, municipality } = v
   const lat = finite(v.lat)
   const lon = finite(v.lon)
   if (typeof targetId !== 'string' || !TARGET_ID.test(targetId)) return null
-  if (typeof kind !== 'string' || !KINDS.includes(kind)) return null
+  if (typeof kind !== 'string' || !KINDS.includes(kind) || EXCLUDED_KINDS.has(kind)) return null
   if (typeof name !== 'string' || name.trim() === '') return null
   if (lat === null || lon === null || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null
   const f: Facility = {
@@ -268,7 +274,6 @@ const HIGHER_EDUCATION_TYPES = new Set(['大学', '短期大学', '高等専門�
  */
 export function facilityCategory(f: Facility): PriorityKey | null {
   if (f.kind === 'hospital') return 'inpatient_hospital'
-  if (f.kind === 'clinic') return 'clinic'
   if (f.kind === 'school' && f.schoolType) {
     if (HIGH_SCHOOL_TYPES.has(f.schoolType)) return 'high_school'
     if (HIGHER_EDUCATION_TYPES.has(f.schoolType)) return 'higher_education'

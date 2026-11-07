@@ -52,7 +52,7 @@ const FILE = {
   mesh1: '6442',
   facilities: [
     item('P04:hosp', 'hospital', 'テスト総合病院', 43.771, 142.361, { beds: 300 }),
-    item('P04:clinic', 'clinic', 'テスト内科', 43.765, 142.355, { beds: 0 }),
+    item('P29:col', 'school', 'テスト大学', 43.765, 142.355, { school_type: '大学' }),
     item('P29:high', 'school', 'テスト高等学校', 43.775, 142.36, { school_type: '高等学校', open_status: '開校中' }),
     // 種別が分からない学校(優先順位の外)
     item('P29:elem', 'school', 'テスト学校', 43.77, 142.355),
@@ -63,8 +63,8 @@ const FILE = {
   sources: ['国土数値情報を加工して作成'],
 }
 
-/** 既定で選ばれる対象(優先順位の種類から1件ずつ:病院、高校、診療所、最後に周辺の事業者) */
-const DEFAULT_IDS = ['P04:hosp', 'P29:high', 'P04:clinic', 'P11:となりバス']
+/** 既定で選ばれる対象(優先順位の種類から1件ずつ:病院、高校、大学、最後に周辺の事業者) */
+const DEFAULT_IDS = ['P04:hosp', 'P29:high', 'P29:col', 'P11:となりバス']
 
 const HIGH_RESULT: ResearchResult = {
   targetId: 'P29:high',
@@ -203,10 +203,10 @@ describe('ResearchStep', () => {
     setup()
     const list = screen.getByRole('group', { name: '調べる対象の候補' })
     const groups = within(list).getAllByRole('group', { hidden: true }).map((g) => g.getAttribute('aria-label'))
-    expect(groups).toEqual(['周辺のバス事業者', '入院設備のある病院', '高校・特別支援学校', '診療所', 'そのほかの学校(優先順位の外。種別が分からないもの)'])
+    expect(groups).toEqual(['周辺のバス事業者', '入院設備のある病院', '高校・特別支援学校', '大学・高専・専修学校', 'そのほかの学校(優先順位の外。種別が分からないもの)'])
     // 範囲の外の施設は出ない
     expect(screen.queryByText('遠くの高校')).toBeNull()
-    expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト内科'])
+    expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト大学'])
     expect(screen.getByText(OWN_OPERATOR)).toBeTruthy()
     expect(screen.getByText(/選んだ対象/).textContent).toContain('4')
     // 読み込んだ GTFS の事業者のチェックボックスは、変更できない「-」(indeterminate)で、選んだ数に入れない
@@ -224,7 +224,7 @@ describe('ResearchStep', () => {
   it('重要拠点の優先順位は、欄に今の順の要約とボタンを出し、Dialog の中で並べ替えられる。データの無い種類は「データ未対応」と出す。並べ替えると既定の選び方が変わる', async () => {
     act(() => useResearchStore.setState({ maxTargets: 1 }))
     setup()
-    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 入院設備のある病院、2 鉄道駅・空港、3 高校・特別支援学校 ほか 6 種類')
+    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 入院設備のある病院、2 鉄道駅・空港、3 高校・特別支援学校 ほか 5 種類')
     // 並べ替えの一覧は Dialog の中だけ(閉じている間は出さない)
     expect(screen.queryByRole('list', { name: PRIORITY_TITLE, hidden: true })).toBeNull()
     const trigger = screen.getByRole('button', { name: PRIORITY_TITLE })
@@ -233,7 +233,7 @@ describe('ResearchStep', () => {
     const dialog = screen.getByRole('dialog', { name: PRIORITY_TITLE })
     const priority = within(dialog).getByRole('list', { name: PRIORITY_TITLE })
     const items = within(priority).getAllByRole('listitem')
-    expect(items).toHaveLength(9)
+    expect(items).toHaveLength(8)
     expect(items[0].textContent).toContain('入院設備のある病院')
     expect(within(priority).getAllByText('データ未対応')).toHaveLength(4)
     expect(items[1].textContent).toContain('空港はデータ未対応')
@@ -251,7 +251,7 @@ describe('ResearchStep', () => {
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(trigger))
-    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 高校・特別支援学校、2 入院設備のある病院、3 鉄道駅・空港 ほか 6 種類(変更あり)')
+    expect(screen.getByTestId('priority-summary').textContent).toBe('優先する順:1 高校・特別支援学校、2 入院設備のある病院、3 鉄道駅・空港 ほか 5 種類(変更あり)')
     expect(checkedNames()).toEqual(['となりバス', 'テスト高等学校'])
 
     // 「既定の並びに戻す」で戻し、「閉じる」で閉じても焦点はボタンに戻る
@@ -296,7 +296,7 @@ describe('ResearchStep', () => {
     const others = 'そのほかの学校(優先順位の外。種別が分からないもの)'
     // 選んだ対象の無いまとまりは閉じ、あるまとまりは開いている
     expect(group(others).open).toBe(false)
-    expect(group('診療所').open).toBe(true)
+    expect(group('大学・高専・専修学校').open).toBe(true)
 
     // 利用者が開いたまとまりで1件選び、外しても開いたまま
     setOpen(others, true)
@@ -307,16 +307,16 @@ describe('ResearchStep', () => {
     expect(group(others).open).toBe(true)
 
     // 最初から開いていたまとまりも、最後の1件を外して閉じない(同じまとまりの中で選び直せる)
-    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト内科' }))
-    expect(checkedNames()).not.toContain('テスト内科')
-    expect(group('診療所').open).toBe(true)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト大学' }))
+    expect(checkedNames()).not.toContain('テスト大学')
+    expect(group('大学・高専・専修学校').open).toBe(true)
 
     // 利用者が閉じたまとまりは、外から選ばれる(既定の選び方に戻す)と開く
-    setOpen('診療所', false)
-    expect(group('診療所').open).toBe(false)
+    setOpen('大学・高専・専修学校', false)
+    expect(group('大学・高専・専修学校').open).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: '既定の選び方に戻す' }))
-    expect(checkedNames()).toContain('テスト内科')
-    expect(group('診療所').open).toBe(true)
+    expect(checkedNames()).toContain('テスト大学')
+    expect(group('大学・高専・専修学校').open).toBe(true)
   })
 
   it('上限(周辺のバス事業者を除く)より多くは選べない。選び直したら「既定の選び方に戻す」で戻せる', () => {
@@ -327,11 +327,11 @@ describe('ResearchStep', () => {
     expect(screen.getByText(/学校・病院など 3 \/ 3 件・周辺のバス事業者 1 件/)).toBeTruthy()
     expect(checkedNames()).not.toContain('テスト学校')
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト内科', hidden: true }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'テスト大学', hidden: true }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'テスト学校', hidden: true }))
     expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト学校'])
     fireEvent.click(screen.getByRole('button', { name: '既定の選び方に戻す' }))
-    expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト内科'])
+    expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト大学'])
   })
 
   it('「前提情報を調べる」で、選んだ対象の target_id だけを送り、進み具合と結果(事実・出典 URL・確認日時・どこから来た結果か)を出す', async () => {
@@ -487,7 +487,7 @@ describe('ResearchStep', () => {
     setup()
     fireEvent.click(screen.getByRole('button', { name: RESEARCH_DEMO }))
     await waitFor(() => expect(screen.getByText(RESEARCH_DEMO_NONE)).toBeTruthy())
-    expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト内科'])
+    expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト大学'])
   })
 
   it('施設の参照データを読めなければ、理由と「読み込み直す」を出す', async () => {
@@ -572,12 +572,12 @@ describe('ResearchStep', () => {
 
     // ほかの行に移った後で前の行の mouseleave が来ても、今の強調は消さない
     fireEvent.mouseEnter(row)
-    fireEvent.mouseEnter(screen.getByRole('checkbox', { name: 'テスト内科' }).closest('li')!)
+    fireEvent.mouseEnter(screen.getByRole('checkbox', { name: 'テスト大学' }).closest('li')!)
     fireEvent.mouseLeave(row)
-    expect(highlighted()).toBe('P04:clinic')
+    expect(highlighted()).toBe('P29:col')
 
     // 行の下の調べた結果(開閉の見出しと出典のリンクの焦点も、その行の強調になる)
-    fireEvent.mouseLeave(screen.getByRole('checkbox', { name: 'テスト内科' }).closest('li')!)
+    fireEvent.mouseLeave(screen.getByRole('checkbox', { name: 'テスト大学' }).closest('li')!)
     fireEvent.click(screen.getByRole('button', { name: RESEARCH_START }))
     await waitFor(() => expect(research.overview).toHaveBeenCalled())
     await waitFor(() => expect(rowResult('テスト高等学校')).toBeTruthy())
@@ -609,11 +609,11 @@ describe('ResearchStep', () => {
 })
 
 describe('ResearchStep の一覧の畳み方', () => {
-  // 診療所 8 件(停留所 S1 から西へ、番号の順に遠くなる)と、優先順位の外の学校 8 件
-  function many(prefix: string, kind: string, detail: Record<string, unknown>) {
-    return Array.from({ length: 8 }, (_, k) => item(`${prefix}${k + 1}`, kind, `${kind === 'clinic' ? '診療所' : '学校'}${k + 1}`, 43.76 + 0.0005 * k, 142.34 - 0.0005 * k, detail))
+  // 大学 8 件(停留所 S1 から西へ、番号の順に遠くなる)と、優先順位の外の学校 8 件
+  function many(prefix: string, label: string, detail: Record<string, unknown>) {
+    return Array.from({ length: 8 }, (_, k) => item(`${prefix}${k + 1}`, 'school', `${label}${k + 1}`, 43.76 + 0.0005 * k, 142.34 - 0.0005 * k, detail))
   }
-  const LONG_FILE = { facilities: [...many('P04:c', 'clinic', { beds: 0 }), ...many('P29:e', 'school', {})] }
+  const LONG_FILE = { facilities: [...many('P29:u', '大学', { school_type: '大学' }), ...many('P29:e', '学校', {})] }
   const OTHERS = 'そのほかの学校(優先順位の外。種別が分からないもの)'
 
   function names(group: string): string[] {
@@ -640,17 +640,17 @@ describe('ResearchStep の一覧の畳み方', () => {
   })
 
   it('選んだ対象のあるまとまりは、選んだ対象のうち最後のものの後ろ3件まで。外しても減らさない。まとまりごとに開く', () => {
-    act(() => useResearchStore.setState({ selected: ['P04:c2'] }))
+    act(() => useResearchStore.setState({ selected: ['P29:u2'] }))
     setup()
     // 2件目を選んでいる → 5件目まで
-    expect(names('診療所')).toEqual(['診療所1', '診療所2', '診療所3', '診療所4', '診療所5'])
+    expect(names('大学・高専・専修学校')).toEqual(['大学1', '大学2', '大学3', '大学4', '大学5'])
     // 4件目を選び足すと 7件目まで
-    fireEvent.click(screen.getByRole('checkbox', { name: '診療所4' }))
-    expect(names('診療所')).toHaveLength(7)
+    fireEvent.click(screen.getByRole('checkbox', { name: '大学4' }))
+    expect(names('大学・高専・専修学校')).toHaveLength(7)
     expect(screen.getByRole('button', { name: '続きを表示(残り 1 件)', hidden: true })).toBeTruthy()
     // 外しても減らさない(押している行が消えない)
-    fireEvent.click(screen.getByRole('checkbox', { name: '診療所4' }))
-    expect(names('診療所')).toHaveLength(7)
+    fireEvent.click(screen.getByRole('checkbox', { name: '大学4' }))
+    expect(names('大学・高専・専修学校')).toHaveLength(7)
     // ほかのまとまりは開かない
     expect(names(OTHERS)).toHaveLength(5)
   })
@@ -685,7 +685,7 @@ describe('ResearchStep の周辺の事業者', () => {
     facilities: [
       item('P04:hosp', 'hospital', 'テスト総合病院', 43.771, 142.361, { beds: 300 }),
       item('P29:high', 'school', 'テスト高等学校', 43.775, 142.36, { school_type: '高等学校', open_status: '開校中' }),
-      item('P04:clinic', 'clinic', 'テスト内科', 43.765, 142.355, { beds: 0 }),
+      item('P29:col', 'school', 'テスト大学', 43.765, 142.355, { school_type: '大学' }),
       item('P11:テストバス', 'operator', 'テストバス', 43.77, 142.36, BBOX),
       item('P11:となりバス', 'operator', 'となりバス', 43.775, 142.365, BBOX),
       item('P11:おおきいバス', 'operator', 'おおきいバス', 43.78, 142.37, BBOX),

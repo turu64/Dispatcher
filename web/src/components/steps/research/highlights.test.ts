@@ -71,7 +71,7 @@ describe('researchSummary', () => {
       result('operator', [{ label: '直近のダイヤ改正', value: '5/10 に減便', source: 1 }]),
     ])
     expect(rows.map((r) => [r.label, r.total, r.hit])).toEqual([
-      ['病院・診療所', 2, 1],
+      ['病院', 2, 1],
       ['周辺の事業者', 1, 1],
     ])
   })

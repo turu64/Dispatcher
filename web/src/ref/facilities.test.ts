@@ -119,7 +119,8 @@ describe('mergeFacilityFiles', () => {
     expect(other[0].lat).toBe(44.5)
     expect(other[0].operatorBounds).toEqual({ south: 43.75, west: 142.34, north: 44.6, east: 143.1 })
     expect(sources).toEqual(['国土数値情報を加工して作成', '別の出典'])
-    expect(skipped).toBe(1)
+    // 形の合わない要素 1 件と、読み込みで外す診療所 1 件
+    expect(skipped).toBe(2)
   })
 })
 
@@ -158,10 +159,10 @@ describe('範囲と候補', () => {
     expect(isOwnOperator('道北バス', [])).toBe(false)
   })
 
-  it('重要拠点の種類:病院は入院設備のある病院、高校・特別支援、大学など、診療所。種別が分からない学校と事業者は優先順位の外', () => {
+  it('重要拠点の種類:病院は入院設備のある病院、高校・特別支援、大学など。診療所は読み込みで外す。種別が分からない学校と事業者は優先順位の外', () => {
     const cat = (id: string) => facilityCategory(merged().find((f) => f.targetId === id)!)
     expect(cat('P04:hosp-big')).toBe('inpatient_hospital')
-    expect(cat('P04:clinic')).toBe('clinic')
+    expect(merged().some((f) => f.kind === 'clinic')).toBe(false)
     expect(cat('P29:high')).toBe('high_school')
     expect(cat('P29:univ')).toBe('higher_education')
     expect(cat('P29:other')).toBeNull()
@@ -174,11 +175,10 @@ describe('defaultSelection', () => {
 
   it('優先順位の高い種類から1件ずつ巡回して取り、周辺の事業者(自社を除く)は上限の外で最後にすべて足す。病院も停留所に近い順(病床の数では並べない)', () => {
     expect(defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 30)).toEqual([
-      // 1巡目:病院・高校・大学・診療所
+      // 1巡目:病院・高校・大学
       'P04:hosp-small',
       'P29:high',
       'P29:univ',
-      'P04:clinic',
       // 2巡目
       'P04:hosp-big',
       // 周辺の事業者(上限に数えない)
@@ -216,13 +216,13 @@ describe('defaultSelection', () => {
 describe('groupCandidates', () => {
   it('周辺の事業者 → 優先順位の種類の順 → 優先順位の外、にまとめる(データの無い種類のまとまりは無い)', () => {
     const groups = groupCandidates(researchCandidates(merged(), STOPS, []), DEFAULT_PRIORITY_ORDER)
-    expect(groups.map((g) => g.label)).toEqual([OPERATOR_GROUP, '入院設備のある病院', '高校・特別支援学校', '大学・高専・専修学校', '診療所', OTHER_GROUP])
+    expect(groups.map((g) => g.label)).toEqual([OPERATOR_GROUP, '入院設備のある病院', '高校・特別支援学校', '大学・高専・専修学校', OTHER_GROUP])
     expect(groups[1].items.map((c) => c.facility.targetId)).toEqual(['P04:hosp-small', 'P04:hosp-big'])
   })
 })
 
 describe('重要拠点の優先順位', () => {
-  it('既定は CLAUDE.md の9段階(中学校は 2026-11-06 に外した)。データの無い種類は none', () => {
+  it('既定は CLAUDE.md の8段階(中学校は 2026-11-06、診療所は 2026-11-07 に外した)。データの無い種類は none', () => {
     expect(DEFAULT_PRIORITY.map((c) => c.label)).toEqual([
       '入院設備のある病院',
       '鉄道駅・空港',
@@ -230,7 +230,6 @@ describe('重要拠点の優先順位', () => {
       '大学・高専・専修学校',
       '介護・福祉施設',
       '役所',
-      '診療所',
       '商業施設・郵便局',
       '観光地',
     ])
@@ -238,10 +237,10 @@ describe('重要拠点の優先順位', () => {
   })
 
   it('順位と並べ替え(端では動かない)', () => {
-    expect(priorityRank(DEFAULT_PRIORITY_ORDER, 'clinic')).toBe(7)
+    expect(priorityRank(DEFAULT_PRIORITY_ORDER, 'commerce_post')).toBe(7)
     expect(movePriority(DEFAULT_PRIORITY_ORDER, 'inpatient_hospital', -1)).toBe(DEFAULT_PRIORITY_ORDER)
     expect(movePriority(DEFAULT_PRIORITY_ORDER, 'tourism', 1)).toBe(DEFAULT_PRIORITY_ORDER)
-    expect(movePriority(DEFAULT_PRIORITY_ORDER, 'clinic', 1).indexOf('clinic')).toBe(7)
+    expect(movePriority(DEFAULT_PRIORITY_ORDER, 'commerce_post', 1).indexOf('commerce_post')).toBe(7)
   })
 })
 

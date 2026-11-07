@@ -1,0 +1,460 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Dispatcher デモ動画プリビズ</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=IBM+Plex+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+/* Layout: 編集室のモニター。上に 16:9 の画面、その下にタイムライン、カットの情報、カット一覧 */
+:root {
+  color-scheme: dark;
+  --bg: #11151b;          /* 編集室の暗がり(少し青寄りの黒) */
+  --panel: #1a2029;
+  --line: #2c3542;
+  --fg: #e7ebf0;
+  --muted: #8e9aab;
+  --led: #ffb43a;         /* 方向幕・LED 表示の橙 */
+  --accent: #4fb3a6;      /* 地図の到達圏の青緑 */
+  --warn: #e5574f;        /* なくなる便・超過の赤 */
+  --ok: #47a86b;          /* 加わる便・足りる目安の緑 */
+  --stage: #0b0e13;
+  --g-intro: #6b7fd7; --g-title: #ffb43a; --g-prep: #4fb3a6; --g-policy: #c98b4a;
+  --g-ai: #b06fd0; --g-out: #5a9fd4; --g-claude: #8aa05a; --g-close: #8e9aab;
+  --f-body: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --f-sign: "BIZ UDPGothic", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+html, body { background: var(--bg); color: var(--fg); }
+body { font-family: var(--f-body); line-height: 1.6; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 20px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 16px; }
+header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+header.top h1 { margin: 0; font-family: var(--f-sign); font-size: 1.25rem; letter-spacing: .04em; text-wrap: balance; }
+header.top p { margin: 0; color: var(--muted); font-size: .85rem; }
+
+/* ---- 画面(16:9) ---- */
+.stage { position: relative; width: 100%; max-width: 100%; aspect-ratio: 16 / 9; background: var(--stage); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; container-type: inline-size; }
+.scene { position: absolute; inset: 0; }
+.fade-in { animation: fadeIn .45s ease both; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(1.2cqw); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .fade-in { animation: none; } * { transition: none !important; } }
+.hud { position: absolute; top: 1.4cqw; right: 1.6cqw; font-family: var(--f-mono); font-size: 1.15cqw; color: var(--muted); background: rgba(0,0,0,.45); padding: .3cqw .7cqw; border-radius: .4cqw; z-index: 6; }
+.telops { position: absolute; left: 3cqw; top: 3cqw; display: grid; gap: .8cqw; z-index: 5; max-width: 62cqw; }
+.telop { font-family: var(--f-sign); font-weight: 700; font-size: 2.3cqw; line-height: 1.35; background: rgba(9,12,17,.82); border-left: .45cqw solid var(--led); padding: .5cqw 1.1cqw; border-radius: .2cqw; }
+.telop.small { font-weight: 400; font-size: 1.25cqw; color: var(--muted); border-left-color: var(--line); }
+.sub { position: absolute; left: 6cqw; right: 6cqw; bottom: 2.4cqw; text-align: center; font-size: 1.9cqw; line-height: 1.5; text-shadow: 0 0 .5cqw #000, 0 0 .2cqw #000; z-index: 5; text-wrap: balance; }
+.sub span { background: rgba(0,0,0,.55); padding: .15cqw .6cqw; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.ff { position: absolute; top: 1.4cqw; right: 12cqw; font-family: var(--f-mono); font-weight: 600; font-size: 1.4cqw; color: var(--led); z-index: 6; }
+
+/* 図のカット */
+.art { position: absolute; inset: 0; display: grid; place-items: center; }
+.flow { display: flex; align-items: center; gap: 3cqw; }
+.flow .node { display: grid; justify-items: center; gap: .8cqw; font-family: var(--f-sign); font-size: 1.6cqw; color: var(--fg); }
+.flow .node svg { width: 13cqw; height: 13cqw; }
+.flow .arrow { width: 6cqw; height: .35cqw; background: var(--muted); position: relative; }
+.flow .arrow::after { content: ""; position: absolute; right: -.2cqw; top: -.75cqw; border: .9cqw solid transparent; border-left-color: var(--muted); border-right: 0; }
+.flow .node, .flow .arrow { opacity: 0; animation: fadeIn .5s ease forwards; }
+.bignum { text-align: center; font-family: var(--f-sign); }
+.bignum .k { font-size: 2.2cqw; color: var(--muted); }
+.bignum .v { font-size: 11cqw; font-weight: 700; color: var(--led); letter-spacing: .02em; animation: grow 3s ease-out both; }
+@keyframes grow { from { transform: scale(.85); opacity: .2; } to { transform: scale(1); opacity: 1; } }
+.sign { font-family: var(--f-sign); font-weight: 700; color: var(--led); background: #050607; border: .5cqw solid #262b31; padding: 1.8cqw 4cqw; border-radius: .6cqw; text-align: center; box-shadow: inset 0 0 2cqw rgba(255,180,58,.15); }
+.sign .big { font-size: 7.5cqw; letter-spacing: .08em; text-shadow: 0 0 1.2cqw rgba(255,180,58,.55); }
+.sign .small { font-size: 2cqw; color: #f4c675; margin-top: .6cqw; }
+.seats { display: grid; grid-template-columns: repeat(8, 5.5cqw); gap: 1.2cqw; }
+.seat { width: 5.5cqw; height: 5.5cqw; border-radius: 1cqw; background: var(--accent); transition: background .4s, opacity .4s; }
+.seat.empty { background: transparent; outline: .3cqw dashed var(--warn); opacity: .9; }
+.cmp { display: flex; gap: 6cqw; font-family: var(--f-sign); }
+.cmp .col { display: grid; gap: .6cqw; justify-items: center; }
+.cmp .col h4 { margin: 0 0 .8cqw; font-size: 1.8cqw; font-weight: 700; }
+.cmp .dots { display: grid; grid-template-columns: repeat(7, 2.6cqw); gap: .8cqw; }
+.cmp .dot { width: 2.6cqw; height: 2.6cqw; border-radius: 50%; background: #3a4350; }
+.cmp .dot.hit { background: var(--ok); box-shadow: 0 0 .8cqw rgba(71,168,107,.7); }
+.arch { display: grid; grid-template-columns: repeat(3, 22cqw); gap: 2cqw 4cqw; font-family: var(--f-sign); font-size: 1.6cqw; }
+.arch .box { border: .25cqw solid var(--line); background: #141a22; border-radius: .6cqw; padding: 1.4cqw; opacity: 0; animation: fadeIn .5s ease forwards; }
+.arch .box b { display: block; font-size: 1.9cqw; margin-bottom: .4cqw; color: var(--led); }
+.term { width: 76cqw; background: #07090c; border: .2cqw solid var(--line); border-radius: .6cqw; padding: 2cqw; font-family: var(--f-mono); font-size: 1.45cqw; line-height: 1.7; color: #b9c4d2; }
+.term .h { color: var(--led); }
+.credits { font-size: 1.35cqw; color: var(--muted); text-align: center; line-height: 1.9; max-width: 80cqw; }
+
+/* アプリ画面のモック */
+.app { position: absolute; inset: 0; display: grid; grid-template-columns: 30% 1fr; background: #0f1319; }
+.app.wide { grid-template-columns: 1fr; }
+.app .left { background: #f4f6f8; color: #1d2430; padding: 1.4cqw; display: grid; align-content: start; gap: 1cqw; font-size: 1.05cqw; }
+.app.wide .left { padding: 1.4cqw 22%; }
+.app .stepper { display: flex; justify-content: space-between; align-items: center; gap: .4cqw; }
+.app .stepper i { flex: 1; height: .25cqw; background: #c9d0d9; }
+.app .stepper b { width: 1.8cqw; height: 1.8cqw; border-radius: 50%; display: grid; place-items: center; font-size: .9cqw; font-style: normal; background: #dfe4ea; color: #4a5566; }
+.app .stepper b.on { background: #1d2430; color: #fff; }
+.app .stepper b.done { background: #1d2430; color: #fff; opacity: .55; }
+.app .blk { background: #fff; border: .12cqw solid #dde2e8; border-radius: .5cqw; height: 4.5cqw; }
+.app .blk.tall { height: 12cqw; }
+.app .blk.chat { height: 6cqw; border-radius: 1cqw; background: #eef1f5; }
+.app .blk.chat.me { background: #1d2430; margin-left: 30%; height: 3.5cqw; }
+.app .map { position: relative; overflow: hidden; background: #e9ece6; }
+.app .map svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hl { position: absolute; border: .35cqw solid var(--led); border-radius: .6cqw; box-shadow: 0 0 0 200cqw rgba(0,0,0,.38); z-index: 4; transition: all .5s ease; }
+.hl em { position: absolute; left: 0; top: 100%; margin-top: .6cqw; white-space: nowrap; font-style: normal; font-family: var(--f-sign); font-weight: 700; font-size: 1.5cqw; color: #111; background: var(--led); padding: .2cqw .7cqw; border-radius: .3cqw; }
+.shot { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-family: var(--f-mono); font-size: 1.1cqw; color: #5a6575; z-index: 1; }
+
+/* ---- 操作 ---- */
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.controls button, .controls select { font: inherit; font-size: .9rem; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.controls button:hover { border-color: var(--muted); }
+.controls button:focus-visible, .controls input:focus-visible, .cutlist button:focus-visible, .timeline:focus-visible { outline: 2px solid var(--led); outline-offset: 2px; }
+.controls button.primary { background: var(--led); color: #1a1205; border-color: var(--led); font-weight: 700; min-width: 7em; }
+.controls label { display: inline-flex; align-items: center; gap: 6px; font-size: .88rem; color: var(--muted); }
+.tc { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 1rem; }
+.tc .over { color: var(--warn); }
+
+.timeline { position: relative; height: 34px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; overflow: hidden; }
+.timeline .seg { position: absolute; top: 0; bottom: 0; border-right: 1px solid var(--bg); opacity: .75; }
+.timeline .seg.cur { opacity: 1; box-shadow: inset 0 -3px 0 var(--fg); }
+.timeline .limit { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--warn); z-index: 2; }
+.timeline .limit span { position: absolute; top: 2px; left: 4px; font-family: var(--f-mono); font-size: .7rem; color: var(--warn); white-space: nowrap; }
+.timeline .head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); z-index: 3; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .78rem; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+
+.info { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 760px) { .info { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.card h2 { margin: 0 0 8px; font-size: .78rem; letter-spacing: .08em; color: var(--muted); font-weight: 500; }
+.card .cutid { font-family: var(--f-sign); font-weight: 700; font-size: 1.15rem; }
+.card dl { margin: 8px 0 0; display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 6px 10px; font-size: .9rem; }
+.card dt { color: var(--muted); }
+.card dd { margin: 0; }
+.stat { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .9rem; }
+.stat b { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.note { font-size: .82rem; color: var(--muted); margin: 8px 0 0; }
+
+.cutlist { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.cutlist table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: .84rem; }
+.cutlist th, .cutlist td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.cutlist th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+.cutlist td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cutlist tr.cur td { background: rgba(255,180,58,.09); }
+.cutlist button { font: inherit; color: var(--fg); background: none; border: 0; padding: 0; cursor: pointer; font-family: var(--f-sign); font-weight: 700; }
+.cutlist .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.cutlist .meas { color: var(--led); }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Dispatcher デモ動画プリビズ</h1>
+    <p>筋書き(第3版)の 37 カットを、仮の図と字幕で流します。11/7 時点のコンテ(冒頭 1:20 版)。</p>
+  </header>
+
+  <div class="stage" id="stage" aria-live="off"></div>
+
+  <div class="controls">
+    <button type="button" id="prev" aria-label="前のカット">◀ 前</button>
+    <button type="button" class="primary" id="play">再生</button>
+    <button type="button" id="next" aria-label="次のカット">次 ▶</button>
+    <span class="tc" id="tc">0:00.0 / 0:00</span>
+    <label><input type="checkbox" id="speak"> ナレーションを読み上げる</label>
+    <label>速さ <input type="range" id="rate" min="0.8" max="1.8" step="0.05" value="1.15"> <span id="rateV" class="tc">1.15</span></label>
+    <label><input type="checkbox" id="stretch" checked> 読み終わるまでカットを延ばす</label>
+  </div>
+
+  <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="再生位置" aria-valuemin="0"></div>
+  <div class="legend" id="legend"></div>
+
+  <div class="info">
+    <section class="card">
+      <h2>いまのカット</h2>
+      <div class="cutid" id="curId">1-1</div>
+      <dl id="curDl"></dl>
+    </section>
+    <section class="card">
+      <h2>尺</h2>
+      <div class="stat" id="stat"></div>
+      <p class="note">読み上げはブラウザの日本語の声で、VOICEVOX の速さとは違います。「読み終わるまでカットを延ばす」を入れて通しで再生すると、読み上げに要った実際の尺をカットごとに測り、一覧の「実測」に出します。</p>
+    </section>
+  </div>
+
+  <div class="cutlist">
+    <table>
+      <thead><tr><th>カット</th><th>時間</th><th>尺</th><th>実測</th><th>映像</th><th>ナレーション</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function () {
+  const G = {
+    intro: ['自分の立場・現場・実例', 'var(--g-intro)'],
+    title: ['タイトル', 'var(--g-title)'],
+    prep: ['読み込み・前提情報・調査', 'var(--g-prep)'],
+    policy: ['減便の方針・影響', 'var(--g-policy)'],
+    ai: ['AI と平日便を戻す', 'var(--g-ai)'],
+    out: ['出力', 'var(--g-out)'],
+    claude: ['Claude の使い方', 'var(--g-claude)'],
+    close: ['締め・クレジット', 'var(--g-close)'],
+  };
+
+  // コンテ(筋書き(第3版)、11/7 の 2 度目の組み替え後)
+  const CUTS = [
+    { id: '1-1', d: 5, g: 'intro', k: 'flow', nodes: [['city', '京都'], ['stop', 'バス停'], ['bus', '通学']], v: '京都の街とバス停', telop: ['京都での大学生活。通学はバス'], n: '京都で大学に通っていた頃、毎日バスで通学していました。' },
+    { id: '1-2', d: 11, g: 'intro', k: 'flow', nodes: [['busFull', '混む・遅れる'], ['phone', 'Web アプリを自作'], ['office', 'バス会社でアルバイト']], v: '満員のバス → アプリ → バス会社', telop: [], n: 'よく混み、よく遅れるバスを快適に使いたくて、AI で運行情報の Web アプリを作り、それをきっかけにバス会社でアルバイトもしました。' },
+    { id: '2-1', d: 8, g: 'intro', k: 'bignum', key: '2030年 バスの運転者', val: '約3.6万人不足', v: '大きな数字', telop: [], small: ['日本バス協会の試算(令和5年10月)'], n: '人口が減る日本では、公共交通の維持が課題です。路線バスも、全国で運転士が足りていません。' },
+    { id: '2-2', d: 8, g: 'intro', k: 'flow', autumn: true, nodes: [['desk', '本社の管理職'], ['seat', '運転席へ'], ['bus', '紅葉の臨時便']], v: '紅葉の臨時便と、管理職が運転席へ', telop: ['紅葉シーズンの臨時増便', '本社の管理職が運転を担う'], n: 'アルバイト先でも、紅葉シーズンの臨時増便を、本社の管理職がみずから運転して支えていました。' },
+    { id: '2-3', d: 9, g: 'intro', k: 'flow', nodes: [['cal', '臨時ダイヤの前日'], ['file', 'GTFS を公開'], ['notice', 'お知らせが遅れる']], v: 'カレンダーと GTFS', telop: ['臨時ダイヤの GTFS の公開が、前日になることも'], n: '一方で、臨時ダイヤの GTFS データの公開が前日になったり、お知らせが追いつかなかったりすることもありました。' },
+    { id: '3-1', d: 5, g: 'intro', k: 'seats', v: '運転席が空席になっていく', telop: ['少しの欠員で、ダイヤが回らなくなる'], n: '運転士が少しでも欠けると、ダイヤは回らなくなります。' },
+    { id: '3-2', d: 13, g: 'intro', k: 'map', v: 'Dispatcher の地図(道北バス)', telop: ['2026年10月下旬 道北バス(北海道旭川市)', '運転士 約150人のうち 19人がインフルエンザで乗務できず', 'お知らせ 10/25 → 減便 10/27'], small: ['HTB 北海道ニュース 2026年10月27日、道北バスのお知らせ ほか'], n: '2026年10月下旬、旭川市の道北バスでは、運転士およそ150人のうち19人がインフルエンザで乗務できなくなり、わずか2日後に減便を始めました。' },
+    { id: '3-3', d: 6, g: 'intro', k: 'flow', nodes: [['clock', '時間がない']], v: '時計', telop: ['減便ダイヤを考える時間がない'], n: '通勤・通学への影響を考えて減便ダイヤを決める時間は、ほとんどありません。' },
+    { id: '4-1', d: 7, g: 'intro', k: 'flow', nodes: [['table', '時刻表'], ['file', 'GTFS'], ['phone', '乗換案内']], v: '時刻表 → GTFS → 乗換案内', telop: ['乗換案内に反映するには GTFS の更新が要る'], n: '決めた減便を乗換案内に載せるには、GTFS データにも正しく反映する必要があります。' },
+    { id: '4-2', d: 8, g: 'intro', k: 'flow', nodes: [['check', '減便の判断'], ['file', 'GTFS の更新']], v: '判断 → GTFS をつなぐ', telop: ['判断から GTFS の更新まで'], n: 'その判断から GTFS の更新までを一つの流れで支えるために、Dispatcher を作りました。' },
+    { id: '5', d: 3, g: 'title', k: 'title', v: 'タイトル', telop: [], n: '' },
+    { id: '6', d: 5, g: 'prep', k: 'app', step: 1, hl: [2, 18, 26, 8, 'サンプルを読み込む(道北バス)'], v: '手順1 読み込み', telop: ['① 読み込み'], n: '' },
+    { id: '7', d: 8, g: 'prep', k: 'app', step: 2, hl: [2, 26, 26, 34, '在籍 150・欠員 19 → 乗務できる 88人(目安)'], v: '運行の前提の欄', telop: ['② 前提情報', '在籍 150人 × 週5日 ÷ 7 − 欠員 19 = 乗務できる 88人(目安)'], n: '営業所の場所と運転士の数を入れると、その日に乗務できる運転士の数の目安が出ます。' },
+    { id: '8', d: 4, g: 'prep', k: 'app', step: 2, hl: [2, 56, 26, 30, '調査の対象 30 件 → 前提情報を調べる'], v: '調査の対象の一覧', telop: ['周辺の学校・病院・事業者 30 件'], n: '周辺の高校や病院の始業・受付の時刻、バスでの通い方を、' },
+    { id: '9', d: 8, g: 'prep', k: 'app', step: 2, chat: true, ff: '早送り ×8', hl: [2, 26, 26, 56, '調査の結果を保存しました'], v: 'AI に相談(調査が並ぶ)', telop: ['調査役の AI が施設ごとに並行で Web を調べる'], n: 'AI が Web で調べ、' },
+    { id: '10', d: 7, g: 'prep', k: 'app', step: 2, hl: [2, 40, 26, 22, '高校の行:始業の時刻・出典 URL'], v: '高校の調べた結果', telop: [], n: '出典つきで集めます。' },
+    { id: '11', d: 6, g: 'policy', k: 'app', step: 3, wide: true, hl: [22, 18, 56, 9, '理由・開始日 10/27・当面の間・平日を土曜'], v: '減便の方針の穴埋めの文', telop: ['③ 減便の方針'], n: '平日のダイヤを土曜ダイヤに入れ替えます。' },
+    { id: '12', d: 5, g: 'policy', k: 'app', step: 3, wide: true, hl: [22, 30, 56, 16, '平日 447 → 361 便'], v: '対象便を確かめる', telop: [], n: '実施まであと2日。' },
+    { id: '13', d: 4, g: 'policy', k: 'app', step: 3, wide: true, hl: [22, 58, 56, 12, '実施まで 2 日です → 承認する'], v: '注意 → 承認', telop: [], n: 'GTFS の反映が間に合うかの注意も出ます。' },
+    { id: '14', d: 7, g: 'policy', k: 'app', step: 4, cells: 1, hl: [44, 22, 34, 46, '朝 6〜9時 到達圏から外れる区画'], v: '影響の地図(朝 6〜9時)', telop: ['④ 影響', '朝 6〜9時 到達圏から外れる 860 区画(推計 約4.1万人)'], n: '乗務できる運転士は 88 人。平日のままでは 13 人足りません。' },
+    { id: '15', d: 8, g: 'policy', k: 'app', step: 4, cells: 1, hl: [2, 28, 26, 14, '判定:足りる目安(余り 14)'], v: '要る運転士の数の判定', telop: ['平日のまま 13 足りない → 土曜ダイヤで 余り 14(目安)'], n: '土曜ダイヤにすると 14 人の余裕が出ます。ただし、朝の通勤・通学の時間帯に、バスに乗れなくなる地域が広がります。' },
+    { id: '16', d: 5, g: 'ai', k: 'app', step: 5, cells: 1, hl: [2, 18, 26, 9, '余り 14 → AI に候補を聞く'], v: '平日便を戻す', telop: ['⑤ 平日便を戻す'], n: 'AI は、学校の始業や運転士の余りを確かめながら、' },
+    { id: '17', d: 8, g: 'ai', k: 'app', step: 5, chat: true, cells: 1, ff: '早送り', hl: [2, 30, 26, 40, '下書き #2(10 便・理由つき)'], v: 'AI の返答と下書き #2', telop: [], n: '平日に戻す便を理由つきで提案します。' },
+    { id: '18', d: 5, g: 'ai', k: 'app', step: 5, cells: 1, hl: [2, 18, 26, 9, '承認 → 余り 7'], v: '承認', telop: ['人が確かめて承認'], n: '決めるのは人です。' },
+    { id: '19', d: 9, g: 'ai', k: 'app', step: 5, chat: true, cells: 1, hl: [2, 56, 26, 26, '余りは 8 の目安で、足りる目安のまま'], v: 'AI に相談で頼む → 下書き #3', telop: ['頼む文:余りの範囲で、通勤・通学に必要な平日便をさらに戻す案を'], n: '実際の道北バスも、土曜ダイヤに平日便 21 便を足した特別ダイヤで乗り切りました。' },
+    { id: '20', d: 3, g: 'ai', k: 'app', step: 5, cells: 2, hl: [44, 22, 34, 46, '朝の空白が減る'], v: '地図の朝の空白が減る', telop: [], n: '' },
+    { id: '21', d: 5, g: 'ai', k: 'cmp', v: '比較の表(AI 14 便 / 実際 21 便)', telop: ['AI の提案 14 便のうち 9 便が、実際に残された便と一致'], small: ['道北バスのお知らせ 2026年10月25日'], n: 'AI が提案した 14 便のうち 9 便は、実際に残された便と同じでした。' },
+    { id: '22', d: 6, g: 'out', k: 'app', step: 6, wide: true, hl: [22, 22, 56, 22, '検証 OK → GTFS を出力'], v: '出力(GTFS)', telop: ['⑥ 出力', 'GTFS-JP の検証を通して出力'], n: 'GTFS-JP の検証を通したデータと、' },
+    { id: '23', d: 4, g: 'out', k: 'app', step: 6, wide: true, hl: [22, 12, 56, 7, '変更指示書・周知文'], v: '変更指示書・周知文のタブ', telop: [], n: '変更指示書、停留所の掲示文までを、その場で出します。' },
+    { id: '24', d: 11, g: 'claude', k: 'arch', v: '構成の図', telop: ['AI は GTFS を直接書き換えない', '数字はすべてコードが計算'], n: 'アプリの中では、Claude の調整役が会話と 6 つの操作を、調査役が施設ごとの Web 調査を並行に受け持ちます。AI は GTFS を直接書き換えず、数字はすべてコードが計算します。' },
+    { id: '25', d: 9, g: 'claude', k: 'term', v: 'Claude Code とコミット履歴', telop: ['期間中に Claude Code で開発(11/2〜)'], n: '開発も Claude Code で行い、GTFS の検証をテストとして回し続けました。' },
+    { id: '26', d: 10, g: 'close', k: 'map', wideMap: true, v: '北海道の地図にタイトル', telop: ['ダイヤ編成の担当者・運行管理者・GTFS を支える人へ'], n: 'バス会社のダイヤ編成の担当者や運行管理者、そして GTFS のオープンデータを支える人たちに、使ってほしいと考えています。' },
+    { id: '27', d: 3, g: 'close', k: 'credits', v: 'クレジット', telop: [], n: '' },
+  ];
+  let acc = 0;
+  CUTS.forEach((c) => { c.t0 = acc; acc += c.d; c.meas = null; });
+  const PLAN_TOTAL = acc;
+  const LIMIT = 180;
+
+  // ---- 簡単な図(線画) ----
+  const S = (inner) => `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+  const ICON = {
+    city: S('<rect x="10" y="40" width="22" height="50" fill="none"/><rect x="38" y="22" width="24" height="68"/><rect x="68" y="48" width="22" height="42"/><path d="M44 34h12M44 46h12M44 58h12"/>'),
+    stop: S('<path d="M50 92V36"/><circle cx="50" cy="24" r="14"/><path d="M44 24h12" /><path d="M36 92h28"/>'),
+    bus: S('<rect x="12" y="22" width="76" height="52" rx="8"/><path d="M12 48h76M24 30h52"/><circle cx="30" cy="80" r="7"/><circle cx="70" cy="80" r="7"/>'),
+    busFull: S('<rect x="12" y="22" width="76" height="52" rx="8"/><path d="M12 48h76"/><circle cx="26" cy="36" r="4"/><circle cx="40" cy="36" r="4"/><circle cx="54" cy="36" r="4"/><circle cx="68" cy="36" r="4"/><circle cx="30" cy="80" r="7"/><circle cx="70" cy="80" r="7"/>'),
+    phone: S('<rect x="30" y="10" width="40" height="80" rx="6"/><path d="M44 80h12"/><path d="M38 26h24M38 38h24M38 50h14"/>'),
+    office: S('<path d="M14 90V30l36-18 36 18v60"/><path d="M14 90h72"/><rect x="40" y="62" width="20" height="28"/><path d="M28 42h8M64 42h8M28 54h8M64 54h8"/>'),
+    desk: S('<circle cx="50" cy="26" r="11"/><path d="M30 60c4-12 36-12 40 0"/><path d="M12 64h76M22 64v26M78 64v26"/>'),
+    seat: S('<path d="M30 20v44h40"/><path d="M30 64v26M70 64v26"/><circle cx="66" cy="34" r="12"/><path d="M60 34h12"/>'),
+    cal: S('<rect x="14" y="20" width="72" height="68" rx="6"/><path d="M14 38h72M32 12v14M68 12v14"/><path d="M58 52h14v14H58z" stroke="#e5574f"/>'),
+    file: S('<path d="M24 10h36l18 18v62H24z"/><path d="M60 10v18h18"/><text x="51" y="68" font-size="16" text-anchor="middle" fill="currentColor" stroke="none" font-family="IBM Plex Mono, monospace">GTFS</text>'),
+    notice: S('<rect x="18" y="14" width="64" height="72" rx="4"/><path d="M30 32h40M30 46h40M30 60h24"/><circle cx="72" cy="72" r="10" stroke="#e5574f"/>'),
+    clock: S('<circle cx="50" cy="52" r="36"/><path d="M50 52V30M50 52l16 10"/><path d="M38 10h24"/>'),
+    table: S('<rect x="14" y="14" width="72" height="72" rx="4"/><path d="M14 32h72M38 14v72M62 14v72M14 50h72M14 68h72"/>'),
+    check: S('<rect x="14" y="14" width="72" height="72" rx="8"/><path d="M30 52l14 14 28-30"/>'),
+  };
+
+  // ---- 地図(道北バスの路線を模した線) ----
+  function rng(seed) { let s = seed; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+  function mapSvg(cells, wide) {
+    const r = rng(7);
+    const cx = wide ? 50 : 52, cy = 55;
+    let routes = '';
+    const dirs = [[0, -40], [8, -46], [-30, 10], [-40, -6], [36, -8], [40, 18], [4, 40], [-18, 34], [22, 34], [-6, -30]];
+    dirs.forEach(([dx, dy], i) => {
+      let x = cx, y = cy, d = `M${x} ${y}`;
+      for (let j = 1; j <= 5; j++) { x = cx + dx * j / 5 + (r() - .5) * 4; y = cy + dy * j / 5 + (r() - .5) * 4; d += ` L${x.toFixed(1)} ${y.toFixed(1)}`; }
+      routes += `<path d="${d}" stroke="#2a3340" stroke-width="${i < 3 ? .9 : .6}" fill="none"/>`;
+    });
+    let reach = '';
+    const r2 = rng(11);
+    for (let i = 0; i < 260; i++) {
+      const a = r2() * Math.PI * 2, rad = Math.pow(r2(), .7) * 34;
+      const x = cx + Math.cos(a) * rad * 1.2, y = cy + Math.sin(a) * rad;
+      const lost = cells && r2() < (cells === 2 ? .12 : .28) && rad > 8;
+      reach += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="1.6" height="1.6" fill="${lost ? '#ff9a3a' : '#4fb3a6'}" opacity="${lost ? .95 : .45}"/>`;
+    }
+    return `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice"><rect width="100" height="100" fill="#e9ece6"/><path d="M0 70 C20 62 30 80 50 72 S80 60 100 66" stroke="#b7d0e0" stroke-width="2" fill="none"/>${reach}${routes}</svg>`;
+  }
+
+  function appHtml(c) {
+    const steps = [1, 2, 3, 4, 5, 6].map((n) => `<b class="${n === c.step ? 'on' : n < c.step ? 'done' : ''}">${n}</b>`).join('<i></i>');
+    const blocks = c.chat
+      ? '<div class="blk chat"></div><div class="blk chat me"></div><div class="blk chat"></div><div class="blk chat"></div><div class="blk chat me"></div><div class="blk chat"></div>'
+      : '<div class="blk"></div><div class="blk tall"></div><div class="blk"></div><div class="blk tall"></div>';
+    const map = c.wide ? '' : `<div class="map">${mapSvg(c.cells, false)}</div>`;
+    const [x, y, w, h, label] = c.hl;
+    return `<div class="app${c.wide ? ' wide' : ''}"><div class="left"><div class="stepper">${steps}</div>${blocks}</div>${map}</div>
+      <div class="shot">画面収録:${esc(c.v)}</div>
+      <div class="hl" style="left:${x}%;top:${y}%;width:${w}%;height:${h}%"><em>${esc(label)}</em></div>`;
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m])); }
+
+  function artHtml(c) {
+    switch (c.k) {
+      case 'flow': {
+        const parts = [];
+        c.nodes.forEach(([ic, label], i) => {
+          if (i) parts.push(`<div class="arrow" style="animation-delay:${i * 0.9 - .3}s"></div>`);
+          parts.push(`<div class="node" style="animation-delay:${i * 0.9}s;color:${c.autumn && ic === 'bus' ? '#ff8a3d' : ''}">${ICON[ic]}<span>${esc(label)}</span></div>`);
+        });
+        return `<div class="art"><div class="flow">${parts.join('')}</div></div>`;
+      }
+      case 'bignum': return `<div class="art"><div class="bignum"><div class="k">${esc(c.key)}</div><div class="v">${esc(c.val)}</div></div></div>`;
+      case 'seats': return `<div class="art"><div class="seats">${Array.from({ length: 24 }, (_, i) => `<div class="seat" data-i="${i}"></div>`).join('')}</div></div>`;
+      case 'map': return `<div class="art" style="place-items:stretch">${mapSvg(0, c.wideMap)}</div>${c.wideMap ? '<div class="art"><div class="sign"><div class="big">Dispatcher</div><div class="small">減便の判断から GTFS の更新まで</div></div></div>' : ''}`;
+      case 'title': return '<div class="art"><div class="sign"><div class="big">Dispatcher</div><div class="small">運転士が足りない朝の、減便ダイヤ判断支援(副題は仮)</div></div></div>';
+      case 'cmp': {
+        const ai = Array.from({ length: 14 }, (_, i) => `<div class="dot${i < 9 ? ' hit' : ''}"></div>`).join('');
+        const real = Array.from({ length: 21 }, (_, i) => `<div class="dot${i < 9 ? ' hit' : ''}"></div>`).join('');
+        return `<div class="art"><div class="cmp"><div class="col"><h4>AI の提案 14 便</h4><div class="dots">${ai}</div></div><div class="col"><h4>道北バスが残した 21 便</h4><div class="dots">${real}</div></div></div></div>`;
+      }
+      case 'arch': {
+        const box = (t, b, d) => `<div class="box" style="animation-delay:${d}s"><b>${t}</b>${b}</div>`;
+        return `<div class="art"><div class="arch">${box('ブラウザ', 'GTFS の読み込み・編集・到達圏・検証。6 つの操作を実行', 0)}${box('サーバー', 'Claude との中継だけ。GTFS は保存しない', .6)}${box('Claude Managed Agents', '1 つのセッション', 1.2)}${box('調整役 Sonnet 5.5', '会話と 6 つの操作(下書きを出す)', 1.8)}${box('調査役 Haiku 5.5', '施設ごとの Web 調査を並行に', 2.4)}${box('人が承認', '承認してから GTFS に反映', 3)}</div></div>`;
+      }
+      case 'term': return `<div class="art"><div class="term"><div class="h">$ git log --oneline (11/2〜11/6)</div>
+        <div>7146870 営業所を置いたときの勤務のつなぎ方を作り直す</div>
+        <div>a5887ba 要る運転士の数(目安)の判定を、乗務できる運転士の数との比較にする</div>
+        <div>9028542 デモの収録用に、画面の「今日」を固定できるようにする</div>
+        <div>290c0bc なくなる便を赤、加わる便を緑で示す</div>
+        <div>… 期間中のコミット 180 件以上</div>
+        <div class="h">$ pnpm test → 2,379 passed</div></div></div>`;
+      case 'credits': return '<div class="art"><div class="credits">GTFS:北海道オープンデータプラットフォーム「道北バス」(CC BY 4.0)<br>地図 ©OpenStreetMap Contributors / 国土数値情報 / e-Stat<br>HTB 北海道ニュース・STV・北海道新聞 / 道北バスのお知らせ<br>音声合成:(未定)<br>dispatcher.turutaru.com ・ github.com/turu64/Dispatcher</div></div>';
+      case 'app': return appHtml(c);
+    }
+    return '';
+  }
+
+  // ---- 画面の描画 ----
+  const stage = document.getElementById('stage');
+  let seatTimer = null;
+  function renderScene(c) {
+    clearInterval(seatTimer);
+    const telops = (c.telop || []).map((t) => `<div class="telop">${esc(t)}</div>`).join('') + (c.small || []).map((t) => `<div class="telop small">${esc(t)}</div>`).join('');
+    stage.innerHTML = `<div class="scene fade-in">${artHtml(c)}
+      ${telops ? `<div class="telops">${telops}</div>` : ''}
+      ${c.ff ? `<div class="ff">${esc(c.ff)}</div>` : ''}
+      <div class="hud">CUT ${esc(c.id)} ・ ${fmt(c.t0)}</div>
+      ${c.n ? `<div class="sub"><span>${esc(c.n)}</span></div>` : ''}</div>`;
+    if (c.k === 'seats') {
+      const seats = [...stage.querySelectorAll('.seat')];
+      const order = [3, 11, 17, 6, 20, 14, 1, 22];
+      let i = 0;
+      seatTimer = setInterval(() => { if (i < order.length) seats[order[i++]].classList.add('empty'); else clearInterval(seatTimer); }, 700);
+    }
+  }
+
+  // ---- 時間 ----
+  const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  const fmt1 = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+  let time = 0, playing = false, curIdx = -1, last = 0, holding = false, holdStart = 0, cutStartWall = 0;
+  const speakBox = document.getElementById('speak'), stretchBox = document.getElementById('stretch'), rate = document.getElementById('rate');
+
+  function idxAt(t) { for (let i = CUTS.length - 1; i >= 0; i--) if (t >= CUTS[i].t0) return i; return 0; }
+
+  function speak(c) {
+    if (!speakBox.checked || !('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    if (!c.n) return;
+    const u = new SpeechSynthesisUtterance(c.n);
+    u.lang = 'ja-JP';
+    u.rate = parseFloat(rate.value);
+    const v = speechSynthesis.getVoices().find((x) => x.lang && x.lang.startsWith('ja'));
+    if (v) u.voice = v;
+    u.onend = () => { const took = (performance.now() - cutStartWall) / 1000; c.meas = Math.max(c.d, Math.round(took * 10) / 10); renderRows(); renderStat(); };
+    speechSynthesis.speak(u);
+  }
+
+  function enterCut(i, fromPlay) {
+    curIdx = i;
+    const c = CUTS[i];
+    renderScene(c);
+    cutStartWall = performance.now();
+    if (playing && fromPlay) speak(c);
+    renderInfo(); markCurrent();
+  }
+
+  function tick(now) {
+    if (!playing) return;
+    const dt = Math.min(.1, (now - last) / 1000); last = now;
+    const c = CUTS[curIdx];
+    const end = c.t0 + c.d;
+    const talking = speakBox.checked && stretchBox.checked && 'speechSynthesis' in window && speechSynthesis.speaking;
+    if (time + dt >= end && talking) { time = end - 0.001; holding = true; }
+    else { holding = false; time += dt; }
+    if (time >= PLAN_TOTAL) { time = PLAN_TOTAL; pause(); }
+    const i = idxAt(time);
+    if (i !== curIdx) enterCut(i, true);
+    drawHead();
+    requestAnimationFrame(tick);
+  }
+  function play() { if (time >= PLAN_TOTAL) seek(0); playing = true; last = performance.now(); playBtn.textContent = '一時停止'; speak(CUTS[curIdx]); cutStartWall = performance.now(); requestAnimationFrame(tick); }
+  function pause() { playing = false; playBtn.textContent = '再生'; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+  function seek(t) { time = Math.max(0, Math.min(PLAN_TOTAL - .001, t)); const i = idxAt(time); if ('speechSynthesis' in window) speechSynthesis.cancel(); enterCut(i, true); drawHead(); }
+
+  // ---- タイムライン ----
+  const tl = document.getElementById('timeline');
+  function buildTimeline() {
+    tl.innerHTML = CUTS.map((c, i) => `<div class="seg" data-i="${i}" style="left:${c.t0 / PLAN_TOTAL * 100}%;width:${c.d / PLAN_TOTAL * 100}%;background:${G[c.g][1]}" title="${esc(c.id)} ${esc(c.v)}"></div>`).join('')
+      + `<div class="limit" style="left:${LIMIT / PLAN_TOTAL * 100}%"><span>3:00 上限</span></div><div class="head" id="head"></div>`;
+    tl.setAttribute('aria-valuemax', String(PLAN_TOTAL));
+    document.getElementById('legend').innerHTML = Object.values(G).map(([n, col]) => `<span><i style="background:${col}"></i>${n}</span>`).join('');
+  }
+  function drawHead() {
+    document.getElementById('head').style.left = `${time / PLAN_TOTAL * 100}%`;
+    tl.setAttribute('aria-valuenow', String(Math.round(time)));
+    document.getElementById('tc').innerHTML = `${fmt1(time)} / ${fmt(PLAN_TOTAL)}${PLAN_TOTAL > LIMIT ? ` <span class="over">(+${PLAN_TOTAL - LIMIT}秒)</span>` : ''}`;
+  }
+  tl.addEventListener('click', (e) => { const r = tl.getBoundingClientRect(); seek((e.clientX - r.left) / r.width * PLAN_TOTAL); });
+  tl.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') seek(time + 5); if (e.key === 'ArrowLeft') seek(time - 5); });
+
+  // ---- 情報と一覧 ----
+  function renderInfo() {
+    const c = CUTS[curIdx];
+    document.getElementById('curId').textContent = `カット ${c.id}(${G[c.g][0]})`;
+    document.getElementById('curDl').innerHTML = `<dt>時間</dt><dd class="tc">${fmt(c.t0)}〜${fmt(c.t0 + c.d)}(${c.d}秒)</dd>
+      <dt>映像</dt><dd>${esc(c.v)}</dd><dt>テロップ</dt><dd>${esc((c.telop || []).concat(c.small || []).join(' / ') || '(なし)')}</dd>
+      <dt>ナレーション</dt><dd>${esc(c.n || '(なし)')}</dd><dt>字数</dt><dd class="tc">${c.n.replace(/\s/g, '').length} 字 / 1秒あたり ${(c.n.replace(/\s/g, '').length / c.d).toFixed(1)} 字</dd>`;
+  }
+  function renderStat() {
+    const groups = {};
+    CUTS.forEach((c) => { groups[c.g] = (groups[c.g] || 0) + c.d; });
+    const measured = CUTS.filter((c) => c.meas != null);
+    const measTotal = CUTS.reduce((s, c) => s + (c.meas ?? c.d), 0);
+    document.getElementById('stat').innerHTML = `<span>予定の合計 <b>${fmt(PLAN_TOTAL)}</b></span><span>上限まで <b style="color:var(--warn)">${PLAN_TOTAL > LIMIT ? '+' + (PLAN_TOTAL - LIMIT) + '秒 超過' : 'あと ' + (LIMIT - PLAN_TOTAL) + '秒'}</b></span>`
+      + `<span>読み上げの実測を入れた合計 <b>${fmt(Math.round(measTotal))}</b>(${measured.length}/${CUTS.length} カット測定済み)</span>`
+      + Object.entries(groups).map(([g, s]) => `<span>${G[g][0]} <b>${s}秒</b></span>`).join('');
+  }
+  function renderRows() {
+    document.getElementById('rows').innerHTML = CUTS.map((c, i) => `<tr data-i="${i}" class="${i === curIdx ? 'cur' : ''}">
+      <td><span class="sw" style="background:${G[c.g][1]}"></span><button type="button" data-jump="${i}">${esc(c.id)}</button></td>
+      <td class="num">${fmt(c.t0)}</td><td class="num">${c.d}秒</td><td class="num meas">${c.meas != null ? c.meas + '秒' : '―'}</td>
+      <td>${esc(c.v)}</td><td>${esc(c.n || '(なし)')}</td></tr>`).join('');
+  }
+  function markCurrent() {
+    document.querySelectorAll('#rows tr').forEach((tr) => tr.classList.toggle('cur', Number(tr.dataset.i) === curIdx));
+    document.querySelectorAll('#timeline .seg').forEach((s) => s.classList.toggle('cur', Number(s.dataset.i) === curIdx));
+  }
+  document.getElementById('rows').addEventListener('click', (e) => { const b = e.target.closest('[data-jump]'); if (b) seek(CUTS[Number(b.dataset.jump)].t0); });
+
+  // ---- 操作 ----
+  const playBtn = document.getElementById('play');
+  playBtn.addEventListener('click', () => (playing ? pause() : play()));
+  document.getElementById('prev').addEventListener('click', () => seek(CUTS[Math.max(0, curIdx - (time - CUTS[curIdx].t0 < 1 ? 1 : 0))].t0));
+  document.getElementById('next').addEventListener('click', () => seek(CUTS[Math.min(CUTS.length - 1, curIdx + 1)].t0));
+  rate.addEventListener('input', () => { document.getElementById('rateV').textContent = Number(rate.value).toFixed(2); });
+  speakBox.addEventListener('change', () => { if (!speakBox.checked && 'speechSynthesis' in window) speechSynthesis.cancel(); else if (playing) speak(CUTS[curIdx]); });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, button, select, .timeline')) return;
+    if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); }
+    if (e.key === 'ArrowRight') document.getElementById('next').click();
+    if (e.key === 'ArrowLeft') document.getElementById('prev').click();
+  });
+  if ('speechSynthesis' in window) speechSynthesis.getVoices();
+  else { speakBox.disabled = true; speakBox.parentElement.title = 'このブラウザは読み上げに対応していません'; }
+
+  buildTimeline(); renderRows(); renderStat(); enterCut(0, false); drawHead();
+})();
+</script>
+
+</body></html>

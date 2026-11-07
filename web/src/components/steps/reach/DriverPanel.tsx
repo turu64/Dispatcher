@@ -84,11 +84,6 @@ export function DriverView({
         比較する日付:<span className="text-foreground tabular-nums">{formatDateJa(comparison.date)}</span>
       </p>
       <DriverTable comparison={comparison} />
-      {comparison.placesEffect && (
-        <p className="text-xs" data-testid="places-effect">
-          {placesEffectText(comparison.placesEffect)}
-        </p>
-      )}
       <DutyWarning comparison={comparison} />
       <SupplyDetails comparison={comparison} />
       <AssumptionsList comparison={comparison} params={params} places={places} />
@@ -167,13 +162,8 @@ function dutyWarningText(comparison: DriverComparison): { text: string; overLimi
 function DutyWarning({ comparison }: { comparison: DriverComparison }) {
   const warning = dutyWarningText(comparison)
   if (warning === null) return null
-  if (!warning.overLimit) {
-    return (
-      <p className="text-xs text-muted-foreground" data-testid="duty-warning">
-        {warning.text}
-      </p>
-    )
-  }
+  // 回送が長い勤務だけの補足は、「断り書きと数え方…」の開閉の中に出す(AssumptionsList)
+  if (!warning.overLimit) return null
   return (
     <p className="text-xs font-medium text-destructive" data-testid="duty-warning">
       <span aria-hidden="true">⚠ </span>
@@ -277,7 +267,15 @@ function SupplyDetails({ comparison }: { comparison: DriverComparison }) {
   const judged = verdict.kind === 'enough' || verdict.kind === 'short'
   return (
     <div className="flex flex-col gap-0.5 text-xs" data-testid="driver-supply">
-      {supply && <p>{supplyText(supply)}</p>}
+      {/* 乗務できる数は判定の文に出ているので、画面には式だけを出し、読み上げには数え方の1文を渡す */}
+      {supply && (
+        <>
+          <p className="text-muted-foreground tabular-nums" aria-hidden="true">
+            乗務できる {supply.available} = 在籍 {supply.roster} × {supply.workDays} ÷ 7 − 欠員 {supply.shortage ?? 0}
+          </p>
+          <p className="sr-only">{supplyText(supply)}</p>
+        </>
+      )}
       {warning && (
         <p className="font-medium text-destructive" data-testid="supply-warning">
           <span aria-hidden="true">⚠ </span>
@@ -287,6 +285,13 @@ function SupplyDetails({ comparison }: { comparison: DriverComparison }) {
       {(judged || need.basis === 'operatorRuns') && <p className="text-muted-foreground">{needBasisText(need)}</p>}
     </div>
   )
+}
+
+/** 回送が長い勤務だけのときの補足(開閉の中に出す。上限を超える勤務があるときは DutyWarning で外に出す) */
+function DutyNote({ comparison }: { comparison: DriverComparison }) {
+  const warning = dutyWarningText(comparison)
+  if (warning === null || warning.overLimit) return null
+  return <p data-testid="duty-warning">{warning.text}</p>
 }
 
 /** 使った仮定のバッジと、開閉の中の断り書き・数え方・詳しい仮定の一覧 */
@@ -309,6 +314,8 @@ function AssumptionsList({ comparison, params, places }: { comparison: DriverCom
       <details>
         <summary className="cursor-pointer text-muted-foreground">断り書きと数え方・使った仮定をすべて見る</summary>
         <div className="mt-1 flex flex-col gap-1 text-muted-foreground">
+          {comparison.placesEffect && <p data-testid="places-effect">{placesEffectText(comparison.placesEffect)}</p>}
+          <DutyNote comparison={comparison} />
           <ul className="flex list-disc flex-col gap-0.5 pl-4" aria-label="要る運転士の数の断り書き">
             {driverCaveats(params, places).map((line) => (
               <li key={line}>{line}</li>

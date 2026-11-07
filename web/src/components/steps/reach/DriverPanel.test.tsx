@@ -206,7 +206,7 @@ describe('DriverView(上限を超えた勤務・回送が長すぎる勤務の�
     expect(warning.textContent).not.toContain('あなた')
   })
 
-  it('回送が長い勤務だけで上限を超える勤務が無ければ、警告色にせず目立たない補足の文にする', () => {
+  it('回送が長い勤務だけで上限を超える勤務が無ければ、警告色にせず、閉じた開閉の中の補足の文にする', () => {
     // 停留所から約 50km 北の営業所(出庫・入庫の回送が片道 約 1 時間 40 分)。終点で休んでから入庫すれば上限の中に収まる
     const near = { name: '営業所', lat: 44.21, lon: 142.36 }
     viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), places: [near] })
@@ -215,8 +215,9 @@ describe('DriverView(上限を超えた勤務・回送が長すぎる勤務の�
     expect(warning.textContent).not.toContain('改善基準告示の上限を超える勤務')
     expect(warning.textContent).toContain('置いた場所が正しいか、ほかの営業所も置いたか')
     expect(warning.textContent).not.toContain('⚠')
-    expect(warning.className).toContain('text-muted-foreground')
     expect(warning.className).not.toContain('text-destructive')
+    // 補足は「断り書きと数え方…」の閉じた開閉の中に出す
+    expect(warning.closest('details')?.open).toBe(false)
   })
 
   it('減便後が無ければ、減便前の数だけを出す', () => {

@@ -145,10 +145,12 @@ export function RefStatus({
   }
   const r = refState.result
   if (r.ok) {
+    // 読み込んだ範囲は確かめたいときだけ見ればよいので、閉じた欄に入れる(2026-11-07 に利用者の指示で説明を減らした)
     return (
-      <p className="text-xs text-muted-foreground">
-        参照データ:1次メッシュ {r.mesh1s.join('・')}({r.mesh1s.length} 件)、鉄道駅 {r.stations.length} 駅
-      </p>
+      <details className="text-xs text-muted-foreground">
+        <summary className="cursor-pointer">参照データ(1次メッシュ {r.mesh1s.length} 件・鉄道駅 {r.stations.length} 駅)</summary>
+        <p className="mt-1">参照データ:1次メッシュ {r.mesh1s.join('・')}({r.mesh1s.length} 件)、鉄道駅 {r.stations.length} 駅</p>
+      </details>
     )
   }
   return (
@@ -268,10 +270,6 @@ export function ReachSummaryTable({
           </div>
         ))}
       </dl>
-      <p className="text-xs text-muted-foreground">
-        125m 四方の区画(都市部 {formatCount(cellsByClass.urban)}・郊外 {formatCount(cellsByClass.suburban)}・中山間・地方{' '}
-        {formatCount(cellsByClass.rural)})。表の割合の分母は徒歩圏に停留所・駅がある区画です。
-      </p>
       {snapshot.baseline && snapshot.comparison ? (
         <CompareTable snapshot={snapshot} selectedHour={selectedHour} />
       ) : (
@@ -280,6 +278,10 @@ export function ReachSummaryTable({
       <details className="border-t pt-2 text-xs">
         <summary className="cursor-pointer text-muted-foreground">起点の停留所と区画の数え方</summary>
         <div className="mt-1.5 flex flex-col gap-1 text-muted-foreground">
+          <p>
+            125m 四方の区画(都市部 {formatCount(cellsByClass.urban)}・郊外 {formatCount(cellsByClass.suburban)}・中山間・地方{' '}
+            {formatCount(cellsByClass.rural)})。表の割合の分母は徒歩圏に停留所・駅がある区画です。
+          </p>
           <OriginSummary snapshot={snapshot} invalidStops={invalidStops} />
           <p>
             到達圏から外れる区画:徒歩圏に停留所・駅がある区画のうち、その時間帯に発車がある停留所と鉄道駅のどれも、区分ごとの徒歩圏にない区画です。
@@ -453,8 +455,9 @@ export function ZeroServiceSummary({ snapshot }: { snapshot: ReachSnapshot }) {
         </Alert>
       )}
       {zeroRoutes.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <ul className="flex flex-col text-xs" aria-label="便がなくなる系統の一覧">
+        <details className="text-xs">
+          <summary className="cursor-pointer font-medium">便がなくなる系統の一覧({formatCount(zeroRoutes.length)} 件)</summary>
+          <ul className="mt-1 flex flex-col" aria-label="便がなくなる系統の一覧">
             {zeroRoutes.map((r) => (
               <li key={r.routeId} className="break-words">
                 <ScopeMark scope={r.scope} /> {r.name}
@@ -463,7 +466,7 @@ export function ZeroServiceSummary({ snapshot }: { snapshot: ReachSnapshot }) {
               </li>
             ))}
           </ul>
-        </div>
+        </details>
       )}
       {zeroStops.length > 0 && (
         <details className="text-xs">
@@ -479,10 +482,13 @@ export function ZeroServiceSummary({ snapshot }: { snapshot: ReachSnapshot }) {
           </ul>
         </details>
       )}
-      <p className="text-xs text-muted-foreground">
-        「一日を通して」は、減便前はこの日のどれかの時間帯に到達でき、減便後はどの時間帯にも到達できないことです。「全日」は出力のどの日にも便がなく、「この日」は選んだ日だけ便が 0 です。Dispatcher
-        は届出の要否を判定しません。
-      </p>
+      <details className="text-xs text-muted-foreground">
+        <summary className="cursor-pointer">「一日を通して」「全日」「この日」の意味</summary>
+        <p className="mt-1">
+          「一日を通して」は、減便前はこの日のどれかの時間帯に到達でき、減便後はどの時間帯にも到達できないことです。「全日」は出力のどの日にも便がなく、「この日」は選んだ日だけ便が 0 です。
+        </p>
+      </details>
+      <p className="text-xs text-muted-foreground">Dispatcher は届出の要否を判定しません。</p>
     </section>
   )
 }

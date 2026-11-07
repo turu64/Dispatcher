@@ -92,7 +92,7 @@ describe('文と並び', () => {
       '平日 S000004・土日祝 S000006 に分かれています(走る日から判定しました)。',
     )
     expect(simpleSummary(g([svc('S000002', { weekday: 98 }), svc('S000009', { weekday: 98, saturday: 19, sundayHoliday: 25 })]))).toBe(
-      '平日だけの S000002 は、期間の間なくします。土曜・日祝だけに走る service はありません。',
+      '平日だけの S000002 は期間の間なくします。土曜・日祝だけに走る service はありません。',
     )
     expect(simpleSummary(g([svc('S1', { weekday: 98, saturday: 19, sundayHoliday: 25 })]))).toBe('平日と土曜・日祝で同じダイヤのため、入れ替える便がありません。')
   })

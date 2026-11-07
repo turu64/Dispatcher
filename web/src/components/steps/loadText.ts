@@ -8,7 +8,7 @@ export function deleteConfirmMessage({ draft, committed, sample }: { draft: Pick
   const done = committed > 0 ? `承認済みの編集 ${committed} 件` : null
   if (pending && done) parts.push(`${pending}と、${done}も消えます。`)
   else if (pending || done) parts.push(`${pending ?? done}も消えます。`)
-  parts.push(sample ? 'サンプルは、もう一度読み込めます。' : 'パソコンの中の元のファイルは消えません。')
+  parts.push(sample ? 'サンプルはもう一度読み込めます。' : 'パソコンの中の元のファイルは消えません。')
   return parts.join('')
 }
 

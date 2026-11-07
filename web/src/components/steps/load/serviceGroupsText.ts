@@ -89,7 +89,7 @@ export function tripsText(f: ServiceFeatures): string {
 
 /** 単純でない GTFS で、表の上に出す「どこで直すか」の1文(読み込みの手順の表は読む専用) */
 export const GROUPS_FIX_NOTE =
-  '入れ替えは、この分け方のとおりに一括で行います。service ごとに直すときは、手順「減便の方針」の詳しい設定で「手動で選ぶ」を選びます。'
+  '入れ替えはこの分け方のとおりに一括で行います。service ごとに直すときは、手順「減便の方針」の詳しい設定で「手動で選ぶ」を選びます。'
 
 /**
  * 表の「扱い・入れる先」の列の文(読む専用)。入れ替えに使う service は「入れる先 01001」「使わない」「決まらない」、
@@ -175,7 +175,7 @@ export function orderRows(kg: KindGroups): { sections: RowSection[]; others: Kin
 /**
  * 単純な GTFS の1行の要約(§5.1)。
  * 「平日 01・土曜 03・日祝 06 に分かれています(走る日から判定しました)。」、土曜と日祝が同じ service なら「土日祝」、
- * 入れ替えに使う service が無ければ「平日だけの S000002 は、期間の間なくします。…」
+ * 入れ替えに使う service が無ければ「平日だけの S000002 は期間の間なくします。…」
  */
 export function simpleSummary(groups: ServiceGroups): string {
   const sat = policyServicesFor(groups, 'weekdayToSaturday')
@@ -197,7 +197,7 @@ export function simpleSummary(groups: ServiceGroups): string {
   }
   if (rs !== '' && rs === rh) return `平日 ${w}・土日祝 ${rs} に分かれています(走る日から判定しました)。`
   if (rs !== '' && rh !== '') return `平日 ${w}・土曜 ${rs}・日祝 ${rh} に分かれています(走る日から判定しました)。`
-  if (rs === '' && rh === '') return `平日だけの ${w} は、期間の間なくします。土曜・日祝だけに走る service はありません。`
+  if (rs === '' && rh === '') return `平日だけの ${w} は期間の間なくします。土曜・日祝だけに走る service はありません。`
   const [has, label, none] = rs !== '' ? [rs, '土曜', '日祝'] : [rh, '日祝', '土曜']
   return `平日 ${w}・${label} ${has} に分かれています(走る日から判定しました)。${none}だけに走る service はないため、${none}ダイヤに変えるときは ${w} をなくします。`
 }

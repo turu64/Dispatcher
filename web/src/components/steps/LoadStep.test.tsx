@@ -410,7 +410,7 @@ describe('読み込んだ GTFS の削除', () => {
 
   it('サンプルなら、元のファイルではなく、もう一度読み込めることを添える', () => {
     expect(deleteConfirmMessage({ draft: null, committed: 0, sample: true })).toBe(
-      '読み込んだ GTFS と、減便の方針・平日に戻した便などの編集、運行の前提(在籍の運転士の数・営業所)と欠員、周辺の施設の調査の結果、AI との会話を消して、最初の状態に戻します。サンプルは、もう一度読み込めます。',
+      '読み込んだ GTFS と、減便の方針・平日に戻した便などの編集、運行の前提(在籍の運転士の数・営業所)と欠員、周辺の施設の調査の結果、AI との会話を消して、最初の状態に戻します。サンプルはもう一度読み込めます。',
     )
     expect(deleteConfirmMessage({ draft: { id: '3' }, committed: 0, sample: false })).toContain('承認待ちの下書き #3 も消えます。')
     expect(deleteConfirmMessage({ draft: null, committed: 2, sample: false })).toContain('承認済みの編集 2 件も消えます。')

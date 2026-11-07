@@ -206,7 +206,7 @@ ${EDITOR:-nano} .env
 | `DISPATCHER_PUBLIC` | `1`(認証コードなしで公開する) |
 | `DISPATCHER_TOKEN` | 空のまま(認証コードを使うときだけ設定) |
 | `DISPATCHER_AGENT_ID` | `claude-lock.json` の `.resources["./agents/coordinator.md"].id` |
-| `DISPATCHER_AGENT_VERSION` | `claude-lock.json` の同じ項目の `version`(11/5 の時点で `3`。ツールの定義の変更(11/6 の A10)を `ant apply` したら `4`。手順 10 の「エージェントを更新したとき」) |
+| `DISPATCHER_AGENT_VERSION` | `claude-lock.json` の同じ項目の `version`(11/7 の時点で `8`。画面と対になっているので、デプロイするコミットの `claude-lock.json` の値にする。手順 10 の「エージェントを更新したとき」) |
 | `DISPATCHER_ENVIRONMENT_ID` | `claude-lock.json` の `.resources["./environments/dispatcher.yaml"].id` |
 | `DISPATCHER_SESSION_SECRET` | 32 バイト以上の乱数(下のコマンド) |
 | `ANTHROPIC_WORKSPACE_ID` | 空のまま(ワークスペース単位のキーでは要りません) |
@@ -226,7 +226,7 @@ ${EDITOR:-nano} .env
 `TYPESAFE_AI_VERCEL_KEY` を書くと、利用者のデータの送り先が Anthropic のほかに1つ増えます(画面の運営情報のページ `#/about` と README にも書いてあります)。
 
 - 送り先:TypeSafe AI Jev(TypeSafe AI)。Vercel AI Gateway(`ai-gateway.vercel.sh`)を経由します。キーは Vercel にだけ送ります
-- 送る時:GTFS を読み込んだあと、ブラウザが自動で1回送ります。service_id の分け方が単純な GTFS(道北バスなど)では送りません。利用者は、手順「読み込み」のファイルを選ぶ欄の上のスイッチで止められ、送っている間も中断でき、得た答えを捨てられます
+- 送る時:service_id のグループ分けが規則で決まらない GTFS を読み込んだとき、送るかどうかを読み込みのたびに確認の窓で聞き、「Jev に送る」を選んだときだけ1回送ります(自動では送りません)。道北バスなどの単純な GTFS では聞きません。送っている間も中断でき、得た答えを捨てられます
 - 送る中身:service ごとの集計(service_id、運行日の数と走る日の割合、便数、系統名と系統ごとの便数、行き先、始発と終着の時刻、運行日が 10 日以下の service の日付、事業者名、有効期間)。GTFS のファイル・停留所の位置・時刻表そのものは送りません
 - TypeSafe AI に限って送ります。中継は Vercel に転送先を TypeSafe AI だけに限る指定(`providerOptions.gateway.only`)を送り、ほかの会社(指定なしの試しの応答では DigitalOcean が予備にあった)には回させません。TypeSafe AI が答えないときは、確かめが失敗になります(2026-11-04 に確かめた。`docs/design-service-groups.md` §6.2-1)。データの保持は Vercel と TypeSafe AI の規約によります
 
@@ -393,7 +393,7 @@ curl -s  $H/api/health                                  # {"status":"ok"}
 curl -s  $H/api/sample-gtfs                             # {"available":true,"name":"道北バス",...}
 curl -s  $H/api/claude/status                           # {"available":true,"tokenRequired":false}
 curl -s  $H/api/service-groups                          # {"available":true,"provider":"TypeSafe AI Jev","via":"Vercel AI Gateway","reason":null}
-curl -s  $H/api/research/demo | jq '.results | length'  # 30
+curl -s  $H/api/research/demo | jq '.results | length'  # 25
 curl -s  $H/api/holidays -o /dev/null -w '%{http_code}\n'      # 200
 curl -s  $H/api/ref/6542 -o /dev/null -w '%{http_code}\n'      # 200(道北バスの範囲のメッシュ)
 curl -s  $H/api/sample-gtfs/download -o /tmp/dohoku.zip && unzip -l /tmp/dohoku.zip | tail -3     # ZIP の中身が見える(約 900KB)
@@ -429,7 +429,7 @@ docker compose exec server sh -c 'test -n "$TYPESAFE_AI_VERCEL_KEY" && echo jev-
 curl -s -X POST -H 'content-type: application/json' -d '{}' $H/api/claude/session
 ```
 - 認証コード(`DISPATCHER_TOKEN`)を設定しないので、AI の中継は 401 にならない。「認証コードが無いと 401」を確かめたいときだけ、`DISPATCHER_TOKEN` を一時的に設定する(`tokenRequired` が `true` になる)
-- `/api/service-groups` の `reason` が `noKey` ならキーが空、`badUrl` なら `DISPATCHER_JEV_URL` が Vercel の口でない、`dailyLimit` なら全体の1日の上限に達している(日本時間の翌日に戻る)。北海道中央バスなど単純でない GTFS を読み込むと、画面が自動で1回 Jev に問う(1 service あたり約 $0.0004)
+- `/api/service-groups` の `reason` が `noKey` ならキーが空、`badUrl` なら `DISPATCHER_JEV_URL` が Vercel の口でない、`dailyLimit` なら全体の1日の上限に達している(日本時間の翌日に戻る)。北海道中央バスなど単純でない GTFS を読み込むと、画面が Jev に送るかを聞き、「Jev に送る」を選ぶと1回問う(1 service あたり約 $0.0004)
 - 1回の会話の後、Console で利用額が増えている。サーバーの1日の額も増えている:
 
 ```bash

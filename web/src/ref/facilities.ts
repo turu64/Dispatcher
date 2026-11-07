@@ -364,14 +364,14 @@ export function compareWithinCategory(a: ResearchCandidate, b: ResearchCandidate
 }
 
 /**
- * 周辺の事業者の並び:こちらの停留所との重なりのある事業者を先に、重なりの数(近くに他社の停留所がある、こちらの停留所の数)の
+ * 周辺の事業者の並び:読み込んだ GTFS の事業者をいちばん上に置く(2026-11-07 に利用者の指示)。その後は、こちらの停留所との重なりのある事業者を先に、重なりの数(近くに他社の停留所がある、こちらの停留所の数)の
  * 多い順。同じなら他社の停留所の数の多い順、それも同じなら compareWithinCategory の順(決まった並びにする)。
  * 重なりを数えていない(overlap が undefined)事業者どうしは compareWithinCategory の順(停留所の参照データが無いときの今までの並び)
  */
 export function compareOperators(a: ResearchCandidate, b: ResearchCandidate): number {
   const own = (c: ResearchCandidate) => c.overlap?.ownStopIds.length ?? 0
   const other = (c: ResearchCandidate) => c.overlap?.otherStops.length ?? 0
-  return own(b) - own(a) || other(b) - other(a) || compareWithinCategory(a, b)
+  return Number(b.ownOperator) - Number(a.ownOperator) || own(b) - own(a) || other(b) - other(a) || compareWithinCategory(a, b)
 }
 
 /**

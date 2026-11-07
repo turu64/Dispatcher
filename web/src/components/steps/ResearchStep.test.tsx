@@ -713,12 +713,12 @@ describe('ResearchStep の周辺の事業者', () => {
     return screen.getByTestId(`operator-detail-${targetId}`)
   }
 
-  it('重なりのある事業者を重なりの数の多い順に先にし、重なりの無い事業者は「近くに停留所なし」と出して後ろに回す', () => {
+  it('読み込んだ GTFS の事業者をいちばん上に、次に重なりのある事業者を重なりの数の多い順に置き、重なりの無い事業者は「近くに停留所なし」と出して後ろに回す', () => {
     loadFile(OPERATOR_FILE)
     setup()
     const rows = operatorRows()
-    expect(rows.slice(0, 2)).toEqual(['おおきいバス', 'となりバス'])
-    expect(rows.indexOf('とおいバス')).toBeGreaterThan(1)
+    expect(rows.slice(0, 3)).toEqual(['テストバス', 'おおきいバス', 'となりバス'])
+    expect(rows.indexOf('とおいバス')).toBeGreaterThan(2)
     const far = screen.getByRole('checkbox', { name: 'とおいバス' }).closest('li')!
     expect(far.textContent).toContain(NO_NEARBY_STOPS)
     expect(screen.getByRole('checkbox', { name: 'おおきいバス' }).closest('li')!.textContent).not.toContain(NO_NEARBY_STOPS)

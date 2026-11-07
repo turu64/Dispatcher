@@ -343,6 +343,13 @@ describe('周辺の事業者の並び(重なり)', () => {
     expect(defaultSelection(list, DEFAULT_PRIORITY_ORDER, 2)).toEqual(['P11:three', 'P11:one-more'])
   })
 
+  it('読み込んだ GTFS の事業者は、重なりや距離にかかわらずいちばん上に置く(既定の選び方には入れない)', () => {
+    const own = { ...op('P11:own', 5000, null), ownOperator: true }
+    const list = [op('P11:three', 100, { ownStopIds: ['A', 'B', 'C'], otherStops: stopsOf(1) }), own, op('P11:none', 10, null)]
+    expect(groupCandidates(list, DEFAULT_PRIORITY_ORDER)[0].items.map((c) => c.facility.targetId)).toEqual(['P11:own', 'P11:three', 'P11:none'])
+    expect(defaultSelection(list, DEFAULT_PRIORITY_ORDER, 3)).not.toContain('P11:own')
+  })
+
   it('重なりを数えていない(停留所の参照データが無い)ときは、今までどおり停留所に近い順', () => {
     const list = [op('P11:far', 900, undefined), op('P11:near', 100, undefined)]
     expect([...list].sort(compareOperators).map((c) => c.facility.targetId)).toEqual(['P11:near', 'P11:far'])

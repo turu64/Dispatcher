@@ -165,7 +165,7 @@ describe('ExportStep', () => {
     // 開始日(11/1)が今日(10/20)より先:公開の時期の注意と、実施まで 12 日の注意
     expect(document.querySelector('[data-code="futureStart"]')).not.toBeNull()
     expect(document.querySelector('[data-code="leadTimeUnder30"]')?.textContent).toContain('実施まで 12 日です')
-    expect(text).toContain('全曜日で便がなくなる系統:1 系統(3)')
+    expect(text).toContain('全曜日で便がなくなる系統:1 系統')
     expect(text).toContain('Dispatcher で減便を反映して加工しています')
   })
 

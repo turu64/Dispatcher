@@ -603,13 +603,13 @@ function NoticeBody({
                 {rows.length === 0 ? (
                   <p className="text-sm text-muted-foreground">条件に合う停留所はありません。</p>
                 ) : (
-                  <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto" aria-label="停留所の選択">
+                  <ul className="flex max-h-56 flex-col divide-y overflow-y-auto border-y" aria-label="停留所の選択">
                     {shown.map((s) => (
                       <li key={s.stopId}>
                         <Button
-                          variant={selected === s.stopId ? 'default' : 'outline'}
+                          variant={selected === s.stopId ? 'default' : 'ghost'}
                           size="sm"
-                          className="h-auto w-full justify-start py-1 text-left whitespace-normal"
+                          className="h-auto w-full justify-start rounded-none py-1 text-left whitespace-normal"
                           aria-pressed={selected === s.stopId}
                           onClick={() => setSelected(s.stopId)}
                         >
@@ -624,7 +624,7 @@ function NoticeBody({
                   </ul>
                 )}
                 {rows.length > shown.length && (
-                  <Button variant="outline" size="sm" className="self-start" onClick={() => setLimit((n) => n + PAGE_SIZE)}>
+                  <Button variant="ghost" size="sm" className="self-start" onClick={() => setLimit((n) => n + PAGE_SIZE)}>
                     さらに表示(残り{rows.length - shown.length}件)
                   </Button>
                 )}

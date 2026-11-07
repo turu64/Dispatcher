@@ -178,7 +178,17 @@ export default function ExportStep() {
             <p className="text-xs text-muted-foreground" data-testid="trip-id-note">
               {tripIdNote(plan?.kind ?? null)}
             </p>
-            <IssueList issues={preview} title="出力の前の検証" />
+            {/* 誤り・注意があれば開いて出し、情報だけなら件数を見出しに出して閉じておく */}
+            {preview.length > 0 && preview.every((i) => i.severity === 'info') ? (
+              <details className="text-xs">
+                <summary className="cursor-pointer text-sm font-medium">出力の前の検証(誤り・注意なし。情報 {preview.length} 件)</summary>
+                <div className="mt-1">
+                  <IssueList issues={preview} />
+                </div>
+              </details>
+            ) : (
+              <IssueList issues={preview} title="出力の前の検証" />
+            )}
             {blocked && <p className="text-sm text-muted-foreground">{blocked}</p>}
             <Button type="button" className="self-start" disabled={blocked !== null} loading={busy} loadingLabel="出力中" onClick={() => void onExport()}>
               <DownloadIcon aria-hidden="true" />
@@ -286,7 +296,6 @@ function ExportSummary({ base, version, customVersion }: { base: BaseGtfs; versi
           </dt>
           <dd className="text-base font-semibold tabular-nums">
             {vanishing.length} 系統
-            {vanishing.length > 0 && <span className="text-xs font-normal">({vanishing.map((r) => r.routeName).join('、')})</span>}
           </dd>
         </div>
         <div className="col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -309,10 +318,13 @@ function ExportSummary({ base, version, customVersion }: { base: BaseGtfs; versi
         </div>
       </dl>
       {report.addBack.accepted.length > 0 && <p className="text-xs">{restoreTotalsText(totals)}</p>}
-      <NoteList
-        items={texts.validity}
-        label="有効期間と期間の外"
-      />
+      {/* 有効期間の内訳は上の数の枠で分かるので閉じておき、出力した後の注意(何が変わるか)は外に出す */}
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground">有効期間と期間の外({texts.validity.length} 件)</summary>
+        <div className="mt-1">
+          <NoteList items={texts.validity} label="有効期間と期間の外" />
+        </div>
+      </details>
       <NoteList items={texts.changes} label="何が変わるか" />
       <IssueList issues={timingNotices(version, today)} title="実施日までの日数と公開の注意" />
     </div>

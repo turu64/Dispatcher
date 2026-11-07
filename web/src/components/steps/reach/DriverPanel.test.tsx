@@ -283,7 +283,7 @@ describe('DriverView(乗務できる運転士の数(目安)の数え方)', () =>
   it('欠員がその日に出勤する運転士の数より多ければ、数を確かめる注意にする', () => {
     viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), roster: 10, shortage: 20 })
     const warning = screen.getByTestId('supply-warning')
-    expect(warning.textContent).toContain('欠員が、その日に出勤する運転士の数')
+    expect(warning.textContent).toContain('欠員がその日に出勤する運転士の数')
     expect(warning.textContent).toContain('手順「運行の前提」の在籍の運転士の数・週の出勤日数と、手順「減便の方針」の欠員を確かめてください。')
     expect(warning.className).toContain('text-destructive')
   })

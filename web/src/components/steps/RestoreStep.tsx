@@ -66,19 +66,19 @@ function bandWidthHours(ctx: RestoreHintContext): number | null {
 function reachHintNote(ctx: RestoreHintContext): string {
   const width = bandWidthHours(ctx)
   const bands = width === null ? '地図の時間帯' : `地図の時間帯(今は${width}時間ごと)`
-  return `${REACH_PAIR}は、${formatDateJa(ctx.date)}の到達圏の前後の比較から、${bands}で数えています。時間帯の幅は地図の下の操作盤で3時間ごと・1時間ごとに切り替えられ、切り替えるとこの2つも数え直します。「${RESTORE_HINT_LABELS.restoresLostCells}」の数は、この便だけを平日に戻したときの値です(ほかの便を平日に戻したときとの重なりは考えていません)。`
+  return `${REACH_PAIR}は、${formatDateJa(ctx.date)}の到達圏の前後の比較から、${bands}で数えています。時間帯の幅は地図の下の操作盤で3時間ごと・1時間ごとに切り替えられ、切り替えるとこの2つも数え直します。「${RESTORE_HINT_LABELS.restoresLostCells}」の数はこの便だけを平日に戻したときの値です(ほかの便を平日に戻したときとの重なりは考えていません)。`
 }
 
 /**
  * 時刻で決まる判断材料の時間帯の説明(U05)。始発の時間帯は到達圏と同じ3時間ごと(始発の時間帯の絞り込みと同じ区切り)で、
  * 公示第47号の区分(6〜9時台、10〜14時台…)は使わない
  */
-const BAND_HINT_NOTE = `「${RESTORE_HINT_LABELS.onlyTripInBand}」は、始発の時間帯(到達圏と同じ3時間ごと。6〜9時、9〜12時…。上の「始発の時間帯」の絞り込みと同じ区切り)で、その系統の減便後の平日の便が 0 になる便です。同じ時間帯のなくなる便すべてに付き、方向は分けていません。「${RESTORE_HINT_LABELS.morning}」と「${RESTORE_HINT_LABELS.evening}」も始発の時刻で見ます。`
+const BAND_HINT_NOTE = `「${RESTORE_HINT_LABELS.onlyTripInBand}」は、始発の時間帯(到達圏と同じ3時間ごと。6〜9時、9〜12時…。上の「始発の時間帯」の絞り込みと同じ区切り)で、その系統の減便後の平日の便が 0 になる便です。方向は分けず、同じ時間帯のなくなる便すべてに付きます。「${RESTORE_HINT_LABELS.morning}」と「${RESTORE_HINT_LABELS.evening}」も始発の時刻で見ます。`
 
 /** 到達圏を使う2つの手がかりを出していない理由 */
 const REACH_HINTS_ABSENT = {
   error: `到達圏の計算に失敗したため、${REACH_PAIR}は出していません。`,
-  draft: `承認待ちの下書きがある間は、${REACH_PAIR}を出しません。地図と到達圏が、下書きの結果になるためです。「承認する」か「やめる」を押すと出します。`,
+  draft: `承認待ちの下書きがある間は、${REACH_PAIR}を出しません。地図と到達圏が下書きの結果になるためです。「承認する」か「やめる」を押すと出します。`,
   computing: `到達圏を計算しているため、${REACH_PAIR}は、計算が終わってから出します。`,
   none: `到達圏の前後の比較ができると、${REACH_PAIR}も出します。`,
   notRunning: (date: string) =>
@@ -544,7 +544,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         </fieldset>
 
         {!(compareDate && editedTimeline) && (
-          <p className="text-xs text-muted-foreground">比較する日付が決まると、方向ごとに減便後の最大間隔を出します。比較する日付は、地図の下の操作盤で選べます。</p>
+          <p className="text-xs text-muted-foreground">比較する日付が決まると、方向ごとに減便後の最大間隔を出します。比較する日付は地図の下の操作盤で選べます。</p>
         )}
         <div ref={candidatesRef} className="flex min-w-0 flex-col">
         <CandidateGroups
@@ -569,7 +569,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
             <summary className="cursor-pointer text-muted-foreground">判断材料の数え方</summary>
             <div className="mt-1 flex flex-col gap-1 text-muted-foreground">
               {compareDate && editedTimeline && (
-                <p>{`減便後の最大間隔は、比較する日付(${formatDateJa(compareDate)})の、承認済みの減便後の便で数えています。比較する日付は、地図の下の操作盤で変えられます。`}</p>
+                <p>{`減便後の最大間隔は、比較する日付(${formatDateJa(compareDate)})の、承認済みの減便後の便で数えています。比較する日付は地図の下の操作盤で変えられます。`}</p>
               )}
               <p>{BAND_HINT_NOTE}</p>
               {reachStatus.kind === 'note' && (hintsPresent.includes('onlyServiceAtStop') || hintsPresent.includes('restoresLostCells')) && <p>{reachStatus.text}</p>}
@@ -678,7 +678,7 @@ function SelectedFacilityReasons({ trips, onUse }: { trips: readonly Candidate[]
     <section className="flex flex-col gap-1 text-xs" aria-label="選んだ便の近くの学校・病院">
       <h3 className="font-medium">選んだ便の近くの学校・病院</h3>
       {!single && (
-        <p className="text-muted-foreground">「理由に使う」は、1便だけ選んだときに使えます。</p>
+        <p className="text-muted-foreground">「理由に使う」は1便だけ選んだときに使えます。</p>
       )}
       <ul className="flex flex-col divide-y rounded-md border">
         {rows.map(({ c, matched, texts }) => (
@@ -702,7 +702,7 @@ function SelectedFacilityReasons({ trips, onUse }: { trips: readonly Candidate[]
                 size="sm"
                 className="h-6 px-1.5 text-xs"
                 onClick={() => onUse(texts[0])}
-                aria-label={`${c.trip.tripId} の学校・病院の文を、理由の欄に入れる`}
+                aria-label={`${c.trip.tripId} の学校・病院の文を理由の欄に入れる`}
               >
                 理由に使う
               </Button>

@@ -78,7 +78,7 @@ describe('乗務できる運転士の数(目安)と要る勤務の数の文', ()
       '乗務できる運転士の数(目安)は、在籍 150 × 週の出勤日数 5 ÷ 7 = 107(小数は切り捨て)です(欠員は未入力のため 0 として数えました)。',
     )
     expect(supplyWarningText(driverSupplyOf(150, 5, 19)!)).toBeNull()
-    expect(supplyWarningText(driverSupplyOf(10, 5, 20)!)).toContain('欠員が、その日に出勤する運転士の数')
+    expect(supplyWarningText(driverSupplyOf(10, 5, 20)!)).toContain('欠員がその日に出勤する運転士の数')
   })
 
   it('運用番号の数から出したか、推定をそのまま使ったかを1文で書く', () => {

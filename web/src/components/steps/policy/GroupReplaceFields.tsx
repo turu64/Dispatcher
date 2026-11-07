@@ -302,7 +302,7 @@ function ManualFields({ groups, kind }: { groups: ServiceGroups; kind: PolicyKin
       {orphans.length > 0 && (
         <>
           <h4 className="text-xs font-medium" id={`${GROUP_MANUAL_ID}-orphans`}>
-            どの平日の service にも入れていない入れ替えに使う service
+            どの平日の service にも入れていない、入れ替えに使う service
           </h4>
           <ul className="flex flex-col gap-1.5" aria-labelledby={`${GROUP_MANUAL_ID}-orphans`}>
             {orphans.map((row) => (
@@ -373,7 +373,7 @@ export function GroupReplaceFields({
           <PairList settings={value} tripCounts={tripCounts} dropped={dropped} skipped={skipped} />
         ) : (
           <p className="text-xs text-destructive">
-            このグループ分けでは、{REPLACEMENT_LABELS[kind]}ダイヤに変更できません
+            このグループ分けでは{REPLACEMENT_LABELS[kind]}ダイヤに変更できません
             {errors && errors.length > 0 ? `(${errors.map((p) => p.message).join(' ')})` : ''}。「手動で選ぶ」で直せます。
           </p>
         )

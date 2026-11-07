@@ -331,7 +331,7 @@ export function PolicyForm({
         {reasonChoice !== null && reasonChoice !== 'other' && (
           // 括弧の補足の入力欄の説明(aria-describedby)。見た目は小さく
           <p id={REASON_NOTE_HINT_ID} className="text-[11px] leading-tight text-muted-foreground">
-            括弧の補足は、変更指示書に載せます。
+            括弧の補足は変更指示書に載せます。
           </p>
         )}
       </fieldset>
@@ -354,7 +354,7 @@ export function PolicyForm({
           <p className="text-xs font-semibold text-amber-900 dark:text-amber-300" data-testid="groups-erase-only">
             <span aria-hidden="true">! </span>
             {REPLACEMENT_LABELS[kind]}のダイヤに入れ替える便がないため、{diaLabel('平日', sentenceServices(groupValue, dropped, skipped).weekdays)}
-            の便は、期間の間すべてなくなります(土曜・日祝の便には入れ替わりません)。
+            の便は期間の間すべてなくなります(土曜・日祝の便には入れ替わりません)。
           </p>
         )}
         {grouped?.status === 'unconfirmed' && (

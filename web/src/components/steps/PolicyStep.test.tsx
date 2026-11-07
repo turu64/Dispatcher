@@ -1179,7 +1179,7 @@ describe('PolicyStep の欠員の欄', () => {
   it('在籍の運転士の数が無ければ、手順「運行の前提」で入れる案内を出し、あれば乗務できる運転士の数(目安)の数え方を出す', () => {
     render(<PolicyStep />)
     expect(within(region()).getByTestId('shortage-supply').textContent).toBe(
-      '在籍の運転士の数は、手順「運行の前提」で入れます。',
+      '在籍の運転士の数は手順「運行の前提」で入れます。',
     )
     expect(within(region()).getByTestId('shortage-available').textContent).toContain('—')
     act(() => useDriversStore.getState().setRoster(150))
@@ -1191,7 +1191,7 @@ describe('PolicyStep の欠員の欄', () => {
     expect(within(region()).queryByTestId('shortage-supply-warning')).toBeNull()
     // 欠員がその日に出勤する運転士の数より多ければ、数を確かめる注意を出す
     fireEvent.change(input(), { target: { value: '200' } })
-    expect(within(region()).getByTestId('shortage-supply-warning').textContent).toContain('欠員が、その日に出勤する運転士の数')
+    expect(within(region()).getByTestId('shortage-supply-warning').textContent).toContain('欠員がその日に出勤する運転士の数')
   })
 
   it('対象便を確かめている間(下書き)も、承認したあとも、「方針を変える」の後も、同じ値で出る', () => {

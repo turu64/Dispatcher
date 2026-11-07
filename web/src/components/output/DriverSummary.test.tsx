@@ -113,7 +113,7 @@ describe('DriverSummaryView(変更指示書のまとまり)', () => {
     )
     expect(verdict.className).toContain('font-semibold')
     // 欠員がその日に出勤する運転士の数より多いので、数を確かめる注意を添える
-    expect(screen.getByTestId('driver-summary-supply').textContent).toContain('⚠ 注意:欠員が、その日に出勤する運転士の数')
+    expect(screen.getByTestId('driver-summary-supply').textContent).toContain('⚠ 注意:欠員がその日に出勤する運転士の数')
   })
 
   it('営業所を置くと、仮定の一覧にその数と、回送・休憩の数え方を出す。置いた営業所の名前は出さない', () => {

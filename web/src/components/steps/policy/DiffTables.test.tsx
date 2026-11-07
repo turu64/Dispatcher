@@ -167,7 +167,7 @@ describe('ExcludedRoutes(入れ替えから外す系統)', () => {
     const { container } = render(<ExcludedRoutes stats={stats} excluded={[]} onChange={() => {}} replacementLabel="土曜" />)
     const text = container.textContent ?? ''
     expect(text).toContain('土曜の便がない系統(1 系統。表の先頭)は、入れ替えると全曜日で便がなくなります。路線の休止の届出に当たるかを運輸支局に確認してください。')
-    expect(text).toContain('外した系統は平日の便をそのまま残し、土曜の便は加わりません。')
+    expect(text).toContain('外した系統は平日の便がそのまま残り、土曜の便は加わりません。')
   })
 })
 

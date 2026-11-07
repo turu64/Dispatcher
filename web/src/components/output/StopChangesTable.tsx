@@ -228,7 +228,7 @@ function StopChangesBody({ result, draft }: { result: StopDiffResult; draft: boo
       </div>
 
       <p className="text-xs text-muted-foreground" role="status">
-        {rows.length}件{query.trim() !== '' || changedOnly ? `(全${total}件のうち)` : ''}
+        {rows.length}件{query.trim() !== '' || changedOnly ? `(全${total}件中)` : ''}
         {rows.length > shown.length ? `のうち先頭の${shown.length}件を表示` : ''}
       </p>
 
@@ -263,7 +263,7 @@ function StopChangesBody({ result, draft }: { result: StopDiffResult; draft: boo
         </Button>
       )}
       <p className="text-xs text-muted-foreground">
-        本数はその日の停留所での発車の数(各便の終点は数えません)、最大間隔は始発から最終便までの隣り合う発車の間隔の最大(系統をまとめて数えます)です。
+        本数はその日の停留所での発車の数で(各便の終点は数えません)、最大間隔は始発から最終便までの隣り合う発車の間隔の最大です(系統をまとめて数えます)。
       </p>
     </>
   )

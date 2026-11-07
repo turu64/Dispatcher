@@ -102,7 +102,7 @@ export function supplyText(supply: DriverSupply): string {
 /** 欠員がその日に出勤する運転士の数より多いときの注意。そうでなければ null */
 export function supplyWarningText(supply: DriverSupply): string | null {
   return supply.shortageOverOnDuty
-    ? '注意:欠員が、その日に出勤する運転士の数(在籍 × 週の出勤日数 ÷ 7)より多くなっています。手順「運行の前提」の在籍の運転士の数・週の出勤日数と、手順「減便の方針」の欠員を確かめてください。'
+    ? '注意:欠員がその日に出勤する運転士の数(在籍 × 週の出勤日数 ÷ 7)より多くなっています。手順「運行の前提」の在籍の運転士の数・週の出勤日数と、手順「減便の方針」の欠員を確かめてください。'
     : null
 }
 
@@ -115,7 +115,7 @@ export function needBasisText(need: DriverNeed): string {
     if (need.after === null || need.estimateAfter === null) return `要る勤務の数は、減便前は入力の運用番号の数 ${need.before} です。`
     return `要る勤務の数は、減便前は入力の運用番号の数 ${need.before}、減便後はそれに推定した勤務の数の比(${need.estimateAfter}/${need.estimateBefore})を掛けた ${need.after} です(四捨五入)。`
   }
-  return '入力の運用番号の数が取れないため、要る勤務の数は、推定した勤務の数(目安。下限の目安)をそのまま使っています。'
+  return '入力の運用番号の数が取れないため、要る勤務の数は推定した勤務の数(目安。下限の目安)をそのまま使っています。'
 }
 
 /** 比較する日付に平日ダイヤが走らないときの文 */
@@ -134,16 +134,16 @@ export function driverCaveats(
   const remoteWait = params.maxRemoteWaitMin === undefined ? DUTY_DEFAULTS.maxRemoteWaitMin : params.maxRemoteWaitMin
   const offices = places.length > 0
   return [
-    '勤務の数は、要る運転士の数の下限の目安です。実際に要る人数はこれより多くなることがあります。',
+    '勤務の数は要る運転士の数の下限の目安です。実際に要る人数はこれより多くなることがあります。',
     `改善基準告示 第5条の上限(拘束 ${hours(params.maxBoundMin)}・運転 ${hours(params.maxDrivingMin)}・連続運転 ${hours(params.maxContinuousMin)})で勤務を区切りました。`,
     '休息期間・休日・予備の要員・36協定と、実際の仕業・交番は事業者が判断します。Dispatcher は運転士ごとの勤務を判定しません。',
     offices
-      ? '出庫・入庫の回送は、最寄りの営業所との直線距離から見積もっています。'
+      ? '出庫・入庫の回送は最寄りの営業所との直線距離から見積もっています。'
       : '営業所を置いていないため、出庫・入庫の回送を 0 として数えています。',
     offices
       ? remoteWait === null
-        ? '休憩はどの停留所でのすき間にも数える甘めの数え方です。'
-        : `休憩はどの停留所でのすき間にも数え、営業所から遠い停留所で ${hours(remoteWait)}より長く待つすき間は営業所へ戻って休むとみなす甘めの数え方です。`
+        ? 'どの停留所でのすき間も休憩に数える甘めの数え方です。'
+        : `どの停留所でのすき間も休憩に数え、営業所から遠い停留所で ${hours(remoteWait)}より長く待つすき間は営業所へ戻って休むとみなす甘めの数え方です。`
       : '営業所を置いていないため、どの停留所でのすき間も休憩に数える甘めの数え方です。',
   ]
 }
@@ -160,7 +160,7 @@ export function assumptionsSummary(params: Pick<DutyParams, 'maxBoundMin' | 'pre
 
 /** 運用番号の数(参考)の説明 */
 export const OPERATOR_RUNS_NOTE =
-  '入力の運用番号の数は、減便前の GTFS の trip_id の先頭の番号の種類の数です(参考。事業者の実際の勤務の数とは限りません)。'
+  '入力の運用番号の数は減便前の GTFS の trip_id の先頭の番号の種類の数です(参考。事業者の実際の勤務の数とは限りません)。'
 
 /** 営業運行時間の数え方 */
 export const SERVICE_HOURS_NOTE = '営業運行時間は各便の始発から終着までの合計で、回送・待機・点呼は含みません。'

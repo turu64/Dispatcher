@@ -175,11 +175,11 @@ describe('RestoreStep', () => {
     expect(region('系統 1').textContent).toContain('なくなる便 1 便(判断材料あり 1 便)')
     // 比べる日が無ければ、最大間隔は出さない
     expect(screen.getByText(/比較する日付が決まると/)).toBeTruthy()
-    expect(screen.getByText(/比較する日付は、地図の下の操作盤で選べます/)).toBeTruthy()
+    expect(screen.getByText(/比較する日付は地図の下の操作盤で選べます/)).toBeTruthy()
 
     act(() => useReachStore.setState({ date: '20261104' }))
     expect(screen.getByText(/比較する日付\(2026年11月4日\(水\)\)の/)).toBeTruthy()
-    expect(screen.getByText(/比較する日付は、地図の下の操作盤で変えられます/)).toBeTruthy()
+    expect(screen.getByText(/比較する日付は地図の下の操作盤で変えられます/)).toBeTruthy()
     fireEvent.click(within(region('系統 1')).getByRole('button', { expanded: false }))
     expect(region('系統 1').textContent).toContain('駅前 → 市役所')
     expect(region('系統 1').textContent).toContain('減便後の最大間隔 65 分')
@@ -218,7 +218,7 @@ describe('RestoreStep', () => {
     expect(candidates().textContent).not.toContain('唯一')
     // 判断材料の絞り込みの名前と、説明の注記も同じ名前
     expect(within(screen.getByLabelText('判断材料')).getByRole('option', { name: '時間帯の便がなくなる' })).toBeTruthy()
-    expect(screen.getByText(/「時間帯の便がなくなる」は、始発の時間帯\(到達圏と同じ3時間ごと。.*同じ時間帯のなくなる便すべてに付き、方向は分けていません。/)).toBeTruthy()
+    expect(screen.getByText(/「時間帯の便がなくなる」は、始発の時間帯\(到達圏と同じ3時間ごと。.*方向は分けず、同じ時間帯のなくなる便すべてに付きます。/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('唯一')
   })
 
@@ -625,7 +625,7 @@ describe('RestoreStep', () => {
       const toggle = within(reasons()).getByRole('button', { name: '市立病院の調べた要点' })
       expect(toggle.getAttribute('aria-expanded')).toBe('false')
       // 閉じていても、窓の出どころと確認日時・デモの印は見える。事実はまだ出さない
-      expect(reasons().textContent).toContain('窓は調べた結果')
+      expect(reasons().textContent).toContain('時間帯は調べた結果')
       expect(reasons().textContent).toContain('確認日時 2026年10月30日 10:00・デモ用の保存済みの結果')
       expect(reasons().textContent).not.toContain('外来受付時間')
       expect(reasons().textContent).not.toContain('30日より前の確認です')
@@ -634,7 +634,7 @@ describe('RestoreStep', () => {
       expect(toggle.getAttribute('aria-expanded')).toBe('true')
       expect(reasons().textContent).toContain('外来受付時間')
       expect(reasons().textContent).toContain('〔午前〕8：00～11：30 〔午後〕13：00～15：15')
-      expect(reasons().textContent).toContain('通院の行きの窓に使用・通院の帰りの窓に使用')
+      expect(reasons().textContent).toContain('通院の行きの時間帯に使用・通院の帰りの時間帯に使用')
       const link = within(reasons()).getByRole('link', { name: /出典 www\.nayoro-hosp\.example/ })
       expect(link.getAttribute('href')).toBe(URL_HOSP)
       expect(link.getAttribute('rel')).toContain('noopener')
@@ -661,9 +661,9 @@ describe('RestoreStep', () => {
       withFacilities('R3_0730_WK', [near(plain)])
       const { unmount } = render(<RestoreStep />)
       pick('R3_0730_WK')
-      expect(reasons().textContent).toContain('窓は既定')
+      expect(reasons().textContent).toContain('時間帯は既定')
       fireEvent.click(within(reasons()).getByRole('button', { name: '市立病院の調べた要点' }))
-      expect(reasons().textContent).toContain('この施設は「判断材料を調べる」で調べていないため、時間帯の窓は既定です。')
+      expect(reasons().textContent).toContain('この施設は「判断材料を調べる」で調べていないため、時間帯は既定です。')
       unmount()
 
       const unread = hintFacility({ kind: 'hospital', windows: facilityWindows('hospital', []), research: note('2026-11-01T09:00:00+09:00') })
@@ -672,7 +672,7 @@ describe('RestoreStep', () => {
       pick('R3_0730_WK')
       expect(reasons().textContent).toContain('確認日時 2026年11月1日 09:00')
       fireEvent.click(within(reasons()).getByRole('button', { name: '市立病院の調べた要点' }))
-      expect(reasons().textContent).toContain('調べた結果から受付時間・始業・終業を読めなかったため、時間帯の窓は既定です。')
+      expect(reasons().textContent).toContain('調べた結果から受付時間・始業・終業を読めなかったため、時間帯は既定です。')
     })
 
     it('学校の長期休業が減便の期間と重なるときだけ、(学)のチェックの近くに注意を出す。チェックは自動で付けない', () => {
@@ -806,7 +806,7 @@ R1_1700_WK,17:10:00,17:10:00,A,2,1,0`))
       expect(rows[2].textContent).toContain('帰り(市役所 → 駅前)の15〜21時の便:1 → 0 便')
       expect(rows).toHaveLength(3)
       expect(checks().textContent).toContain(
-        '乗車人数・混み具合・鉄道との乗り継ぎの時刻は、データがないため判定していません。窓は始業・受付の時刻からの目安です。',
+        '乗車人数・混み具合・鉄道との乗り継ぎの時刻は、データがないため判定していません。時間帯は始業・受付の時刻からの目安です。',
       )
       // 学校・病院を読み込んでいなければ、理由を出す
       expect(facilityCheck().textContent).toContain('周辺の学校・病院の参照データを読み込むと、施設ごとに確かめます。')

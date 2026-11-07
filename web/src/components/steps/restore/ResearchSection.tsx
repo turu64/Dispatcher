@@ -49,7 +49,7 @@ export const RESEARCH_SAVED_NOTE = '保存済みの対象は調べ直さず(Web 
 export const RESEARCH_RESULT_NOTE = '結果は AI が Web で調べたものです。確認日時のあとに変わっていることがあります。出典を開いて確かめてください。'
 export const OWN_OPERATOR = '読み込んだ GTFS の事業者'
 /** 読み込んだ GTFS の事業者のチェックボックスの説明(変更できない・調べる対象にしない) */
-export const OWN_OPERATOR_FIXED = '読み込んだ GTFS の事業者は、調べる対象にしません(変更できません)。'
+export const OWN_OPERATOR_FIXED = '読み込んだ GTFS の事業者は調べる対象にしません(変更できません)。'
 /**
  * 行の下に出す、調べた結果の全部の開閉の見出し(最初は閉じておく)。行には要点(学校・病院は判断に使う時刻とバスの案内、
  * 事業者は減便の動き)だけを出す(2026-11-07 に利用者の指示で、事実をすべて開いて並べる形をやめた)
@@ -68,7 +68,7 @@ export const OVERLAP_DISCLAIMER = '国土数値情報の停留所には時刻が
 export const NO_BUSSTOP_DATA = '周辺の事業者の停留所の参照データがないため、こちらの停留所との重なりは数えていません。'
 /** まだ調べていない周辺の事業者の行に付けるバッジと、その説明(title) */
 export const NOT_RESEARCHED_BADGE = '未調査'
-export const NOT_RESEARCHED_TITLE = '減便・ダイヤ改正・運休の動きは、まだ調べていません。'
+export const NOT_RESEARCHED_TITLE = '減便・ダイヤ改正・運休の動きはまだ調べていません。'
 // 見出し(label)で絞った結果だけを言う。廃止など、絞り込みの語に当たらない事実がありうるため「動きがない」とは書かない
 export const MOVEMENT_NONE = '調べた結果に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、下の「調べた結果のすべて」を開いて、ほかの事実と出典を確かめてください。'
 export const REDUCED_AFTER_POLICY = '「減便の方針」を承認すると、発車が減る・なくなる停留所のうち、ほかの事業者の停留所が近くにある数も表示します。'

@@ -8,7 +8,7 @@ import { driverSupplyOf, MAX_SHORTAGE, useDriversStore } from '@/store/drivers'
 export const SHORTAGE_TITLE = '欠員'
 
 /** 在籍の運転士の数を入れていないときに、欠員の欄に出す文 */
-export const SHORTAGE_ROSTER_HINT = '在籍の運転士の数は、手順「運行の前提」で入れます。'
+export const SHORTAGE_ROSTER_HINT = '在籍の運転士の数は手順「運行の前提」で入れます。'
 
 /**
  * 減便の方針の手順の欠員の欄(2026-11-07 に利用者の指示で、運行の前提の欄から移した)。

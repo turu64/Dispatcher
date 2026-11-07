@@ -39,7 +39,7 @@ function evidenceFacts(f: HintFacility): EvidenceFact[] {
   }
   for (const timing of ['arrive', 'depart'] as const) {
     const w = f.windows[timing]
-    if (w.source === 'research') add(w.fact, `${FACILITY_WINDOW_NAMES[f.kind][timing]}の窓に使用`)
+    if (w.source === 'research') add(w.fact, `${FACILITY_WINDOW_NAMES[f.kind][timing]}の時間帯に使用`)
   }
   for (const b of f.longBreaks) add(b.fact, '長期休業の重なりの確認に使用')
   return out
@@ -93,7 +93,7 @@ export function FacilityEvidence({ near }: { near: NearFacility }) {
           )}
           調べた要点
         </button>
-        <span className="text-muted-foreground">窓は{windowSourceText(f)}</span>
+        <span className="text-muted-foreground">時間帯は{windowSourceText(f)}</span>
         {research && (
           <span className="text-muted-foreground">
             確認日時 {checkedAtText(research.checkedAt)}・{research.origin === 'demo' ? 'デモ用の保存済みの結果' : 'Web で調べた結果'}
@@ -127,11 +127,11 @@ export function FacilityEvidence({ near }: { near: NearFacility }) {
               })}
             </dl>
           ) : !research ? (
-            <p className="text-muted-foreground">この施設は「判断材料を調べる」で調べていないため、時間帯の窓は既定です。</p>
+            <p className="text-muted-foreground">この施設は「判断材料を調べる」で調べていないため、時間帯は既定です。</p>
           ) : research.status === 'not_found' ? (
-            <p className="text-muted-foreground">調べましたが見つからなかったため、時間帯の窓は既定です。</p>
+            <p className="text-muted-foreground">調べましたが見つからなかったため、時間帯は既定です。</p>
           ) : (
-            <p className="text-muted-foreground">調べた結果から受付時間・始業・終業を読めなかったため、時間帯の窓は既定です。</p>
+            <p className="text-muted-foreground">調べた結果から受付時間・始業・終業を読めなかったため、時間帯は既定です。</p>
           )}
         </div>
       )}

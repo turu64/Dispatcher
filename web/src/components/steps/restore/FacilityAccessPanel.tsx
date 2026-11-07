@@ -10,7 +10,7 @@ import { StatTiles } from './StatTiles'
 
 /** 往復と学校・病院の確認で判定しないことの断り書き(画面と README の「できないこと」で同じ趣旨) */
 export const CHECK_LIMITS_NOTE =
-  '乗車人数・混み具合・鉄道との乗り継ぎの時刻は、データがないため判定していません。窓は始業・受付の時刻からの目安です。'
+  '乗車人数・混み具合・鉄道との乗り継ぎの時刻は、データがないため判定していません。時間帯は始業・受付の時刻からの目安です。'
 
 /** 最初に出す施設の数(候補の一覧が下に押し出されすぎないように少なくする) */
 const FIRST_ROWS = 3
@@ -115,7 +115,7 @@ export function FacilityAccessPanel({
       </p>
     )
   } else if (!facilities || !result) {
-    body = <p className="text-muted-foreground">{unavailable ?? '学校・病院を読み込むと確かめます。'}</p>
+    body = <p className="text-muted-foreground">{unavailable ?? '学校・病院の参照データを読み込むと確かめます。'}</p>
   } else if (result.reason !== null) {
     body = <p className="text-muted-foreground">{result.reason}</p>
   } else {

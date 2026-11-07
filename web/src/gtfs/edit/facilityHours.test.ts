@@ -307,7 +307,7 @@ describe('学校の窓(schoolWindows)', () => {
     expect([mixed.start?.minutes, mixed.end?.minutes]).toEqual([h(8, 40), h(15, 20)])
   })
 
-  it('始業だけ読めたら、出る窓は既定(14〜18時発)のまま', () => {
+  it('始業だけ読めたら、出る時間帯は既定(14〜18時発)のまま', () => {
     const w = schoolWindows([{ label: '始業', value: '8時40分' }])
     expect(span(w.arrive)).toEqual([h(7, 40), h(8, 40), 'research'])
     expect(span(w.depart)).toEqual([h(14), h(18), 'default'])

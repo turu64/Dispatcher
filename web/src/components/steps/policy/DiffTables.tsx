@@ -81,7 +81,7 @@ export function ExcludedRoutes({
             })}
           </TableBody>
         </Table>
-        <p className="text-xs text-muted-foreground">外した系統は平日の便をそのまま残し、{replacementLabel}の便は加わりません。</p>
+        <p className="text-xs text-muted-foreground">外した系統は平日の便がそのまま残り、{replacementLabel}の便は加わりません。</p>
       </div>
     </details>
   )

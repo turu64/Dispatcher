@@ -84,7 +84,7 @@ describe('ダイヤ単位で選ぶとき(Jev を待っていない)', () => {
     })
     render(<PolicyStep />)
     const note = screen.getByTestId('groups-erase-only')
-    expect(note.textContent).toContain('土曜のダイヤに入れ替える便がないため、平日のダイヤ(WK)の便は、期間の間すべてなくなります')
+    expect(note.textContent).toContain('土曜のダイヤに入れ替える便がないため、平日のダイヤ(WK)の便は期間の間すべてなくなります')
   })
 
   it('確定を押さずに、文の穴をダイヤの語にし、詳しい設定に組の内訳を出し、組の表で下書きを作る(既定は自動)', () => {
@@ -310,6 +310,6 @@ describe('減便の理由の括弧の補足', () => {
     render(<PolicyForm base={base} initial={null} initialReason={{ category: 'temporaryShortage', note: '' }} />)
     const input = screen.getByRole('textbox', { name: '減便の理由の補足' })
     const hint = document.getElementById(input.getAttribute('aria-describedby') ?? '')
-    expect(hint?.textContent).toBe('括弧の補足は、変更指示書に載せます。')
+    expect(hint?.textContent).toBe('括弧の補足は変更指示書に載せます。')
   })
 })

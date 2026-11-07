@@ -109,7 +109,7 @@ describe('ReachSummaryTable', () => {
     expect(text).toContain('|調べた区画|4|推計人口 200 人|')
     expect(text).toContain('|徒歩圏に停留所・駅がある区画|3|推計人口 180 人|')
     expect(text).toContain('|徒歩圏に停留所・駅がない区画|1|推計人口 20 人|')
-    expect(text).toContain('125m 四方の区画(都市部 1・郊外 1・中山間・地方 2)。表の割合の分母は、徒歩圏に停留所・駅がある区画です。')
+    expect(text).toContain('125m 四方の区画(都市部 1・郊外 1・中山間・地方 2)。表の割合の分母は徒歩圏に停留所・駅がある区画です。')
   })
 
   it('除いた停留所は、何を除いたのかを分けて書く(0 件のものは書かない)', () => {

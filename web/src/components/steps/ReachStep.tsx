@@ -270,7 +270,7 @@ export function ReachSummaryTable({
       </dl>
       <p className="text-xs text-muted-foreground">
         125m 四方の区画(都市部 {formatCount(cellsByClass.urban)}・郊外 {formatCount(cellsByClass.suburban)}・中山間・地方{' '}
-        {formatCount(cellsByClass.rural)})。表の割合の分母は、徒歩圏に停留所・駅がある区画です。
+        {formatCount(cellsByClass.rural)})。表の割合の分母は徒歩圏に停留所・駅がある区画です。
       </p>
       {snapshot.baseline && snapshot.comparison ? (
         <CompareTable snapshot={snapshot} selectedHour={selectedHour} />
@@ -283,7 +283,7 @@ export function ReachSummaryTable({
           <OriginSummary snapshot={snapshot} invalidStops={invalidStops} />
           <p>
             到達圏から外れる区画:徒歩圏に停留所・駅がある区画のうち、その時間帯に発車がある停留所と鉄道駅のどれも、区分ごとの徒歩圏にない区画です。
-            割合の分母は、徒歩圏に停留所・駅がある区画(区分ごとの徒歩圏に、発車の有無を問わず停留所または鉄道駅がある区画)です。
+            割合の分母は徒歩圏に停留所・駅がある区画(区分ごとの徒歩圏に、発車の有無を問わず停留所または鉄道駅がある区画)です。
           </p>
           {hasPopulation && (
             <p>

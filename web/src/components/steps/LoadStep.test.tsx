@@ -61,9 +61,14 @@ describe('LoadStep の版と期間', () => {
   it('feed_version・有効期間と、ダイヤのグループ分けの要約を出す。service_id ごとの便数は「表を開く」で出す', () => {
     show(smallFeed())
     const text = screen.getByLabelText('読み込んだ GTFS の版と期間').textContent ?? ''
-    expect(text).toContain('feed_version:202609171038')
-    expect(text).toContain('有効期間:2026年10月1日(木)〜2026年11月30日(月)')
+    expect(text).toContain('版(feed_version)202609171038')
+    expect(text).toContain('有効期間2026年10月1日(木)〜2026年11月30日(月)')
     expect(text).not.toContain('求めました')
+    // 停留所・系統・便の数を小さな枠で出し、ファイルと行数の表は閉じた欄にまとめる
+    const counts = screen.getByLabelText('読み込んだ GTFS の数').textContent ?? ''
+    expect(counts).toMatch(/停留所\d/)
+    expect(counts).toMatch(/系統\d/)
+    expect(screen.getByText(/^ファイルと行数\(\d+ ファイル\)$/).closest('details')?.open).toBe(false)
     // 単純な GTFS は1行の要約
     expect(screen.getByTestId('service-groups-summary').textContent).toBe('平日 WK・土曜 SA・日祝 SU に分かれています(走る日から判定しました)。')
     // 単純な GTFS(道北バスなど)では、Jev に送るかを聞かない。Jev に送るかのスイッチも無い
@@ -91,8 +96,8 @@ describe('LoadStep の版と期間', () => {
     tables.delete('feed_info')
     show({ ...feed, tables })
     const text = screen.getByLabelText('読み込んだ GTFS の版と期間').textContent ?? ''
-    expect(text).toContain('feed_version:(空)')
-    expect(text).toContain('2026年10月1日(木)〜2026年11月30日(月)(feed_info にないため、calendar・calendar_dates から求めました)')
+    expect(text).toContain('版(feed_version)(空)')
+    expect(text).toContain('2026年10月1日(木)〜2026年11月30日(月)feed_info にないため、calendar・calendar_dates から求めました。')
   })
 })
 

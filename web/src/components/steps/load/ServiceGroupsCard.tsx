@@ -1,3 +1,4 @@
+import { ChevronDownIcon } from 'lucide-react'
 import { Fragment, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { Badge } from '@/components/ui/badge'
@@ -478,6 +479,7 @@ export default function ServiceGroupsCard() {
   ) : null
   const toggle = (
     <Button type="button" variant="ghost" size="xs" className="self-start" aria-expanded={tableOpen} onClick={() => setOpen(!tableOpen)}>
+      <ChevronDownIcon className={tableOpen ? 'rotate-180' : undefined} aria-hidden="true" />
       {tableOpen ? '表を閉じる' : '表を開く'}
     </Button>
   )

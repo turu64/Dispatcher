@@ -1,4 +1,4 @@
-import { FileArchiveIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react'
+import { BusFrontIcon, CalendarRangeIcon, FileArchiveIcon, FolderOpenIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import StepSection from '@/components/StepSection'
 import ServiceGroupsCard from '@/components/steps/load/ServiceGroupsCard'
@@ -57,20 +57,42 @@ function FeedSummary({ feed }: { feed: GtfsFeed }) {
   const version = (info?.feed_version ?? '').trim()
   const validity = feedValidity(feed)
   const fromInfo = (info?.feed_start_date ?? '').trim() !== '' && (info?.feed_end_date ?? '').trim() !== ''
+  const stopRows = feed.tables.get('stops')?.rows ?? []
+  const stops = stopRows.filter((r) => ['', '0'].includes((r.location_type ?? '').trim())).length
+  const counts = [
+    { label: '停留所', value: stops },
+    { label: '系統', value: feed.tables.get('routes')?.rows.length ?? 0 },
+    { label: '便(全ダイヤ)', value: feed.tables.get('trips')?.rows.length ?? 0 },
+  ]
   return (
-    <dl className="flex flex-col gap-0.5 text-sm" aria-label="読み込んだ GTFS の版と期間">
-      <div>
-        <dt className="inline">feed_version:</dt>
-        <dd className="inline font-mono break-all">{version || '(空)'}</dd>
-      </div>
-      <div>
-        <dt className="inline">有効期間:</dt>
-        <dd className="inline">
-          {validity ? `${formatDateJa(validity.start)}〜${formatDateJa(validity.end)}` : '(求められません)'}
-          {validity && !fromInfo && '(feed_info にないため、calendar・calendar_dates から求めました)'}
-        </dd>
-      </div>
-    </dl>
+    <div className="flex flex-col gap-2">
+      <dl className="flex flex-col gap-1 text-sm" aria-label="読み込んだ GTFS の版と期間">
+        <div className="flex flex-wrap items-center gap-2">
+          <dt className="text-xs text-muted-foreground">版(feed_version)</dt>
+          <dd>
+            <Badge variant="outline" className="font-mono break-all">
+              {version || '(空)'}
+            </Badge>
+          </dd>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <dt className="text-xs text-muted-foreground">有効期間</dt>
+          <dd className="flex items-center gap-1">
+            <CalendarRangeIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />
+            {validity ? `${formatDateJa(validity.start)}〜${formatDateJa(validity.end)}` : '(求められません)'}
+          </dd>
+        </div>
+        {validity && !fromInfo && <p className="text-xs text-muted-foreground">feed_info にないため、calendar・calendar_dates から求めました。</p>}
+      </dl>
+      <dl className="grid grid-cols-3 gap-2" aria-label="読み込んだ GTFS の数">
+        {counts.map((c) => (
+          <div key={c.label} className="flex flex-col rounded-md bg-muted/50 px-2 py-1.5">
+            <dt className="text-xs text-muted-foreground">{c.label}</dt>
+            <dd className="text-base font-semibold tabular-nums">{c.value.toLocaleString('ja-JP')}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   )
 }
 
@@ -237,6 +259,7 @@ export default function LoadStep() {
           disabled={busy !== null}
           onClick={() => fileInput.current?.click()}
         >
+          <FolderOpenIcon aria-hidden="true" />
           ファイルを選ぶ
         </Button>
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -254,6 +277,7 @@ export default function LoadStep() {
             sampleInfo && void open('sample', fetchSampleGtfs, sampleInfo.name, null, sampleInfo)
           }
         >
+          <BusFrontIcon aria-hidden="true" />
           サンプルを読み込む({sampleInfo?.name ?? '道北バス'})
         </Button>
         {sample.status === 'unreachable' && (
@@ -356,23 +380,28 @@ export default function LoadStep() {
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <FeedSummary feed={feed} />
-            <ServiceGroupsCard />
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ファイル</TableHead>
-                  <TableHead className="text-right">行数</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {[...feed.tables.values()].map((t) => (
-                  <TableRow key={t.fileName}>
-                    <TableCell>{t.fileName}</TableCell>
-                    <TableCell className="text-right tabular-nums">{t.rows.length.toLocaleString('ja-JP')}</TableCell>
+            <div className="border-t pt-3">
+              <ServiceGroupsCard />
+            </div>
+            <details className="border-t pt-2 text-sm">
+              <summary className="cursor-pointer text-xs text-muted-foreground">ファイルと行数({feed.tables.size} ファイル)</summary>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>ファイル</TableHead>
+                    <TableHead className="text-right">行数</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {[...feed.tables.values()].map((t) => (
+                    <TableRow key={t.fileName}>
+                      <TableCell>{t.fileName}</TableCell>
+                      <TableCell className="text-right tabular-nums">{t.rows.length.toLocaleString('ja-JP')}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </details>
             {feed.warnings.length > 0 && (
               <Alert className="border-amber-400 bg-amber-50 text-amber-950">
                 <AlertDescription className="text-amber-950">
@@ -389,7 +418,7 @@ export default function LoadStep() {
               </Alert>
             )}
             {loadedSample && (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 出典:{loadedSample.source}「{loadedSample.name}」({loadedSample.license})
               </p>
             )}

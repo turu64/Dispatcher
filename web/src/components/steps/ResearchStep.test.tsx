@@ -30,9 +30,9 @@ import ResearchStep, {
   RESEARCH_START,
   RESEARCH_STARTING,
   OWN_OPERATOR,
-  OPERATOR_RESULT_LABEL,
   PRIORITY_TITLE,
-  ROW_RESULT_LABEL,
+  RESEARCH_SUMMARY_TITLE,
+  RESULT_ALL_LABEL,
 } from './ResearchStep'
 
 // 停留所は旭川の近くの3つ。施設はその周り(範囲の外のものを1つ含む)。smallFeed の事業者は「テストバス」
@@ -340,13 +340,19 @@ describe('ResearchStep', () => {
 
     // 始めた後と、保存が進んだときに、保存済みの結果を読む
     await waitFor(() => expect(research.overview).toHaveBeenCalled())
-    // 結果は別のまとまりではなく、その施設の行の下に出す(最初は開いておく)
+    // 結果は別のまとまりではなく、その施設の行の下に出す。行には要点(判断に使う時刻)だけを出し、事実のすべては閉じておく
     await waitFor(() => expect(rowResult('テスト高等学校')).toBeTruthy())
     const card = rowResult('テスト高等学校')
-    expect(card.open).toBe(true)
-    expect(card.querySelector('summary')?.textContent).toBe(`${ROW_RESULT_LABEL}(事実 1 件・出典 1 件)`)
+    expect(card.open).toBe(false)
+    expect(card.querySelector('summary')?.textContent).toBe(`${RESULT_ALL_LABEL}(事実 1 件・出典 1 件)`)
+    expect(screen.getByTestId('result-highlights-P29:high').textContent).toContain('始業 8:40')
+    expect(within(screen.getByTestId('result-highlights-P29:high')).getByRole('link', { name: /出典 1/ }).getAttribute('href')).toBe('https://example.jp/high')
     expect(screen.queryByRole('heading', { name: /調査の結果/ })).toBeNull()
-    expect(screen.getByTestId('research-result-note').textContent).toContain('調べた結果(1 件)は、各対象の行の下に出します。')
+    // 欄の先頭のまとめ(種類ごとの件数と、時刻を読めた数)
+    const summary = screen.getByRole('region', { name: RESEARCH_SUMMARY_TITLE })
+    expect(summary.textContent).toContain('学校 1 件')
+    expect(summary.textContent).toContain('始業・終業の時刻を読めた 1 件')
+    expect(screen.getByTestId('research-result-note').textContent).toContain('出典を開いて確かめてください')
     expect(screen.getByRole('group', { name: '高校・特別支援学校', hidden: true }).querySelector('summary')?.textContent).toContain('(選んだ 1 件・調べた結果 1 件)')
     // 行には結果のあることのバッジも出す
     expect(within(rowOf('テスト高等学校')).getByText(/調査済み・見つかった/)).toBeTruthy()
@@ -453,7 +459,8 @@ describe('ResearchStep', () => {
     expect(checkedNames()).toEqual(['テスト総合病院'])
     const card = rowResult('テスト総合病院')
     expect(card.textContent).toContain('デモ用の保存済みの結果')
-    expect(card.open).toBe(true)
+    expect(card.open).toBe(false)
+    expect(screen.getByTestId('result-highlights-P04:hosp').textContent).toContain('外来の受付 8:30〜11:00')
     // どこから来た結果か・見つかったかは、行のバッジに出す
     expect(within(rowOf('テスト総合病院')).getByText('保存済み(デモ)・一部だけ見つかった')).toBeTruthy()
     expect(card.textContent).toContain('確認日時 2026年11月6日 09:00')
@@ -745,7 +752,7 @@ describe('ResearchStep の周辺の事業者', () => {
     expect(screen.queryByText(OVERLAP_DISCLAIMER)).toBeNull()
   })
 
-  it('事業者の行に、調べた結果のうち減便・ダイヤ改正・運休・特別ダイヤの事実を、出典の番号・確認日時つきで出す', async () => {
+  it('事業者の行に、調べた結果のうち減便・ダイヤ改正・運休・特別ダイヤの事実を、出典の番号のリンクつきで出す(確認日時は調べた結果のすべてに出す)', async () => {
     loadFile(OPERATOR_FILE)
     setup()
     act(() =>
@@ -786,17 +793,17 @@ describe('ResearchStep の周辺の事業者', () => {
     expect(movement.textContent).toContain('朝日線の減便(報道):10月から平日は1往復減便[2]')
     expect(movement.textContent).toContain('直近のダイヤ改正:令和8年5月10日に実施[1]')
     expect(movement.textContent).not.toContain('会社の概要')
-    expect(movement.textContent).toContain('確認日時 2026年11月3日 18:58・デモ用の保存済みの結果')
+    expect(big.textContent).toContain('確認日時 2026年11月3日 18:58・デモ用の保存済みの結果')
     expect(within(movement).getByRole('link', { name: /報道/ }).getAttribute('href')).toBe('https://example.jp/news')
     // 調べた結果のすべて(減便の動き以外の事実も)は、事業者の行の下に、最初は閉じて出す
     const all = within(big).getByRole('group', { name: 'おおきいバスの調査の結果', hidden: true }) as HTMLDetailsElement
     expect(all.open).toBe(false)
-    expect(all.querySelector('summary')?.textContent).toBe(`${OPERATOR_RESULT_LABEL}(事実 3 件・出典 2 件)`)
+    expect(all.querySelector('summary')?.textContent).toBe(`${RESULT_ALL_LABEL}(事実 3 件・出典 2 件)`)
     expect(all.textContent).toContain('会社の概要')
     expect(all.textContent).toContain('市内の路線バス')
     expect(screen.queryByRole('heading', { name: /調査の結果/ })).toBeNull()
     // 減便などの事実が無ければ、そう出す(ほかの事実は行の下の「調べた結果のすべて」で見る)
-    expect(MOVEMENT_NONE).toContain(`「${OPERATOR_RESULT_LABEL}」`)
+    expect(MOVEMENT_NONE).toContain(`「${RESULT_ALL_LABEL}」`)
     expect(within(detail('P11:となりバス')).getByRole('group', { name: 'となりバスの調査の結果', hidden: true }).textContent).toContain('問い合わせ先')
     expect(detail('P11:となりバス').textContent).toContain(MOVEMENT_NONE)
     expect(detail('P11:となりバス').textContent).toContain('確認日時 2026年11月3日 19:00')

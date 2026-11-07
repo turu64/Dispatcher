@@ -1,7 +1,8 @@
-import { ArrowDown, ArrowUp, ExternalLink, GripVertical } from 'lucide-react'
+import { ArrowDown, ArrowUp, BusFront, Clock, ExternalLink, GripVertical, TriangleAlert } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStore, type StoreApi, type UseBoundStore } from 'zustand'
 import StepSection from '@/components/StepSection'
+import { researchSummary, resultHighlights } from '@/components/steps/research/highlights'
 import OperationPremise from '@/components/steps/research/OperationPremise'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -47,10 +48,14 @@ export const RESEARCH_DEMO_NONE = 'この GTFS の停留所の周りには、保
 export const RESEARCH_SAVED_NOTE = '保存済みの対象は調べ直さず(Web 検索をせず)、その結果を使います。'
 export const RESEARCH_RESULT_NOTE = '結果は AI が Web で調べたものです。確認日時のあとに変わっていることがあります。出典を開いて確かめてください。'
 export const OWN_OPERATOR = '読み込んだ GTFS の事業者'
-/** 学校・病院などの行の下に出す、調べた結果の開閉の見出し(最初は開いておく) */
-export const ROW_RESULT_LABEL = '調べた結果'
-/** 周辺の事業者の行の下に出す、調べた結果の全部の開閉の見出し(減便の動きは行に出すので、最初は閉じておく) */
-export const OPERATOR_RESULT_LABEL = '調べた結果のすべて'
+/**
+ * 行の下に出す、調べた結果の全部の開閉の見出し(最初は閉じておく)。行には要点(学校・病院は判断に使う時刻とバスの案内、
+ * 事業者は減便の動き)だけを出す(2026-11-07 に利用者の指示で、事実をすべて開いて並べる形をやめた)
+ */
+export const RESULT_ALL_LABEL = '調べた結果のすべて'
+/** 欄の先頭のまとめの見出し */
+export const RESEARCH_SUMMARY_TITLE = '調べた結果のまとめ'
+export const RESEARCH_SUMMARY_NOTE = '読めた時刻は、「平日便を戻す」の判断材料(学校・病院に着く便・出る便)の時間帯に使います。各行には要点だけを出し、事実と出典のすべては「調べた結果のすべて」を開くと見られます。'
 /** 重要拠点の優先順位の Dialog を開くボタンの文と、Dialog の見出し */
 export const PRIORITY_TITLE = '重要拠点の優先順位'
 export const CLOSED_SCHOOL = '休校中か不明'
@@ -298,57 +303,25 @@ function routesText(routes: readonly string[]): string {
   return `${routes.slice(0, MAX_ROUTE_NAMES).join('、')} ほか ${routes.length - MAX_ROUTE_NAMES} 系統`
 }
 
-/** 事業者の行の、調べた減便の動き(調べた結果のうち、減便・ダイヤ改正・運休・特別ダイヤの事実) */
+/**
+ * 事業者の行の、調べた減便の動き(調べた結果のうち、減便・ダイヤ改正・運休・特別ダイヤの事実)。
+ * 1件を2行までに切り、出典は番号のリンクだけを添える(確認日時と出典の一覧は「調べた結果のすべて」に出す)
+ */
 function OperatorMovement({ result }: { result: ResearchResult | undefined }) {
   if (!result) return <p className="text-muted-foreground">{MOVEMENT_NOT_RESEARCHED}</p>
   const facts = operatorMovementFacts(result.facts)
-  const footer = (
-    <span className="text-muted-foreground">
-      確認日時 {checkedAtText(result.checkedAt)}・{result.origin === 'demo' ? 'デモ用の保存済みの結果' : 'Web で調べた結果'}
-    </span>
-  )
-  if (facts.length === 0) {
-    return (
-      <p>
-        <span className="text-muted-foreground">{MOVEMENT_NONE}</span> {footer}
-      </p>
-    )
-  }
-  const cited = [...new Set(facts.map((f) => f.source).filter((n) => n >= 1 && n <= result.sources.length))].sort((a, b) => a - b)
+  if (facts.length === 0) return <p className="text-muted-foreground">{MOVEMENT_NONE}</p>
   return (
-    <div className="flex flex-col gap-0.5" aria-label="調べた減便の動き">
-      <ul className="flex flex-col gap-0.5">
-        {facts.map((f, i) => (
-          <li key={i}>
-            <span className="text-muted-foreground">{f.label}:</span>
-            {f.value}
-            {f.source >= 1 && f.source <= result.sources.length && <sup className="ml-0.5 text-muted-foreground">[{f.source}]</sup>}
-          </li>
-        ))}
-      </ul>
-      {cited.length > 0 && (
-        <ol className="flex flex-col gap-0.5" aria-label="出典">
-          {cited.map((n) => {
-            const s = result.sources[n - 1]
-            const url = safeUrl(s.url)
-            return (
-              <li key={n} className="flex gap-1">
-                <span className="text-muted-foreground">[{n}]</span>
-                {url ? (
-                  <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-w-0 items-center gap-0.5 break-all underline underline-offset-2">
-                    {s.title || url}
-                    <ExternalLink className="size-3 shrink-0" aria-hidden="true" />
-                  </a>
-                ) : (
-                  <span className="text-muted-foreground">{s.title || '(URL を表示できません)'}</span>
-                )}
-              </li>
-            )
-          })}
-        </ol>
-      )}
-      {footer}
-    </div>
+    <ul className="flex flex-col gap-0.5" aria-label="調べた減便の動き">
+      {facts.map((f, i) => (
+        <li key={i} className="line-clamp-2">
+          <TriangleAlert className="mr-1 inline size-3 align-[-1px] text-amber-600" aria-hidden="true" />
+          <span className="text-muted-foreground">{f.label}:</span>
+          {f.value}
+          <SourceRef result={result} source={f.source} />
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -360,12 +333,12 @@ function OperatorDetail({ candidate, result, reduced }: { candidate: ResearchCan
     <div className="mt-0.5 flex flex-col gap-1 pl-5" data-testid={`operator-detail-${candidate.facility.targetId}`}>
       <OperatorMovement result={result} />
       {overlap && (
-        <p>
+        <p className="line-clamp-2 text-muted-foreground">
           {overlapText(overlap.ownStopIds.length, overlap.otherStops.length, overlap.routes)}
           {nearReduced !== null && `。このうち、減便で発車が減る・なくなる停留所 ${nearReduced} か所`}
         </p>
       )}
-      {result && <RowResult result={result} label={OPERATOR_RESULT_LABEL} defaultOpen={false} />}
+      {result && <RowResult result={result} />}
     </div>
   )
 }
@@ -460,11 +433,7 @@ function CandidateGroupItems({
               {isOperator && !c.ownOperator ? (
                 <OperatorDetail candidate={c} result={result} reduced={reduced} />
               ) : (
-                result && (
-                  <div className="mt-0.5 pl-5">
-                    <RowResult result={result} label={ROW_RESULT_LABEL} defaultOpen />
-                  </div>
-                )
+                result && <FacilityHighlights result={result} />
               )}
             </li>
           )
@@ -595,12 +564,93 @@ function ResultBody({ result }: { result: ResearchResult }) {
   )
 }
 
+/** 出典の番号のリンク([1])。番号が範囲の外か URL が使えなければ番号だけ */
+function SourceRef({ result, source }: { result: ResearchResult; source: number | null }) {
+  if (source === null || source < 1 || source > result.sources.length) return null
+  const s = result.sources[source - 1]
+  const url = safeUrl(s.url)
+  const label = `[${source}]`
+  return url ? (
+    <a href={url} target="_blank" rel="noopener noreferrer" title={s.title || url} aria-label={`出典 ${source}:${s.title || url}`} className="ml-0.5 align-super text-[10px] text-muted-foreground underline underline-offset-2">
+      {label}
+    </a>
+  ) : (
+    <sup className="ml-0.5 text-muted-foreground">{label}</sup>
+  )
+}
+
+/** 学校・病院・診療所の行の要点(判断に使う時刻・バスの案内)と、閉じた「調べた結果のすべて」 */
+function FacilityHighlights({ result }: { result: ResearchResult }) {
+  const h = resultHighlights(result)
+  return (
+    <div className="mt-0.5 flex flex-col gap-0.5 pl-5" data-testid={`result-highlights-${result.targetId}`}>
+      {h.times.length > 0 ? (
+        <p className="font-medium">
+          <Clock className="mr-1 inline size-3 align-[-1px] text-primary" aria-hidden="true" />
+          {h.times.map((t, i) => (
+            <span key={t.text}>
+              {i > 0 && '・'}
+              {t.text}
+              <SourceRef result={result} source={t.source} />
+            </span>
+          ))}
+        </p>
+      ) : (
+        h.timeMissing && (
+          <p className="text-muted-foreground">
+            <Clock className="mr-1 inline size-3 align-[-1px]" aria-hidden="true" />
+            {h.timeMissing}
+          </p>
+        )
+      )}
+      {h.access && (
+        <p className="line-clamp-2">
+          <BusFront className="mr-1 inline size-3 align-[-1px] text-muted-foreground" aria-hidden="true" />
+          <span className="text-muted-foreground">{h.access.label}:</span>
+          {h.access.value}
+          <SourceRef result={result} source={h.access.source} />
+        </p>
+      )}
+      <RowResult result={result} />
+    </div>
+  )
+}
+
+/** 欄の先頭に出す、調べた結果のまとめ(種類ごとの件数と、時刻を読めた数) */
+function ResearchSummary({ results }: { results: readonly ResearchResult[] }) {
+  const rows = researchSummary(results)
+  return (
+    <section className="flex flex-col gap-1.5 rounded-md border bg-muted/40 px-3 py-2 text-sm" aria-label={RESEARCH_SUMMARY_TITLE} data-testid="research-summary">
+      <h4 className="font-medium">
+        {RESEARCH_SUMMARY_TITLE}
+        <span className="ml-1.5 text-xs font-normal text-muted-foreground">({results.length} 件)</span>
+      </h4>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+        {rows.map((r) => (
+          <div key={r.key} className="contents">
+            <dt className="text-muted-foreground">
+              {r.label} <span className="tabular-nums">{r.total}</span> 件
+            </dt>
+            <dd>
+              {r.hitLabel} <strong className="tabular-nums">{r.hit}</strong> 件
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="text-xs text-muted-foreground">{RESEARCH_SUMMARY_NOTE}</p>
+      <p className="text-xs text-muted-foreground" data-testid="research-result-note">
+        {RESEARCH_RESULT_NOTE}
+      </p>
+    </section>
+  )
+}
+
 /**
  * 候補の行の下に出す、調べた結果(11/6 の利用者の指示で、別の「調査の結果」のまとまりから行の下に移した)。
  * 行ごとに開閉でき、開くかどうかは利用者が決める。地図の強調は行(li)のマウスと焦点で付く(中の見出しやリンクの焦点も含む)
  */
-function RowResult({ result, label, defaultOpen }: { result: ResearchResult; label: string; defaultOpen: boolean }) {
-  const [open, setOpen] = useState(defaultOpen)
+function RowResult({ result }: { result: ResearchResult }) {
+  const [open, setOpen] = useState(false)
   return (
     <details
       className="rounded-md border bg-background px-2 py-1"
@@ -609,7 +659,7 @@ function RowResult({ result, label, defaultOpen }: { result: ResearchResult; lab
       aria-label={`${result.name}の調査の結果`}
     >
       <summary className="cursor-pointer text-muted-foreground">
-        {label}(事実 {result.facts.length} 件・出典 {result.sources.length} 件)
+        {RESULT_ALL_LABEL}(事実 {result.facts.length} 件・出典 {result.sources.length} 件)
       </summary>
       <div className="mt-1">
         <ResultBody result={result} />
@@ -717,8 +767,11 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
     void useResearchStore.getState().loadDemo(new Set(candidates.map((c) => c.facility.targetId)))
   }
 
-  // 候補のうち、調べた結果のあるものの数(結果は候補の行の下に出す)
-  const resultCount = useMemo(() => candidates.filter((c) => results.has(c.facility.targetId)).length, [candidates, results])
+  // 候補のうち、調べた結果のあるもの(要点は候補の行の下に、まとめは欄の先頭に出す)
+  const shownResults = useMemo(
+    () => candidates.flatMap((c) => results.get(c.facility.targetId) ?? []),
+    [candidates, results],
+  )
   const cachedSelected = selectedIds.filter((id) => results.has(id)).length
 
   return (
@@ -776,11 +829,7 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
                   {limitNote}
                 </p>
               )}
-              {resultCount > 0 && (
-                <p className="text-xs text-muted-foreground" data-testid="research-result-note">
-                  調べた結果({resultCount} 件)は、各対象の行の下に出します。{RESEARCH_RESULT_NOTE}
-                </p>
-              )}
+              {shownResults.length > 0 && <ResearchSummary results={shownResults} />}
               <CandidateList groups={groups} selected={selected} onToggle={onToggle} results={results} overlaps={overlaps} reduced={reduced} />
             </>
           )}

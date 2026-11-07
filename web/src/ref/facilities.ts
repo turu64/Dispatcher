@@ -352,13 +352,10 @@ function compareId(a: ResearchCandidate, b: ResearchCandidate): number {
 }
 
 /**
- * 同じ種類の中の並び:病院は病床の多い順、それ以外は停留所に近い順。同じなら target_id の順(決まった並びにする)
+ * 同じ種類の中の並び:いちばん近い停留所に近い順(入院設備のある病院も。2026-11-07 に利用者の指示で、病床の多い順をやめた)。
+ * 同じなら target_id の順(決まった並びにする)
  */
 export function compareWithinCategory(a: ResearchCandidate, b: ResearchCandidate): number {
-  if (a.facility.kind === 'hospital' && b.facility.kind === 'hospital') {
-    const d = (b.facility.beds ?? 0) - (a.facility.beds ?? 0)
-    if (d !== 0) return d
-  }
   if (a.nearestStopM !== b.nearestStopM) return a.nearestStopM - b.nearestStopM
   return compareId(a, b)
 }

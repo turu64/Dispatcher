@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { splitTableRow } from './markdownTable'
 import SimpleMarkdown from './simpleMarkdown'
 
 afterEach(cleanup)
@@ -39,5 +40,36 @@ describe('AI の返答の簡単な整え(見出し)', () => {
     expect(heading.textContent).toBe('大事な<b>点</b>')
     expect(heading.querySelector('strong')?.textContent).toBe('大事')
     expect(heading.querySelector('b')).toBeNull()
+  })
+})
+
+describe('AI の返答の簡単な整え(表)', () => {
+  it('「|」の行の次が区切りの行なら表にし、見出し・行・寄せ(:---:)と **太字** を解釈する', () => {
+    const { container } = render(
+      <SimpleMarkdown text={'候補です。\n\n| 系統 | 発車 | 理由 |\n|---|:---:|---:|\n| 31 | 7:40 | **高校** の始業 |\n| 21 | 7:10 |\n\nいかがですか。'} />,
+    )
+    const table = container.querySelector('table')!
+    expect([...table.querySelectorAll('th')].map((th) => th.textContent)).toEqual(['系統', '発車', '理由'])
+    const rows = [...table.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent))
+    // 足りないセルは空で埋める
+    expect(rows).toEqual([
+      ['31', '7:40', '高校 の始業'],
+      ['21', '7:10', ''],
+    ])
+    expect(table.querySelector('tbody strong')?.textContent).toBe('高校')
+    expect(table.querySelectorAll('th')[1].className).toContain('text-center')
+    expect(table.querySelectorAll('th')[2].className).toContain('text-right')
+    expect(container.textContent).toContain('候補です。')
+    expect(container.textContent).toContain('いかがですか。')
+    expect(container.textContent).not.toContain('|')
+  })
+
+  it('区切りの行が無い「|」の行や、列の数が合わない区切りは表にせず、文字のまま出す。セルの中の「\\|」は「|」', () => {
+    const { container } = render(<SimpleMarkdown text={'| a | b |\n| c | d |'} />)
+    expect(container.querySelector('table')).toBeNull()
+    expect(container.textContent).toContain('| a | b |')
+    const bad = render(<SimpleMarkdown text={'| a | b |\n|---|\n| c | d |'} />)
+    expect(bad.container.querySelector('table')).toBeNull()
+    expect(splitTableRow('| A \\| B | C |')).toEqual(['A | B', 'C'])
   })
 })

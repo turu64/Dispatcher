@@ -54,7 +54,7 @@ export function CandidateGroups({
         const hidden = g.candidates.length - g.hinted
         const panelId = `restore-route-${i}`
         return (
-          <section key={g.routeId} className="rounded-md border text-xs" aria-label={`系統 ${g.routeName}`}>
+          <section key={g.routeId} className="border-b text-xs last:border-b-0" aria-label={`系統 ${g.routeName}`}>
             <button
               type="button"
               className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 text-left hover:bg-muted/50"
@@ -93,7 +93,7 @@ export function CandidateGroups({
                         {gap && <span className="text-muted-foreground">{gap}</span>}
                       </p>
                       {times && <p className="break-words text-[10px] text-muted-foreground">減便後の便:{times}</p>}
-                      <ul className="flex flex-col divide-y rounded-md border" aria-label={`${g.routeName} ${name} の候補`}>
+                      <ul className="flex flex-col divide-y border-l pl-2" aria-label={`${g.routeName} ${name} の候補`}>
                         {trips.map((c) => (
                           <li key={c.trip.tripId} className="px-2 py-1">
                             <label className="flex items-start gap-2">

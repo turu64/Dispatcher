@@ -1,3 +1,4 @@
+import { CHECK_LIMITS_NOTE } from './FacilityAccessPanel'
 import { useMemo, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -157,7 +158,7 @@ export function RoundTripPanel({
         {rows.withProblems.length === 0 ? (
           <p className="text-muted-foreground">問題のある方向はありません。</p>
         ) : (
-          <ul className="flex flex-col divide-y rounded-md border" aria-label="問題のある方向">
+          <ul className="flex flex-col divide-y border-y" aria-label="問題のある方向">
             {shown.map((row) => (
               <DirectionRow key={row.key} row={row} evening={evening} openable={openable} routeNames={routeNames} onOpenRoute={onOpenRoute} />
             ))}
@@ -170,7 +171,7 @@ export function RoundTripPanel({
         )}
         {rows.others.length > 0 &&
           (showOthers ? (
-            <ul className="flex flex-col divide-y rounded-md border" aria-label="問題のない方向">
+            <ul className="flex flex-col divide-y border-y" aria-label="問題のない方向">
               {rows.others.map((row) => (
                 <DirectionRow key={row.key} row={row} evening={evening} openable={openable} routeNames={routeNames} onOpenRoute={onOpenRoute} />
               ))}
@@ -185,6 +186,7 @@ export function RoundTripPanel({
           <p className="mt-1 text-muted-foreground">
             「帰りの便がない」は、減便後に行きの方向に{windowText(morning)}の便があり、逆向きの{windowText(evening)}の便が 0 便になる方向です(減便前は 1 便以上)。始発・終発は、{shiftMin} 分以上ずれたものを出します。方向は始発と終着の停留所名の組で分け、逆向きは同じ系統、なければほかの系統から探します。
           </p>
+          <p className="mt-1 text-muted-foreground">{CHECK_LIMITS_NOTE}</p>
         </details>
       </>
     )

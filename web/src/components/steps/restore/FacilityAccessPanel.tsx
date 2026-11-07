@@ -143,7 +143,7 @@ export function FacilityAccessPanel({
         {lost.length === 0 ? (
           <p className="text-muted-foreground">着く便・出る便が 0 便になる学校・病院はありません。</p>
         ) : (
-          <ul className="flex flex-col divide-y rounded-md border" aria-label="着く便・出る便がなくなる学校・病院">
+          <ul className="flex flex-col divide-y border-y" aria-label="着く便・出る便がなくなる学校・病院">
             {shown.map((f) => (
               <FacilityRow key={f.targetId} entry={f} />
             ))}
@@ -157,7 +157,11 @@ export function FacilityAccessPanel({
         {result.withoutStops.length > 0 && (
           <p className="text-muted-foreground">徒歩圏に、この日に乗り降りする停留所がない学校・病院:{result.withoutStops.length} 施設</p>
         )}
-        <p className="text-muted-foreground">{result.note}</p>
+        <details className="text-muted-foreground">
+          <summary className="cursor-pointer">数え方</summary>
+          <p className="mt-1">{result.note}</p>
+          <p className="mt-1">{CHECK_LIMITS_NOTE}</p>
+        </details>
       </>
     )
   }

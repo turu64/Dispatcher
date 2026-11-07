@@ -47,7 +47,7 @@ import { compareByTime, compareCandidates, groupCandidates, tripEndpoints, type 
 import { AiPicks, FacilityEvidence, SelectedTrips } from './restore/PickLists'
 import { TripLine } from './restore/TripLine'
 import { RoundTripPanel } from './restore/RoundTripPanel'
-import { CHECK_LIMITS_NOTE, FacilityAccessPanel } from './restore/FacilityAccessPanel'
+import { FacilityAccessPanel } from './restore/FacilityAccessPanel'
 import { RESEARCH_SECTION_TITLE, ResearchLoader, ResearchSection } from './restore/ResearchSection'
 import { StatTiles } from './restore/StatTiles'
 
@@ -465,29 +465,6 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
       <DriverLine />
       <AskRestoreButton blocked={policyDraft ? '減便の方針の下書きを承認するか、やめてから聞いてください。' : null} />
       <AiPicks picks={aiPicks} selected={selectedSet} onSelect={select} />
-      {/* 手順の欄の中で枠を重ねず、区切り線で分ける */}
-      <div className="flex flex-col gap-3 border-t pt-3" role="group" aria-label="往復と学校・病院の確認">
-        <RoundTripPanel
-          base={base.feed}
-          edited={checkFeed}
-          weekdayServices={checkWeekdays}
-          date={compareDate}
-          draftLabel={checkDraftLabel}
-          openable={candidateRoutes}
-          onOpenRoute={openRoute}
-        />
-        <FacilityAccessPanel
-          base={base.feed}
-          edited={checkFeed}
-          weekdayServices={checkWeekdays}
-          date={compareDate}
-          draftLabel={checkDraftLabel}
-          facilities={facilityCtx?.facilities ?? null}
-          unavailable={facilityCheckUnavailable(facilityCtx, facilities)}
-          stops={baseStops}
-        />
-        <p className="text-xs text-muted-foreground">{CHECK_LIMITS_NOTE}</p>
-      </div>
       <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
         <h3 className="text-sm font-medium">平日に戻す便の候補</h3>
         <fieldset className="grid grid-cols-2 gap-2" aria-label="候補の絞り込み">
@@ -633,7 +610,34 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
         confirm={confirmBox('withdraw')}
         onWithdraw={(tripId) => run({ type: 'withdrawAddBack', tripIds: [tripId] }, '平日に戻す操作を取り消しました。', 'withdraw')}
       />
-      <NoteList items={[SCHOOL_HOLIDAY_NOTE, RESTORE_DUTY_NOTE]} label="便を平日に戻すときの注意" />
+      {/* 候補と選んだ便の下に置く(便を選ぶ本題を先に出す。2026-11-07 に利用者の指示)。手順の欄の中で枠を重ねず、区切り線で分ける */}
+      <div className="flex flex-col gap-3 border-t pt-3" role="group" aria-label="往復と学校・病院の確認">
+        <RoundTripPanel
+          base={base.feed}
+          edited={checkFeed}
+          weekdayServices={checkWeekdays}
+          date={compareDate}
+          draftLabel={checkDraftLabel}
+          openable={candidateRoutes}
+          onOpenRoute={openRoute}
+        />
+        <FacilityAccessPanel
+          base={base.feed}
+          edited={checkFeed}
+          weekdayServices={checkWeekdays}
+          date={compareDate}
+          draftLabel={checkDraftLabel}
+          facilities={facilityCtx?.facilities ?? null}
+          unavailable={facilityCheckUnavailable(facilityCtx, facilities)}
+          stops={baseStops}
+        />
+      </div>
+      <details className="border-t pt-3 text-xs">
+        <summary className="cursor-pointer text-muted-foreground">便を平日に戻すときの注意(学校の休業日・運転士の勤務)</summary>
+        <div className="mt-1">
+          <NoteList items={[SCHOOL_HOLIDAY_NOTE, RESTORE_DUTY_NOTE]} label="便を平日に戻すときの注意" />
+        </div>
+      </details>
     </div>
   )
 }
@@ -680,7 +684,7 @@ function SelectedFacilityReasons({ trips, onUse }: { trips: readonly Candidate[]
       {!single && (
         <p className="text-muted-foreground">「理由に使う」は1便だけ選んだときに使えます。</p>
       )}
-      <ul className="flex flex-col divide-y rounded-md border">
+      <ul className="flex flex-col divide-y border-y">
         {rows.map(({ c, matched, texts }) => (
           <li key={c.trip.tripId} className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1 px-2 py-1">
             <span className="flex min-w-0 flex-col gap-0.5">
@@ -750,7 +754,7 @@ function AddedBackList({
       <h3 className="text-sm font-medium">平日に戻した便({report.accepted.length} 便)</h3>
       {confirm}
       <p className="text-xs">{restoreTotalsText(totals)}</p>
-      <ul className="flex flex-col divide-y rounded-md border text-xs">
+      <ul className="flex flex-col divide-y border-y text-xs">
         {report.accepted.map((id) => {
           const trip = briefs.get(id)
           const r = reasons.get(id)

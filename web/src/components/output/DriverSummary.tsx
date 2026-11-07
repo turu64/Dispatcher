@@ -220,7 +220,7 @@ export function DriverLineView({ comparison }: { comparison: DriverComparison })
       ? `要る勤務の数(入力の運用番号の数から):減便前 ${need.before} → 減便後 ${need.after}。`
       : ''
   return (
-    <div className="flex flex-col gap-1 rounded-md border px-2 py-1.5" aria-live="polite" data-testid="driver-line">
+    <div className="flex flex-col gap-1" aria-live="polite" data-testid="driver-line">
       <p className="flex flex-wrap items-center gap-1.5 text-sm">
         <span className="font-medium">{DRIVER_SUMMARY_TITLE}</span>
         <Badge
@@ -232,11 +232,23 @@ export function DriverLineView({ comparison }: { comparison: DriverComparison })
           {verdictBadgeText(verdict)}
         </Badge>
       </p>
-      <p className="text-xs text-muted-foreground" data-testid="driver-line-details">
-        {counts}
-        {needed}
-        {verdict.kind === 'noRoster' ? ROSTER_WHERE : verdictText(verdict, date)}
-      </p>
+      {/* 在籍を入れる場所の案内はそのまま出し、勤務の数の前後と判定の文は閉じた欄に入れる(判定はバッジで分かるため) */}
+      {verdict.kind === 'noRoster' ? (
+        <p className="text-xs text-muted-foreground" data-testid="driver-line-details">
+          {counts}
+          {needed}
+          {ROSTER_WHERE}
+        </p>
+      ) : (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">勤務の数と判定の内訳</summary>
+          <p className="mt-1" data-testid="driver-line-details">
+            {counts}
+            {needed}
+            {verdictText(verdict, date)}
+          </p>
+        </details>
+      )}
     </div>
   )
 }

@@ -161,7 +161,7 @@ export function AiPicks({
         AI のおすすめ({picks.length} 便)
       </h3>
       <p className="text-muted-foreground">一部だけを選んで平日に戻すと、AI の下書きは破棄します。</p>
-      <ul className="flex flex-col divide-y rounded-md border bg-background">
+      <ul className="flex flex-col divide-y border-y">
         {picks.map(({ candidate: c, item }) => (
           <li key={c.trip.tripId} className="px-2 py-1">
             <label className="flex items-start gap-2">
@@ -206,7 +206,7 @@ export function SelectedTrips({
   return (
     <section className="flex flex-col gap-1 text-xs" aria-label="選んだ便">
       <h3 className="font-medium">選んだ便({trips.length} 便)</h3>
-      <ul className="flex flex-col divide-y rounded-md border">
+      <ul className="flex flex-col divide-y border-y">
         {trips.map((c) => (
           <li key={c.trip.tripId} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-2 py-1">
             <span className="min-w-0 break-words">

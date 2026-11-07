@@ -282,7 +282,7 @@ function CandidateGroupDetails({ label, picked, children }: { label: string; pic
     if (prevPicked === 0 && picked > 0) setOpen(true)
   }
   return (
-    <details className="rounded-md border text-xs" open={open} onToggle={(e) => setOpen(e.currentTarget.open)} aria-label={label}>
+    <details className="border-t text-xs" open={open} onToggle={(e) => setOpen(e.currentTarget.open)} aria-label={label}>
       {children}
     </details>
   )

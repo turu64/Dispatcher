@@ -190,7 +190,7 @@ describe('DriverSummary(変更指示書に差し込む。承認済みの最後�
 })
 
 describe('DriverLine(平日便を戻す手順の1行)', () => {
-  it('先頭に判定のバッジを短く出し、勤務の数の前後と差、比較する日付、乗務できる運転士の数(目安)との比較は下の小さな文字で出す', () => {
+  it('先頭に判定のバッジを短く出し、勤務の数の前後と差、比較する日付、乗務できる運転士の数(目安)との比較は閉じた欄に出す', () => {
     render(<DriverLineView comparison={comparisonOf({ shortage: 20, roster: 7 })} />)
     const badge = screen.getByTestId('driver-line-badge')
     expect(badge.textContent).toBe('あと 1 足りない目安')
@@ -200,10 +200,11 @@ describe('DriverLine(平日便を戻す手順の1行)', () => {
     expect(details.textContent).toBe(
       '勤務の数(目安):減便前 2 → 減便後 1(−1、2026年11月4日(水))。減便後に要る勤務の数 1 に対して、乗務できる運転士の数(目安)0 → あと 1 足りない目安です。減便前のままでは 2 足りない目安です。',
     )
-    expect(details.className).toContain('text-xs')
+    // 内訳は閉じた欄に入れる(判定はバッジで分かるため)
+    expect(details.closest('details')?.open).toBe(false)
     // バッジは詳しい数字より前
     expect(badge.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(screen.getByTestId('driver-line').textContent).toBe(`要る運転士の数(目安)あと 1 足りない目安${details.textContent}`)
+    expect(screen.getByTestId('driver-line').textContent).toBe(`要る運転士の数(目安)あと 1 足りない目安勤務の数と判定の内訳${details.textContent}`)
   })
 
   it('足りる目安なら緑系のバッジに余りを出す', () => {

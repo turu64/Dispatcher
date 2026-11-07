@@ -64,7 +64,9 @@ export const CLOSED_SCHOOL = '休校中か不明'
 export const NO_NEARBY_STOPS = '近くに停留所なし'
 export const OVERLAP_DISCLAIMER = '国土数値情報の停留所には時刻がないため、本数や時間帯で補えるかは、その事業者の時刻表で確かめてください。'
 export const NO_BUSSTOP_DATA = '周辺の事業者の停留所の参照データがないため、こちらの停留所との重なりは数えていません。'
-export const MOVEMENT_NOT_RESEARCHED = '減便・ダイヤ改正・運休の動きは、まだ調べていません。'
+/** まだ調べていない周辺の事業者の行に付けるバッジと、その説明(title) */
+export const NOT_RESEARCHED_BADGE = '未調査'
+export const NOT_RESEARCHED_TITLE = '減便・ダイヤ改正・運休の動きは、まだ調べていません。'
 // 見出し(label)で絞った結果だけを言う。廃止など、絞り込みの語に当たらない事実がありうるため「動きがない」とは書かない
 export const MOVEMENT_NONE = '調べた結果に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、下の「調べた結果のすべて」を開いて、ほかの事実と出典を確かめてください。'
 export const REDUCED_AFTER_POLICY = '「減便の方針」を承認すると、発車が減る・なくなる停留所のうち、ほかの事業者の停留所が近くにある数も表示します。'
@@ -308,7 +310,8 @@ function routesText(routes: readonly string[]): string {
  * 1件を2行までに切り、出典は番号のリンクだけを添える(確認日時と出典の一覧は「調べた結果のすべて」に出す)
  */
 function OperatorMovement({ result }: { result: ResearchResult | undefined }) {
-  if (!result) return <p className="text-muted-foreground">{MOVEMENT_NOT_RESEARCHED}</p>
+  // 調べていなければ、行の名前の横の「未調査」のバッジで示す
+  if (!result) return null
   const facts = operatorMovementFacts(result.facts)
   if (facts.length === 0) return <p className="text-muted-foreground">{MOVEMENT_NONE}</p>
   return (
@@ -416,6 +419,11 @@ function CandidateGroupItems({
                   {isOperator && c.overlap === null && (
                     <Badge variant="outline" className="ml-1.5">
                       {NO_NEARBY_STOPS}
+                    </Badge>
+                  )}
+                  {isOperator && !c.ownOperator && !result && (
+                    <Badge variant="outline" className="ml-1.5" title={NOT_RESEARCHED_TITLE}>
+                      {NOT_RESEARCHED_BADGE}
                     </Badge>
                   )}
                   {c.closed && (

@@ -18,7 +18,8 @@ import { useReachStore } from '@/store/reach'
 import { reducedStopsOf, useResearchStore } from '@/store/research'
 import ResearchStep, {
   MOVEMENT_NONE,
-  MOVEMENT_NOT_RESEARCHED,
+  NOT_RESEARCHED_BADGE,
+  NOT_RESEARCHED_TITLE,
   NO_BUSSTOP_DATA,
   NO_NEARBY_STOPS,
   OVERLAP_DISCLAIMER,
@@ -741,8 +742,10 @@ describe('ResearchStep の周辺の事業者', () => {
     expect(OVERLAP_DISCLAIMER).toContain('時刻表で確かめてください')
     // 承認前は、減便で発車が減る停留所の数の代わりに案内を出す
     expect(screen.getByText(REDUCED_AFTER_POLICY)).toBeTruthy()
-    // まだ調べていない事業者
-    expect(detail('P11:となりバス').textContent).toContain(MOVEMENT_NOT_RESEARCHED)
+    // まだ調べていない事業者は、行の名前の横に「未調査」のバッジ(説明は title)を付け、行の下には文を出さない
+    const badge = within(rowOf('となりバス')).getByText(NOT_RESEARCHED_BADGE)
+    expect(badge.getAttribute('title')).toBe(NOT_RESEARCHED_TITLE)
+    expect(detail('P11:となりバス').textContent).not.toContain(NOT_RESEARCHED_TITLE)
   })
 
   it('停留所の参照データが無い(古いファイル)ときは、重なりを数えていないと出し、「近くに停留所なし」とは出さない', () => {

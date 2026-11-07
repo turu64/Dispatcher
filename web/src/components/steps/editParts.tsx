@@ -9,7 +9,8 @@ import type { ValidationIssue } from '@/gtfs/validate/edit'
 const SEVERITY = {
   error: { mark: '✕', label: '誤り', className: 'border-destructive/50 bg-destructive/5 text-destructive' },
   warning: { mark: '!', label: '注意', className: 'border-amber-400 bg-amber-50 text-amber-950' },
-  info: { mark: 'i', label: '情報', className: 'border-border bg-muted/40 text-foreground' },
+  // 情報は枠で囲まず、行として並べる(誤り・注意だけを枠で目立たせる。2026-11-07 に利用者の指示)
+  info: { mark: 'i', label: '情報', className: 'border-transparent px-0 py-0.5 text-foreground' },
 } as const
 
 const ORDER = { error: 0, warning: 1, info: 2 } as const

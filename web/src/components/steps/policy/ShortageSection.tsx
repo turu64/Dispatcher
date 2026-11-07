@@ -30,11 +30,8 @@ export default function ShortageSection() {
       id={SHORTAGE_SECTION_ID}
       tabIndex={-1}
       className="flex flex-col gap-2 rounded-sm text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-      aria-labelledby="driver-shortage-title"
+      aria-label={SHORTAGE_TITLE}
     >
-      <h3 id="driver-shortage-title" className="font-medium">
-        {SHORTAGE_TITLE}
-      </h3>
       <div className="grid grid-cols-2 items-start gap-3">
         <CountField
           id="driver-shortage"
@@ -48,18 +45,30 @@ export default function ShortageSection() {
         <div className="flex flex-col rounded-md bg-muted/50 px-2 py-1.5" data-testid="shortage-available">
           <span className="text-xs text-muted-foreground">乗務できる運転士の数(目安)</span>
           <span className="text-base font-semibold tabular-nums">{supply ? `${supply.available} 人` : '—'}</span>
+          {supply && (
+            <span className="text-[11px] text-muted-foreground tabular-nums" aria-hidden="true">
+              在籍 {supply.roster} × {supply.workDays} ÷ 7 − 欠員 {supply.shortage ?? 0}
+            </span>
+          )}
+          {/* 読み上げには数え方の1文を渡す(画面では上の式で足りる。2026-11-07 に利用者の指示で説明の文を減らした) */}
+          {supply && (
+            <span className="sr-only" data-testid="shortage-supply">
+              {supplyText(supply)}
+            </span>
+          )}
         </div>
       </div>
-      <p className="text-xs text-muted-foreground" data-testid="shortage-supply">
-        {supply ? supplyText(supply) : SHORTAGE_ROSTER_HINT}
-      </p>
+      {!supply && (
+        <p className="text-xs text-muted-foreground" data-testid="shortage-supply">
+          {SHORTAGE_ROSTER_HINT}
+        </p>
+      )}
       {warning && (
         <p className="flex items-start gap-1 text-xs font-medium text-destructive" data-testid="shortage-supply-warning">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
           <span>{warning}</span>
         </p>
       )}
-      <p className="text-xs text-muted-foreground">値はこの画面の中だけに持ち、サーバーには送りません。</p>
     </section>
   )
 }

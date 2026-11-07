@@ -166,29 +166,33 @@ export function DiffCounts({ diff, result }: { diff: WeekdayDiff; result: Form2R
           <p className="font-semibold">
             <span aria-hidden="true">⚠ </span>全曜日で便がなくなる系統が {vanishing.length} 系統あります
           </p>
-          <ul className="mt-0.5 list-disc pl-5 text-xs">
-            {vanishing.map((r) => (
-              <li key={r.routeId}>
-                {r.routeName}(平日 {r.before} 便 → {r.after} 便)
-              </li>
-            ))}
-          </ul>
           <p className="mt-0.5 text-xs">路線の休止の届出に当たるかを運輸支局に確認してください。除外すると平日の便がそのまま残ります。</p>
+          {/* 系統の名前は下の「系統ごと」の表にも印つきで出るので、ここでは閉じておく */}
+          <details className="mt-1 text-xs">
+            <summary className="cursor-pointer">系統の一覧({vanishing.length} 系統)</summary>
+            <ul className="mt-0.5 list-disc pl-5">
+              {vanishing.map((r) => (
+                <li key={r.routeId}>
+                  {r.routeName}(平日 {r.before} 便 → {r.after} 便)
+                </li>
+              ))}
+            </ul>
+          </details>
         </div>
       )}
-      <dl className="flex flex-col gap-0.5">
-        <div>
+      <dl className="flex flex-wrap gap-1.5 text-xs">
+        <div className="rounded-md border px-1.5 py-0.5">
           <dt className="inline">除外した系統:</dt>
           <dd className="inline tabular-nums">{excludedCount} 系統</dd>
         </div>
-        <div className={diff.vanishingRoutes > 0 ? 'font-semibold text-destructive' : undefined}>
+        <div className={`rounded-md border px-1.5 py-0.5 ${diff.vanishingRoutes > 0 ? 'border-destructive/50 font-semibold text-destructive' : ''}`}>
           <dt className="inline">
             {diff.vanishingRoutes > 0 && <span aria-hidden="true">⚠ </span>}全曜日で便がなくなる系統:
           </dt>
           <dd className="inline tabular-nums">{diff.vanishingRoutes} 系統</dd>
         </div>
         {addBack.requested > 0 && (
-          <div>
+          <div className="rounded-md border px-1.5 py-0.5">
             <dt className="inline">平日に戻す便:</dt>
             <dd className="inline tabular-nums">
               選んだ {addBack.requested} 便のうち、受け付け {addBack.accepted.length} 便
@@ -211,7 +215,7 @@ export function RouteDiffList({ diff }: { diff: WeekdayDiff }) {
   // 全曜日で便がなくなる系統を先頭に(あとは今の並び=route_id の順)
   const routes = [...diff.byRoute.filter((r) => r.vanishes), ...diff.byRoute.filter((r) => !r.vanishes)]
   return (
-    <details open className="text-xs">
+    <details className="text-xs">
       <summary className="cursor-pointer text-sm font-medium">
         系統ごと({diff.byRoute.length} 系統{vanishing > 0 && `。全曜日で便なし ${vanishing}`}{earlier > 0 && `。終発が早まる系統 ${earlier}`})
       </summary>

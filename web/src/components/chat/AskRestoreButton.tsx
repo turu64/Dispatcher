@@ -1,7 +1,8 @@
 import { Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { SENDING, useChatStore } from '@/store/chat'
+import { askRestoreDriversOf, SENDING, useChatStore } from '@/store/chat'
+import { useDriverComparison } from '@/store/drivers'
 import { askRestoreBlockedReason, useEnsureChatStatus, type ChatStoreHook } from './chatStatus'
 
 /**
@@ -10,10 +11,13 @@ import { askRestoreBlockedReason, useEnsureChatStatus, type ChatStoreHook } from
  * このボタンで送っている間(送信の POST が終わるまで)だけ、ボタンを処理中の形にする(「送っています…」の文は出さない)。
  * store の sending は「AI に相談」のタブの「送る」や周辺の施設の調査でも立つので、そのときは押せなくするだけで処理中の形にはしない。
  * 送ると左の欄は「AI に相談」のタブに切り替わる(chat/ChatPanel が利用者の文を見て切り替える)。
- * 返答は「AI に相談」のタブに、平日に戻す下書きはこの手順の欄に出る
+ * 返答は「AI に相談」のタブに、平日に戻す下書きはこの手順の欄に出る。
+ * 依頼の文には、運転士の数の判定(乗務できる運転士の数(目安)の余り・足りない数)から決めた、戻す便の数の上限を入れる
+ * (store/chat.ts の askRestorePrompt。在籍の運転士の数が無ければ 10 便くらい。2026-11-07)
  */
 export function AskRestoreButton({ blocked = null, store = useChatStore }: { blocked?: string | null; store?: ChatStoreHook }) {
   useEnsureChatStatus(store)
+  const verdict = useDriverComparison()?.verdict ?? null
   const reason = store((s) => askRestoreBlockedReason(s)) ?? blocked
   const [pending, setPending] = useState(false)
   // このボタンで送っている間は処理中のボタンが知らせるので、送信中の理由を文に出さない。ほかで送っている間は理由を出す
@@ -32,7 +36,7 @@ export function AskRestoreButton({ blocked = null, store = useChatStore }: { blo
           setPending(true)
           void store
             .getState()
-            .askRestore()
+            .askRestore(askRestoreDriversOf(verdict))
             .finally(() => setPending(false))
         }}
       >

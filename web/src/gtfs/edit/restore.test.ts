@@ -15,11 +15,19 @@ import {
   bestFacilityRank,
   compareByHints,
   createRestoreHinter,
+  FACILITY_NEAR_WEIGHT,
+  HINT_WEIGHT_HEAVY,
+  HINT_WEIGHT_LIGHT,
+  HINT_WEIGHT_MEDIUM,
+  HINT_WEIGHTS,
   hintSentence,
+  NEAR_HOSPITAL_ONLY_WEIGHT,
+  hintWeight,
   nearFacilityText,
   RESTORE_HINT_LABELS,
   restoreHints,
   type HintFacility,
+  type NearFacility,
   type RestoreHint,
   type RestoreHintContext,
 } from './restore'
@@ -48,8 +56,11 @@ describe('足し戻しの手がかり(restoreHints)', () => {
     expect(hinter(byId.get('R1_0800_WK')!).hints).toEqual(['lastTripOfRoute', 'morning'])
     // R2 の平日は 09:00 の1本だけ(始発かつ終発)。土曜便は 10:00 で、どちらも 9〜12時(3時間ごと)なので帯の便は 0 にならない
     // (U05 の前は公示第47号の区分で、09:00 は 6〜9時台、10:00 は 10〜14時台に分かれて onlyTripInBand が付いていた)。
-    // 9:00 は朝に入らない
-    expect(hinter(byId.get('R2_0900_WK')!).hints).toEqual(['firstTripOfRoute', 'lastTripOfRoute'])
+    // 9:00 は朝に入らない。減便後の平日の始発は写した土曜の 10:00 で、この便(9:00)より 60 分遅いので firstTripLater が付く
+    expect(hinter(byId.get('R2_0900_WK')!).hints).toEqual(['firstTripOfRoute', 'lastTripOfRoute', 'firstTripLater'])
+    expect(hinter(byId.get('R2_0900_WK')!).firstLater).toEqual({ trip: '09:00', after: '10:00', minutes: 60 })
+    // R1 の 08:00 は、減便後の平日の始発(07:00 の写した土曜便)より遅いので付かない
+    expect(hinter(byId.get('R1_0800_WK')!).firstLater).toBeUndefined()
     // R3 は平日だけの系統で、入れ替えると全曜日で便がなくなる
     expect(hinter(byId.get('R3_0730_WK')!)).toEqual({
       hints: ['weekdayOnlyRoute', 'routeWouldVanish', 'firstTripOfRoute', 'lastTripOfRoute', 'onlyTripInBand', 'morning'],
@@ -64,14 +75,37 @@ describe('足し戻しの手がかり(restoreHints)', () => {
     for (const trip of byId.values()) expect(restoreHints(base, edited, plan, trip)).toEqual(hinter(trip))
   })
 
-  it('手がかりの多い順に並べる', () => {
+  it('判断材料の重み(HINT_WEIGHTS)の大きい順に並べる', () => {
     const { diff, hinter } = setup()
     const sorted = diff.removed
       .map((trip) => ({ trip, detail: hinter(trip) }))
       .sort(compareByHints)
       .map((c) => c.trip.tripId)
-    // R1_0800_WK と R2_0900_WK は手がかりが2つずつで、始発の早い R1 が先
-    expect(sorted).toEqual(['R3_0730_WK', 'R1_0800_WK', 'R2_0900_WK'])
+    // R2_0900_WK は始発・終発(軽い 1 + 1)と始発が遅くなる(中くらい 2)で 4、R1_0800_WK は終発と朝(軽い 1 + 1)で 2
+    expect(sorted.map((id) => hintWeight(hinter(diff.removed.find((t) => t.tripId === id)!)))).toEqual([11, 4, 2])
+    expect(sorted).toEqual(['R3_0730_WK', 'R2_0900_WK', 'R1_0800_WK'])
+  })
+
+  it('重みの表は、学校の窓と方向ごとの時間帯が重く、病院だけの窓は中くらい、始発・終発・朝・夕方が軽い。窓に当たらない施設だけなら軽い重みを足す', () => {
+    expect(HINT_WEIGHTS.nearFacility).toBe(HINT_WEIGHT_HEAVY)
+    expect(HINT_WEIGHTS.onlyTripInBand).toBe(HINT_WEIGHT_HEAVY)
+    for (const h of ['weekdayOnlyRoute', 'routeWouldVanish', 'onlyServiceAtStop', 'restoresLostCells', 'firstTripLater'] as const) expect(HINT_WEIGHTS[h]).toBe(HINT_WEIGHT_MEDIUM)
+    expect(HINT_WEIGHTS.firstTripOfRoute).toBe(HINT_WEIGHT_LIGHT)
+    expect(HINT_WEIGHTS.lastTripOfRoute).toBe(HINT_WEIGHT_LIGHT)
+    expect(HINT_WEIGHTS.morning).toBe(HINT_WEIGHT_LIGHT)
+    expect(HINT_WEIGHTS.evening).toBe(HINT_WEIGHT_LIGHT)
+    const near = (kind: 'school' | 'hospital', matched: boolean) => ({
+      facility: { kind } as NearFacility['facility'],
+      stopId: 's',
+      stopName: 's',
+      distanceM: 100,
+      matches: matched ? [{ timing: 'arrive' as const, stopId: 's', stopName: 's', time: '07:40', distanceM: 100 }] : [],
+    })
+    expect(hintWeight({ hints: [], lostCells: null, ...NO_COUNTS })).toBe(0)
+    expect(hintWeight({ hints: [], lostCells: null, ...NO_COUNTS, facilities: [near('school', false)] })).toBe(FACILITY_NEAR_WEIGHT)
+    expect(hintWeight({ hints: ['nearFacility'], lostCells: null, ...NO_COUNTS, facilities: [near('school', true)] })).toBe(HINT_WEIGHT_HEAVY)
+    expect(hintWeight({ hints: ['nearFacility'], lostCells: null, ...NO_COUNTS, facilities: [near('hospital', true)] })).toBe(NEAR_HOSPITAL_ONLY_WEIGHT)
+    expect(hintWeight({ hints: ['nearFacility'], lostCells: null, ...NO_COUNTS, facilities: [near('hospital', true), near('school', true)] })).toBe(HINT_WEIGHT_HEAVY)
   })
 
   it('onlyTripInBand は始発の時間帯を到達圏と同じ3時間ごと(START_BANDS)で見る。公示第47号の区分では見ない(U05)', () => {
@@ -225,10 +259,75 @@ describe('足し戻しの手がかり:時間帯と系統の便数(band・routeTr
   })
 })
 
+// ---- 方向ごとの時間帯と始発(2026-11-07)----
+
+/** 学校線(R3)の逆向き(B 市役所 → A 駅前)の便を足したフィード。directionId を渡すと、その便の direction_id にする */
+function withReverseR3(feed: GtfsFeed, service: string, hhmm: string, directionId = ''): GtfsFeed {
+  const m = Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(2))
+  const time = (plus: number) => `${String(Math.floor((m + plus) / 60)).padStart(2, '0')}:${String((m + plus) % 60).padStart(2, '0')}:00`
+  const id = `R3R_${hhmm}_${service}`
+  const trips = [...feed.tables.get('trips')!.rows, { route_id: 'R3', service_id: service, trip_id: id, trip_headsign: '駅前', block_id: '', direction_id: directionId }]
+  const rows = [
+    { trip_id: id, arrival_time: time(0), departure_time: time(0), stop_id: 'B', stop_sequence: '1', pickup_type: '0', drop_off_type: '1' },
+    { trip_id: id, arrival_time: time(20), departure_time: time(20), stop_id: 'A', stop_sequence: '2', pickup_type: '1', drop_off_type: '0' },
+  ]
+  return withRows(withRows(feed, 'trips', trips), 'stop_times', [...feed.tables.get('stop_times')!.rows, ...rows])
+}
+
+/** 便の direction_id を書き換えたフィード */
+function withDirectionIds(feed: GtfsFeed, ids: Record<string, string>): GtfsFeed {
+  return withRows(
+    feed,
+    'trips',
+    feed.tables.get('trips')!.rows.map((t) => (t.trip_id !== undefined && t.trip_id in ids ? { ...t, direction_id: ids[t.trip_id] } : t)),
+  )
+}
+
+describe('足し戻しの手がかり:方向ごとの時間帯の便(onlyTripInBand)と始発が遅くなる(firstTripLater)', () => {
+  it('同じ時間帯に逆向きの便だけが残るときも、この方向の便には onlyTripInBand が付き、band はこの方向の便数', () => {
+    // 土曜の学校線は 07:40 の逆向き(市役所 → 駅前)だけ。6〜9時の系統の便は残るが、駅前 → 市役所の向きは 0 になる
+    const { hinter, byId } = setup(withReverseR3(threeMorningR3(), 'SA', '0740'))
+    for (const id of R3_MORNING) {
+      const d = hinter(byId.get(id)!)
+      expect(d.hints).toContain('onlyTripInBand')
+      expect(d.band).toEqual({ label: '6〜9時', before: 3, after: 0 })
+      // 系統の便数は方向を分けない
+      expect(d.routeTrips).toEqual({ before: 3, after: 1 })
+    }
+  })
+
+  it('同じ向きの便が残れば付かない。direction_id があれば、停留所名ではなく direction_id で方向を分ける', () => {
+    const same = setup(withR3Trips(threeMorningR3(), [{ service: 'SA', hhmm: '0840' }]))
+    expect(same.hinter(same.byId.get('R3_0730_WK')!).hints).not.toContain('onlyTripInBand')
+    // 逆向きの便に平日の便と同じ direction_id を付けると、同じ方向とみなす(付かない)
+    const ids = { R3_0700_WK: '0', R3_0730_WK: '0', R3_0845_WK: '0', R3R_0740_SA: '0' }
+    const byId = setup(withDirectionIds(withReverseR3(threeMorningR3(), 'SA', '0740'), ids))
+    expect(byId.hinter(byId.byId.get('R3_0730_WK')!).hints).not.toContain('onlyTripInBand')
+    const other = setup(withDirectionIds(withReverseR3(threeMorningR3(), 'SA', '0740'), { ...ids, R3R_0740_SA: '1' }))
+    expect(other.hinter(other.byId.get('R3_0730_WK')!).hints).toContain('onlyTripInBand')
+  })
+
+  it('firstTripLater は、減便後のこの方向の始発がこの便より 30 分以上遅いときだけ。29 分なら付かず、この方向の便が無ければ付かない', () => {
+    // 土曜の同じ向きの便が 07:29 → 07:00 の便は 29 分で付かず、08:00 なら 07:00・07:30 の便に付く(08:45 は付かない)
+    const near = setup(withR3Trips(threeMorningR3(), [{ service: 'SA', hhmm: '0729' }]))
+    expect(near.hinter(near.byId.get('R3_0700_WK')!).hints).not.toContain('firstTripLater')
+    const far = setup(withR3Trips(threeMorningR3(), [{ service: 'SA', hhmm: '0800' }]))
+    expect(far.hinter(far.byId.get('R3_0700_WK')!).firstLater).toEqual({ trip: '07:00', after: '08:00', minutes: 60 })
+    expect(far.hinter(far.byId.get('R3_0730_WK')!).firstLater).toEqual({ trip: '07:30', after: '08:00', minutes: 30 })
+    expect(far.hinter(far.byId.get('R3_0845_WK')!).hints).not.toContain('firstTripLater')
+    // 逆向きの便だけが残るとき(この方向の便は減便後 0)は付けない(onlyTripInBand が付く)
+    const reverse = setup(withReverseR3(threeMorningR3(), 'SA', '1000'))
+    expect(reverse.hinter(reverse.byId.get('R3_0700_WK')!).hints).not.toContain('firstTripLater')
+    expect(hintSentence('firstTripLater', far.hinter(far.byId.get('R3_0700_WK')!))).toBe(
+      '平日に戻さないと、この方向の平日の始発が減便後は 08:00 発になり、この便(07:00 発)より 60 分遅くなります',
+    )
+  })
+})
+
 describe('判断材料の文(hintSentence)', () => {
   it('時間帯の便の数と、系統の平日の便数を detail から入れる', () => {
     const detail = { hints: [], lostCells: null, band: { label: '6〜9時', before: 3, after: 0 }, routeTrips: { before: 11, after: 4 } }
-    expect(hintSentence('onlyTripInBand', detail)).toBe('6〜9時に、この系統の便が減便後 0 便になります(減便前 3 便)')
+    expect(hintSentence('onlyTripInBand', detail)).toBe('6〜9時に、この系統のこの方向の便が減便後 0 便になります(減便前 3 便)')
     expect(hintSentence('firstTripOfRoute', detail)).toBe('系統の平日の始発です(系統の平日 11 便。方向は分けていません)')
     expect(hintSentence('lastTripOfRoute', detail)).toBe('系統の平日の終発です(系統の平日 11 便。方向は分けていません)')
     expect(hintSentence('evening', detail)).toBe('始発が夕方・夜(15〜21時)の便です')
@@ -241,7 +340,7 @@ describe('判断材料の文(hintSentence)', () => {
     const { hinter, byId } = setup(threeMorningR3())
     for (const id of R3_MORNING) {
       const d = hinter(byId.get(id)!)
-      expect(hintSentence('onlyTripInBand', d)).toBe('6〜9時に、この系統の便が減便後 0 便になります(減便前 3 便)')
+      expect(hintSentence('onlyTripInBand', d)).toBe('6〜9時に、この系統のこの方向の便が減便後 0 便になります(減便前 3 便)')
     }
     const first = hinter(byId.get('R3_0700_WK')!)
     expect(hintSentence('firstTripOfRoute', first)).toBe('系統の平日の始発です(系統の平日 3 便。方向は分けていません)')

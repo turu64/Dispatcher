@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AGENCY, FEED_INFO, feedOf, rowsOf, smallFeed } from '../gtfs/edit/form2.fixture'
 import { defaultFacilityWindows, facilityWindows } from '../gtfs/edit/facilityHours'
 import { reachBaseFeed, reachSetup } from '../gtfs/edit/restore.fixture'
-import type { HintFacility, NearFacility, RestoreHintContext, RestoreHintDetail } from '../gtfs/edit/restore'
+import { HINT_WEIGHTS, type HintFacility, type NearFacility, type RestoreHint, type RestoreHintContext, type RestoreHintDetail } from '../gtfs/edit/restore'
 import { makeBands } from '../gtfs/departures'
 import { DEFAULT_REACH_PARAMS } from '../reach/reach'
 import { DUTY_DEFAULTS, type DutyPlace } from '../gtfs/edit/duties'
@@ -579,15 +579,15 @@ describe('結果が 20KB を超えたら切り詰めて件数を書く', () => {
 })
 
 describe('search_trips', () => {
-  it('消える便を手がかりの多い順に返し、到達圏の比較が無ければそう書く', async () => {
+  it('消える便を判断材料の重みの大きい順に返し、到達圏の比較が無ければそう書く', async () => {
     const { store, deps } = setup()
     await withPolicy(deps, store)
     const r = await runTool('search_trips', { ...SEARCH, limit: 2 }, deps)
     const body = parse(r.content)
     expect(body).toMatchObject({ status: 'ok', scope: 'removed', basis: '承認済みの編集', total: 3, returned: 2, omitted_over_limit: 1 })
     const trips = body.trips as Record<string, unknown>[]
-    // R1_0800_WK と R2_0900_WK は手がかりが2つずつで、始発の早い R1 が先(U05 で時間帯を3時間ごとにし、R2 の onlyTripInBand が外れた)
-    expect(trips.map((t) => t.trip_id)).toEqual(['R3_0730_WK', 'R1_0800_WK'])
+    // R2_0900_WK は始発・終発(軽い)と始発が遅くなる(中くらい)で、終発(軽い)と朝(数えない)だけの R1_0800_WK より先(2026-11-07 に重みの順にした)
+    expect(trips.map((t) => t.trip_id)).toEqual(['R3_0730_WK', 'R2_0900_WK'])
     expect(trips[0]).toEqual({
       feed: 'base',
       trip_id: 'R3_0730_WK',
@@ -607,8 +607,14 @@ describe('search_trips', () => {
       band: { label: '6〜9時', before: 1, after: 0 },
       route_weekday_trips: { before: 1, after: 0 },
     })
-    // R1 は 6〜9時に土曜の便が加わるので、時間帯の判断材料は付かない(band は無い)。系統の平日の便数は前 2 便・後 3 便
-    expect(trips[1]).toMatchObject({ trip_id: 'R1_0800_WK', route_weekday_trips: { before: 2, after: 3 } })
+    // R2 は 9〜12時に土曜の 10:00 の便が加わるので、時間帯の判断材料は付かない(band は無い)。減便後の始発は 10:00 で、60 分遅くなる
+    expect(trips[1]).toMatchObject({
+      trip_id: 'R2_0900_WK',
+      hints: ['firstTripOfRoute', 'lastTripOfRoute', 'firstTripLater'],
+      hint_texts: ['系統の始発', '系統の終発', '始発が遅くなる(減便後 10:00 発。60 分遅い)'],
+      first_later: { trip: '09:00', after: '10:00', minutes: 60 },
+      route_weekday_trips: { before: 1, after: 1 },
+    })
     expect(trips[1]).not.toHaveProperty('band')
     expect((trips[1].hint_texts as string[]).length).toBe((trips[1].hints as string[]).length)
     // 続きの位置(limit で止めたので、続きは offset 2 から)
@@ -707,9 +713,9 @@ WK0800,08:10:00,08:10:00,B,2`),
     expect(b.hints).toContain('onlyServiceAtStop')
     expect(b.lost_cells).not.toBeNull()
     expect(b.lost_cells!.cells).toBeGreaterThan(0)
-    // 手がかりの多い順に並ぶ
-    const counts = trips.map((t) => t.hints.length)
-    expect(counts).toEqual([...counts].sort((x, y) => y - x))
+    // 判断材料の重みの大きい順に並ぶ
+    const weights = trips.map((t) => t.hints.reduce((w, h) => w + HINT_WEIGHTS[h as RestoreHint], 0))
+    expect(weights).toEqual([...weights].sort((x, y) => y - x))
     expect(body.notes).not.toContain('到達圏の比較がまだないため、到達圏を使う判断材料は出していません。')
     // どの日付・どの時間帯の幅の比較かを書く
     expect(body.notes).toContain('到達圏を使う判断材料(onlyServiceAtStop・restoresLostCells)は、比較する日付 2026/11/04 の減便前後の到達圏の比較から、画面の時間帯の幅(3 時間ごと)で出しています。')
@@ -823,16 +829,16 @@ WK0800,08:10:00,08:10:00,B,2`),
       expect(note).toContain('window のない施設は既定の窓')
     })
 
-    it('B 市役所に 08:10 に着く R1 にも、近くの病院の行き(8〜11時着)で nearFacility を付け、手がかりの多い順に並べる', async () => {
-      // 手がかりの数が同じときに優先順位で並べることは、restore.test.ts の compareByHints で確かめている
+    it('B 市役所に 08:10 に着く R1 にも、近くの病院の行き(8〜11時着)で nearFacility を付け、判断材料の重みの大きい順に並べる', async () => {
+      // 重みが同じときに優先順位で並べることは、restore.test.ts の compareByHints で確かめている
       const nearB = school({ targetId: 'P04:市役所病院', name: '市役所病院', kind: 'hospital', categoryLabel: '入院設備のある病院', rank: 1, lat: 43.77, lon: 142.37 + 0.001 })
       const { store, deps } = setup({ hintContext: () => ctxWith([nearB]) })
       await withPolicy(deps, store)
       const body = parse((await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)).content)
       const trips = body.trips as { trip_id: string; hints: string[] }[]
       expect(trips.find((t) => t.trip_id === 'R1_0800_WK')!.hints).toContain('nearFacility')
-      const counts = trips.map((t) => t.hints.length)
-      expect(counts).toEqual([...counts].sort((x, y) => y - x))
+      const weights = trips.map((t) => t.hints.reduce((w, h) => w + HINT_WEIGHTS[h as RestoreHint], 0))
+      expect(weights).toEqual([...weights].sort((x, y) => y - x))
     })
 
     it('周辺の施設を読めていなければ nearby_facilities を入れず、出していない理由を書く', async () => {
@@ -1097,7 +1103,7 @@ WK0800,08:10:00,08:10:00,B,2`),
     const ids = async (input: Record<string, unknown>) =>
       ((parse((await runTool('search_trips', { ...SEARCH, limit: 50, ...input }, deps)).content).trips as { trip_id: string }[]).map((t) => t.trip_id))
     expect(await ids({ stop_name: '学校' })).toEqual(['R3_0730_WK'])
-    expect(await ids({ route_ids: ['R1', 'R2'] })).toEqual(['R1_0800_WK', 'R2_0900_WK'])
+    expect(await ids({ route_ids: ['R1', 'R2'] })).toEqual(['R2_0900_WK', 'R1_0800_WK'])
     expect(await ids({ depart_from: '07:30', depart_to: '08:00' })).toEqual(['R3_0730_WK'])
     // 写して入る便は feed が edited
     const added = parse((await runTool('search_trips', { ...SEARCH, scope: 'added', limit: 50 }, deps)).content)

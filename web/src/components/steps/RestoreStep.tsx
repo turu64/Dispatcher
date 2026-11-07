@@ -73,7 +73,7 @@ function reachHintNote(ctx: RestoreHintContext): string {
  * 時刻で決まる判断材料の時間帯の説明(U05)。始発の時間帯は到達圏と同じ3時間ごと(始発の時間帯の絞り込みと同じ区切り)で、
  * 公示第47号の区分(6〜9時台、10〜14時台…)は使わない
  */
-const BAND_HINT_NOTE = `「${RESTORE_HINT_LABELS.onlyTripInBand}」は、始発の時間帯(到達圏と同じ3時間ごと。6〜9時、9〜12時…。上の「始発の時間帯」の絞り込みと同じ区切り)で、その系統の減便後の平日の便が 0 になる便です。方向は分けず、同じ時間帯のなくなる便すべてに付きます。「${RESTORE_HINT_LABELS.morning}」と「${RESTORE_HINT_LABELS.evening}」も始発の時刻で見ます。`
+const BAND_HINT_NOTE = `「${RESTORE_HINT_LABELS.onlyTripInBand}」は、始発の時間帯(到達圏と同じ3時間ごと。6〜9時、9〜12時…。上の「始発の時間帯」の絞り込みと同じ区切り)で、その系統のその方向(行き先)の減便後の平日の便が 0 になる便です。方向は、始発と終着の停留所の組(direction_id があればそれ)で分け、同じ方向・時間帯のなくなる便すべてに付きます。「${RESTORE_HINT_LABELS.firstTripLater}」は、平日に戻さないと、その方向の減便後の平日の始発がこの便より 30 分以上遅くなる便です。「${RESTORE_HINT_LABELS.morning}」と「${RESTORE_HINT_LABELS.evening}」も始発の時刻で見ます。`
 
 /** 到達圏を使う2つの手がかりを出していない理由 */
 const REACH_HINTS_ABSENT = {

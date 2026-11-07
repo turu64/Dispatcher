@@ -346,6 +346,8 @@ export function shortHintText(hint: RestoreHint, detail: RestoreHintDetail): str
   switch (hint) {
     case 'onlyTripInBand':
       return detail.band ? `${label}(${detail.band.label})` : label
+    case 'firstTripLater':
+      return detail.firstLater ? `${label}(減便後 ${detail.firstLater.after} 発。${count(detail.firstLater.minutes)} 分遅い)` : label
     case 'nearFacility': {
       const matched = (detail.facilities ?? []).filter((n) => n.matches.length > 0).length
       return matched > 0 ? `${label}(${count(matched)} 施設)` : label
@@ -1503,6 +1505,7 @@ async function searchTrips(input: unknown, deps: ToolDeps, signal?: AbortSignal)
     // 判断材料の短い文(hints と同じ並び)。時間帯・停留所・系統の全体のどれについての判断材料かと、数はコードが書く(指摘15.3)
     trip.hint_texts = detail.hints.map((h) => shortHintText(h, detail))
     if (detail.band) trip.band = detail.band
+    if (detail.firstLater) trip.first_later = detail.firstLater
     trip.route_weekday_trips = { before: detail.routeTrips.before, after: detail.routeTrips.after }
     if (detail.lostCells) trip.lost_cells = { cells: detail.lostCells.cells, population: Math.round(detail.lostCells.population) }
     if (facilityHints) {

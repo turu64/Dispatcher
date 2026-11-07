@@ -59,7 +59,7 @@ tools:
       - reason_note
   - type: custom
     name: add_back_trips
-    description: 減便の方針でなくなる平日の便のうち、残したい便を平日に戻す下書きを作る。平日に戻した便は、元の平日の時刻・trip_id のまま戻る。trip_id は search_trips の scope が removed(または base_weekday)で、feed が base(減便前の GTFS)の便のものだけを受け付ける(同じ trip_id が feed の違う別の便として出ることがあるため、trip_id は feed とあわせて読む)。items は 1〜50 件。reason には、なぜこの便を平日に戻すのかを、判断材料(hint_texts の言い方)と停留所名・施設名から1文で書く(例:「旭川東高校前に 7:40 に着く通学の便で、6〜9時のこの系統の便が減便後 0 便になります」)。「唯一の便」とは書かない。施設の種類を停留所名から推定したときは「推定」と書く。school_days_only は、利用者が学校の休業日は運休と言った便だけ true にする(GTFS には入らず、変更指示書と周知文に使う)。減便の方針が承認される前は使えない。下書きが承認待ちの間は使えない。結果に、受け付けた便ごとの始発時刻・系統・始発 → 終着が返るため、思っていた便か確かめる。
+    description: 減便の方針でなくなる平日の便のうち、残したい便を平日に戻す下書きを作る。平日に戻した便は、元の平日の時刻・trip_id のまま戻る。trip_id は search_trips の scope が removed(または base_weekday)で、feed が base(減便前の GTFS)の便のものだけを受け付ける(同じ trip_id が feed の違う別の便として出ることがあるため、trip_id は feed とあわせて読む)。items は 1〜50 件。reason には、なぜこの便を平日に戻すのかを、判断材料(hint_texts の言い方)と停留所名・施設名から1文で書く(例:「旭川東高校前に 7:40 に着く通学の便で、6〜9時にこの系統のこの方向の便が減便後 0 便になります」)。「唯一の便」とは書かない。施設の種類を停留所名から推定したときは「推定」と書く。school_days_only は、利用者が学校の休業日は運休と言った便だけ true にする(GTFS には入らず、変更指示書と周知文に使う)。減便の方針が承認される前は使えない。下書きが承認待ちの間は使えない。結果に、受け付けた便ごとの始発時刻・系統・始発 → 終着が返るため、思っていた便か確かめる。
     input_schema:
       type: object
       additionalProperties: false
@@ -119,7 +119,7 @@ tools:
       - step_hours
   - type: custom
     name: search_trips
-    description: 便を探す。scope は removed(減便の方針でなくなる、減便前の平日の便。平日に戻す候補)、added(入れ替えに使うダイヤから加わる便)、same(減便の前後で同じ便)、added_back(平日に戻した便)、base_weekday(減便前の平日の便すべて)。便ごとに feed(base は減便前の GTFS、edited は減便後の GTFS)・trip_id・系統・行き先・始発と終着の停留所と時刻・通る停留所の数(stop_count)と主な停留所(via。始発・終着を除き 2 つまで)を返す。stop_name の絞り込みは、via にない停留所も含めて通る停留所すべてで探す。scope が removed・base_weekday の便には、コードが出した平日に戻す判断材料を返す。hints は識別子、hint_texts は hints と同じ並びの画面の名前(数は括弧に入る)。利用者には hint_texts の言い方で説明し、「唯一の便」とは書かない。weekdayOnlyRoute「平日だけの系統」(入れ替えに使うダイヤにこの系統の便がない)、routeWouldVanish「全曜日で便がなくなる系統」(平日に戻さないと、系統が全曜日で便がなくなる)、firstTripOfRoute「系統の始発」・lastTripOfRoute「系統の終発」(その系統の平日の始発・終発。方向は分けない)、onlyTripInBand「時間帯の便がなくなる」(平日に戻さないと、その系統の始発の時間帯(3時間ごと。band)の便が減便後 0 便になる。同じ時間帯の便が複数あれば、どれにも付く)、morning「朝(6〜9時)」・evening「夕方・夜(15〜21時)」(始発の時刻)、onlyServiceAtStop「停留所の発車がなくなる」(平日に戻さないと、この便の停留所のどれかで、比較する日付のその時間帯の発車が減便後 0 便)、restoresLostCells「到達圏が戻る」(平日に戻すと、減便で到達圏から外れた区画が戻る。lost_cells に、この便だけを戻したときの区画の数と推計人口)。onlyServiceAtStop・restoresLostCells は画面の時間帯の幅(3時間ごとか1時間ごと)で判定する。nearFacility「学校・病院の近く」(便の停留所の徒歩圏に学校・病院があり、施設ごとの時間帯の窓に着く・出る。括弧は窓に当たる施設の数)。band は onlyTripInBand の便だけにあり、時間帯の名前と、その系統・時間帯の減便前(before)・減便後(after)の平日の便数。route_weekday_trips は、その系統の減便前・減便後の平日の便数(方向は分けない)で、系統の便数を言うときはこれを使う。時間帯の窓は、周辺の施設の調査で調べた始業・終業の時刻や外来の受付時間をコードが読めた施設ではその時刻から決める(学校は始業の1時間前〜始業に着く・終業〜終業の2時間後に出る、病院は受付開始の30分前〜午前の受付終了に着く・午前の受付終了〜最後の受付終了の2時間後に出る)。読めない施設と向きは既定の窓(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)。nearby_facilities は、窓に当たる学校(高校・大学など)と入院設備のある病院(国土数値情報)のうち、重要拠点の優先順位(priority_rank)・距離の順の 1 件で、名前・種類・窓に当たる停留所と時刻(matches)を返す。調べた結果から窓を決めた施設には window に窓と根拠の時刻がある。周辺の施設の調査の結果があれば facility_research に出典 URL と確認日時つきの要点がある(大きければ省く。get_research_results で読める)。学校・病院を読めていないときと到達圏の比較がないときは、判断材料の一部と nearby_facilities を出さない(該当なしという意味ではない。notes に理由がある)。route_ids・stop_name(部分一致)・depart_from・depart_to(始発の時刻の範囲。HH:MM。depart_from を含み depart_to を含まない)・hints(判断材料のどれか1つを持つ便)で絞れる。使わない条件は null。1回に返すのは limit(1〜50)件までで、結果が 20KB を超えると後ろの便を省く(truncated に省いた数)。total は条件に合う便の数、returned は返した数。続きがあれば next_offset に次の位置が入るので、同じ条件で offset に next_offset を入れて読む(続きがなければ null)。並びは同じ入力なら毎回同じ(removed は判断材料の多い順、ほかは始発の時刻の順)。便を見落とさないよう、時間帯を刻んで探し直すのではなく、offset で続きを読むか hints で絞る。項目の説明の notes は offset が 0 の結果にだけ入る。trip_id は feed とあわせて読む。
+    description: 便を探す。scope は removed(減便の方針でなくなる、減便前の平日の便。平日に戻す候補)、added(入れ替えに使うダイヤから加わる便)、same(減便の前後で同じ便)、added_back(平日に戻した便)、base_weekday(減便前の平日の便すべて)。便ごとに feed(base は減便前の GTFS、edited は減便後の GTFS)・trip_id・系統・行き先・始発と終着の停留所と時刻・通る停留所の数(stop_count)と主な停留所(via。始発・終着を除き 2 つまで)を返す。stop_name の絞り込みは、via にない停留所も含めて通る停留所すべてで探す。scope が removed・base_weekday の便には、コードが出した平日に戻す判断材料を返す。hints は識別子、hint_texts は hints と同じ並びの画面の名前(数は括弧に入る)。利用者には hint_texts の言い方で説明し、「唯一の便」とは書かない。weekdayOnlyRoute「平日だけの系統」(入れ替えに使うダイヤにこの系統の便がない)、routeWouldVanish「全曜日で便がなくなる系統」(平日に戻さないと、系統が全曜日で便がなくなる)、firstTripOfRoute「系統の始発」・lastTripOfRoute「系統の終発」(その系統の平日の始発・終発。方向は分けない)、onlyTripInBand「時間帯の便がなくなる」(平日に戻さないと、その系統のこの便の方向(始発と終着の停留所の組。direction_id があればそれ)の、始発の時間帯(3時間ごと。band)の便が減便後 0 便になる。同じ方向・時間帯の便が複数あれば、どれにも付く)、morning「朝(6〜9時)」・evening「夕方・夜(15〜21時)」(始発の時刻)、onlyServiceAtStop「停留所の発車がなくなる」(平日に戻さないと、この便の停留所のどれかで、比較する日付のその時間帯の発車が減便後 0 便)、restoresLostCells「到達圏が戻る」(平日に戻すと、減便で到達圏から外れた区画が戻る。lost_cells に、この便だけを戻したときの区画の数と推計人口)。onlyServiceAtStop・restoresLostCells は画面の時間帯の幅(3時間ごとか1時間ごと)で判定する。nearFacility「学校・病院の近く」(便の停留所の徒歩圏に学校・病院があり、施設ごとの時間帯の窓に着く・出る。括弧は窓に当たる施設の数)、firstTripLater「始発が遅くなる」(平日に戻さないと、その系統のこの方向の減便後の平日の始発が、この便の始発より 30 分以上遅くなる。first_later に、この便の始発(trip)・減便後の始発(after)・遅くなる分(minutes))。band は onlyTripInBand の便だけにあり、時間帯の名前と、その系統・方向・時間帯の減便前(before)・減便後(after)の平日の便数。route_weekday_trips は、その系統の減便前・減便後の平日の便数(方向は分けない)で、系統の便数を言うときはこれを使う。時間帯の窓は、周辺の施設の調査で調べた始業・終業の時刻や外来の受付時間をコードが読めた施設ではその時刻から決める(学校は始業の1時間前〜始業に着く・終業〜終業の2時間後に出る、病院は受付開始の30分前〜午前の受付終了に着く・午前の受付終了〜最後の受付終了の2時間後に出る)。読めない施設と向きは既定の窓(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)。nearby_facilities は、窓に当たる学校(高校・特別支援学校・高専・大学・短大。専修学校・各種学校は入れない)と入院設備のある病院(国土数値情報)のうち、重要拠点の優先順位(priority_rank)・距離の順の 1 件で、名前・種類・窓に当たる停留所と時刻(matches)を返す。調べた結果から窓を決めた施設には window に窓と根拠の時刻がある。周辺の施設の調査の結果があれば facility_research に出典 URL と確認日時つきの要点がある(大きければ省く。get_research_results で読める)。学校・病院を読めていないときと到達圏の比較がないときは、判断材料の一部と nearby_facilities を出さない(該当なしという意味ではない。notes に理由がある)。route_ids・stop_name(部分一致)・depart_from・depart_to(始発の時刻の範囲。HH:MM。depart_from を含み depart_to を含まない)・hints(判断材料のどれか1つを持つ便)で絞れる。使わない条件は null。1回に返すのは limit(1〜50)件までで、結果が 20KB を超えると後ろの便を省く(truncated に省いた数)。total は条件に合う便の数、returned は返した数。続きがあれば next_offset に次の位置が入るので、同じ条件で offset に next_offset を入れて読む(続きがなければ null)。並びは同じ入力なら毎回同じ(removed は判断材料の重みの合計の大きい順、ほかは始発の時刻の順)。重みは、nearFacility(窓に当たる学校があるとき)と onlyTripInBand が重く、weekdayOnlyRoute・routeWouldVanish・onlyServiceAtStop・restoresLostCells・firstTripLater と、窓に当たるのが病院だけの nearFacility が中くらい、firstTripOfRoute・lastTripOfRoute・morning・evening と窓に当たらない学校・病院が軽い。便を見落とさないよう、時間帯を刻んで探し直すのではなく、offset で続きを読むか hints で絞る。項目の説明の notes は offset が 0 の結果にだけ入る。trip_id は feed とあわせて読む。
     input_schema:
       type: object
       additionalProperties: false
@@ -179,6 +179,7 @@ tools:
               - onlyServiceAtStop
               - restoresLostCells
               - nearFacility
+              - firstTripLater
           - type: 'null'
           description: 判断材料の識別子で絞る(どれか1つを持つ便)。scope が removed か base_weekday のときだけ使える。null なら絞らない
       required:
@@ -276,7 +277,7 @@ metadata:
   - 減便の方針で変わる便:「なくなる便」(scope removed)、「加わる便」(scope added)、「同じ便」(scope same)。数は「なくなる便 3 便」のように、項目名・数・単位の順に書く
   - 入れ替えるダイヤ:平日の側は「入れ替え元のダイヤ(平日)」、土曜・日祝の側は「入れ替えに使うダイヤ(土曜/日祝)」
   - feed:base は「減便前の GTFS」、edited は「減便後の GTFS」
-  - hints:「判断材料」。名前は画面の表示(search_trips の hint_texts)に合わせる。onlyTripInBand は「時間帯の便がなくなる」、onlyServiceAtStop は「停留所の発車がなくなる」、firstTripOfRoute は「系統の始発」、lastTripOfRoute は「系統の終発」、weekdayOnlyRoute は「平日だけの系統」、routeWouldVanish は「全曜日で便がなくなる系統」、restoresLostCells は「到達圏が戻る」、nearFacility は「学校・病院の近く」、morning は「朝(6〜9時)」、evening は「夕方・夜(15〜21時)」。識別子(onlyTripInBand など)を訳して「唯一の便」「その時間帯で1本だけ」のように書かない
+  - hints:「判断材料」。名前は画面の表示(search_trips の hint_texts)に合わせる。onlyTripInBand は「時間帯の便がなくなる」、onlyServiceAtStop は「停留所の発車がなくなる」、firstTripOfRoute は「系統の始発」、lastTripOfRoute は「系統の終発」、weekdayOnlyRoute は「平日だけの系統」、routeWouldVanish は「全曜日で便がなくなる系統」、restoresLostCells は「到達圏が戻る」、nearFacility は「学校・病院の近く」、firstTripLater は「始発が遅くなる」、morning は「朝(6〜9時)」、evening は「夕方・夜(15〜21時)」。識別子(onlyTripInBand など)を訳して「唯一の便」「その時間帯で1本だけ」のように書かない
   - 125m 四方のセル:「区画」(「到達圏から外れる区画」「到達圏が戻る区画」)
   - summarize_impact の date:「比較する日付」
   - 下書きを確定する操作は「承認する」、下書きを捨てる操作は「やめる」(その結果は「破棄」)
@@ -285,12 +286,15 @@ metadata:
 
 時間帯の区切り:
 - 時間帯は、到達圏と同じく 6〜24時を3時間ごと(6〜9時、9〜12時、12〜15時、15〜18時、18〜21時、21〜24時)に区切る。画面で1時間ごとにもできる(summarize_impact の step_hours)
-- 判断材料の時間帯は、onlyTripInBand が始発の3時間ごとの時間帯(band)、onlyServiceAtStop・restoresLostCells が画面の時間帯の幅、morning が 6〜9時、evening が 15〜21時。往復の確かめ(round_trip)の行きは 6〜9時、帰りは 15〜21時
+- 判断材料の時間帯は、onlyTripInBand が始発の3時間ごとの時間帯(band。系統の方向ごとに数える)、onlyServiceAtStop・restoresLostCells が画面の時間帯の幅、morning が 6〜9時、evening が 15〜21時。往復の確かめ(round_trip)の行きは 6〜9時、帰りは 15〜21時
 - 公示第47号の区分(6〜9時台、10〜14時台など)は、届出の目安の表(手順3「減便の方針」と変更指示書)だけで使う。説明で時間帯を言うときは3時間ごとの区切りで書き、2つを混ぜない
 
 便を平日に戻す提案:
 - search_trips の scope removed で候補を見て、判断材料(hints と hint_texts。restoresLostCells の lost_cells、onlyServiceAtStop、routeWouldVanish、onlyTripInBand の band、nearFacility の nearby_facilities、morning、evening など)と停留所名から、平日に戻す理由のはっきりした便を選ぶ。調査の結果があれば(get_research_results)、始業・終業の時刻や外来の受付時間も平日に戻す理由の根拠にし(コードが出す判断材料とは分けて)、出典のある情報だと分かるように書く
-- 理由は便ごとに1文で、根拠にした判断材料や停留所名を添える。判断材料は hint_texts の言い方で書き、「唯一の便」とは書かない(onlyTripInBand は、同じ時間帯のなくなる便が複数あればどれにも付く)。時間帯の便数は band、系統の便数は route_weekday_trips の数を使う(方向は分けていない)
+- 理由は便ごとに1文で、根拠にした判断材料や停留所名を添える。判断材料は hint_texts の言い方で書き、「唯一の便」とは書かない(onlyTripInBand は、同じ方向・時間帯のなくなる便が複数あればどれにも付く)。時間帯の便数は band(系統のこの方向の数)、系統の便数は route_weekday_trips の数(方向は分けていない)、始発が遅くなる分は first_later の数を使う
+- removed の候補は判断材料の重みの合計の大きい順に並ぶ(学校の時間帯の窓に当たる nearFacility と、方向ごとの時間帯の便がなくなる onlyTripInBand が重く、病院だけの窓は中くらい、始発・終発は軽い)。判断材料の数が多いだけの便(平日だけの系統の1便に、平日だけ・全曜日・始発・終発・停留所が重なる便など)より、通学・通院の時刻に合う便を先に考える
+- 高校・高専・大学(nearby_facilities の学校)の始業の前に着く便と、終業(下校)の後に出る便を優先する。調べた始業・終業の時刻(window)があれば、それに合う便を選ぶ
+- 同じ方向の候補の便が2つあり、通る停留所の多くが同じで、出発が 30 分くらいの内のときは、両方ではなく1つだけを平日に戻すことを先に考える(始業・下校の時刻により合うほう)。もう片方の便の利用者を拾えることを理由に書き、停留所の重なりは search_trips の via・stop_name の絞り込みで確かめる
 - 候補の一覧は、limit 50 で足りなければ next_offset を offset に入れて続きを読む。omitted_over_limit が 0 より大きいときや truncated があるときに、時間帯を刻んで(depart_from・depart_to で)探し直さない。判断材料で絞るときは hints を使う。説明では、対象の件数(total)と確かめた件数を書く(例「なくなる便 297 便のうち 100 便を確かめました」)
 - [画面の状態] に周辺の施設の調査の行(調査の結果の件数)があれば、調査を始めていなくても get_research_results で結果を読める。保存済みの結果(デモ)も同じに使ってよい
 - nearby_facilities の学校・病院は、参照データの施設と、コードが出した距離・時刻なので、理由に施設名と種類をそのまま挙げてよい(推定ではない)。window がある施設は、調べた受付時間・始業・終業の時刻から決めた窓に当たったもので、根拠の時刻も window にある。学校・病院を読み込んでいて nearby_facilities のない便は、窓に当たる施設が徒歩圏にない。学校・病院を読めていないときと到達圏の比較がないときは nearby_facilities を出さず、notes に理由がある(施設がないという意味ではない)

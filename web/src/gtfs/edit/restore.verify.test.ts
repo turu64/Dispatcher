@@ -15,7 +15,7 @@ import { buildRestoreHintContext } from '../../store/restoreHintContext'
 import { feedServicePeriod } from '../calendar'
 import { loadGtfsZip, type GtfsFeed } from '../load'
 import { toStops } from '../parse'
-import { diffWeekdayTrips, notice47BandOf, type TripBrief } from './diff'
+import { diffWeekdayTrips, notice47BandOf, startBandOf, type TripBrief } from './diff'
 import { applyForm2 } from './form2'
 import type { Form2Plan } from './ops'
 import { createRestoreHinter, type RestoreHintContext, type RestoreHintDetail } from './restore'
@@ -217,7 +217,7 @@ describe.skipIf(!ready)('足し戻しの手がかり(到達圏を使う2つ)を�
    * - evening:71 → 90 便。始発が 15〜19時から 15〜21時に広げたため、19:00〜20:59 に始発がある 19 便が加わった
    * 出力 GTFS は変わらない(判断材料は候補の並びと絞り込みだけに使う。form2.verify.test.ts・write.verify.test.ts)
    */
-  it.skipIf(!matches)('時刻で決まる判断材料(onlyTripInBand・evening)を3時間ごとで数える。U05 の前の区切りとの差(U05)', () => {
+  it.skipIf(!matches)('時刻で決まる判断材料(onlyTripInBand・evening)を3時間ごとで数える。U05 の前の区切りとの差(U05)。onlyTripInBand は方向ごと(2026-11-07)', () => {
     const ids = (hint: 'onlyTripInBand' | 'evening') => [...details].filter(([, d]) => d.hints.includes(hint)).map(([id]) => id).sort()
     // U05 の前の定義:onlyTripInBand は公示第47号の区分、evening は始発が 15〜19時
     const diff = diffWeekdayTrips(base, edited, plan.weekdayService, plan.excludedRoutes)
@@ -229,9 +229,16 @@ describe.skipIf(!ready)('足し戻しの手がかり(到達圏を使う2つ)を�
     const startsIn = (t: TripBrief, from: number, to: number) => t.firstSeconds !== null && t.firstSeconds >= from * 3600 && t.firstSeconds < to * 3600
     const oldEvening = removed.filter((t) => startsIn(t, 15, 19)).length
 
+    // 3時間ごと・方向を分けない数え方(2026-11-07 まで)。方向ごとに数えると、これに加えて逆向きの便が残る方向の便にも付く
+    const editedRouteBands = new Set([...diff.same, ...diff.added].map((t) => `${t.routeId}\t${startBandOf(t.firstSeconds)}`))
+    const routeOnly = removed
+      .filter((t) => t.firstSeconds !== null && !editedRouteBands.has(`${t.routeId}\t${startBandOf(t.firstSeconds)}`))
+      .map((t) => t.tripId)
+      .sort()
     const only = ids('onlyTripInBand')
-    expect([oldOnly.length, only.length]).toEqual([21, 25])
-    expect(only.filter((id) => !oldOnly.includes(id))).toEqual([
+    expect([oldOnly.length, routeOnly.length, only.length]).toEqual([21, 25, 36])
+    expect(routeOnly.filter((id) => !only.includes(id))).toEqual([])
+    expect(routeOnly.filter((id) => !oldOnly.includes(id))).toEqual([
       '0013_02_01_01_0840',
       '0024_03_01_01_1050',
       '0028_01_01_01_0740',
@@ -241,7 +248,7 @@ describe.skipIf(!ready)('足し戻しの手がかり(到達圏を使う2つ)を�
       '0908_02_01_01_0900',
       '0909_03_01_01_1000',
     ])
-    expect(oldOnly.filter((id) => !only.includes(id))).toEqual(['0003_01_01_01_0950', '0003_02_01_01_1140', '0006_06_01_01_2019', '0910_02_01_01_0925'])
+    expect(oldOnly.filter((id) => !routeOnly.includes(id))).toEqual(['0003_01_01_01_0950', '0003_02_01_01_1140', '0006_06_01_01_2019', '0910_02_01_01_0925'])
 
     expect([oldEvening, ids('evening').length]).toEqual([71, 90])
     expect(removed.filter((t) => startsIn(t, 19, 21))).toHaveLength(19)

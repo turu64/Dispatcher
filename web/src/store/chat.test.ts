@@ -7,6 +7,9 @@ import { runTool, type ToolDeps, type ToolOutcome } from '../claude/tools'
 import { smallFeed } from '../gtfs/edit/form2.fixture'
 import { stateLines } from '../claude/screenLines'
 import {
+  ASK_RESTORE_PROMPT,
+  askRestoreDriversOf,
+  askRestorePrompt,
   budgetReachedMessage,
   canStop,
   chatToolDeps,
@@ -908,5 +911,27 @@ describe('置いた営業所の名前は AI に送らない(F02)', () => {
     expect(fake.posts.length).toBeGreaterThan(calls.length)
     expect(leaks(JSON.stringify(fake.posts))).toEqual([])
     expect(leaks(JSON.stringify(s().sentLog))).toEqual([])
+  })
+})
+
+describe('「AI に候補を聞く」の依頼の文(askRestorePrompt。2026-11-07)', () => {
+  it('運転士の数の判定が無ければ 10 便くらい。余りがあれば余りから上限(5〜20 便)を決め、足りなければ 5 便', () => {
+    expect(askRestorePrompt(null)).toBe(ASK_RESTORE_PROMPT)
+    expect(ASK_RESTORE_PROMPT).toContain('数は多くても 10 便くらいにしてください。')
+    const spare16 = askRestorePrompt({ kind: 'enough', spare: 16 })
+    expect(spare16).toContain('乗務できる運転士の余りは 16 人の目安です。余りの範囲に収まるよう、戻す便を選んでください(多くても 16 便)。')
+    expect(spare16).not.toContain('10 便くらい')
+    expect(askRestorePrompt({ kind: 'enough', spare: 2 })).toContain('余りは 2 人の目安です。余りの範囲に収まるよう、戻す便を選んでください(多くても 5 便)。')
+    expect(askRestorePrompt({ kind: 'enough', spare: 40 })).toContain('(多くても 20 便)')
+    expect(askRestorePrompt({ kind: 'short', missing: 13 })).toContain('減便後もあと 13 人足りない目安です。戻す便はできるだけ少なくしてください(多くても 5 便)。')
+    for (const t of [spare16, askRestorePrompt({ kind: 'short', missing: 1 })]) expect(t).not.toContain('あなた')
+  })
+
+  it('判定から余り・足りない数を取り出す。判定が出ていなければ null', () => {
+    const common = { available: 88, needed: 72, beforeNeeded: 101, beforeMargin: -13 }
+    expect(askRestoreDriversOf({ kind: 'enough', ...common, spare: 16 })).toEqual({ kind: 'enough', spare: 16 })
+    expect(askRestoreDriversOf({ kind: 'short', ...common, missing: 3 })).toEqual({ kind: 'short', missing: 3 })
+    expect(askRestoreDriversOf({ kind: 'noRoster' })).toBeNull()
+    expect(askRestoreDriversOf(null)).toBeNull()
   })
 })

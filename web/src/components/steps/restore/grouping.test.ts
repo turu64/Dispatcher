@@ -25,16 +25,26 @@ function cand(tripId: string, routeId: string, firstSeconds: number | null, hint
 }
 
 describe('compareCandidates', () => {
-  it('手がかりの多い順、次に外れたセルの人口の多い順、次に始発の時刻の順(時刻の無い便は後ろ)、次に trip_id の順', () => {
+  it('判断材料の重みの大きい順、次に外れたセルの人口の多い順、次に始発の時刻の順(時刻の無い便は後ろ)、次に trip_id の順', () => {
     const list = [
-      cand('e', 'R', null, ['morning']),
-      cand('d', 'R', 3600, ['morning']),
-      cand('c', 'R', 7200, ['morning'], 100),
-      cand('b', 'R', 0, ['morning', 'evening']),
-      cand('a', 'R', 3600, ['morning']),
+      cand('e', 'R', null, ['lastTripOfRoute']),
+      cand('d', 'R', 3600, ['lastTripOfRoute']),
+      cand('c', 'R', 7200, ['lastTripOfRoute'], 100),
+      cand('b', 'R', 0, ['firstTripOfRoute', 'lastTripOfRoute']),
+      cand('a', 'R', 3600, ['lastTripOfRoute']),
       cand('f', 'R', 0),
     ]
     expect([...list].sort(compareCandidates).map((c) => c.trip.tripId)).toEqual(['b', 'c', 'a', 'd', 'e', 'f'])
+  })
+
+  it('数ではなく重みで並べる。重い判断材料1つ(時間帯の便がなくなる)は、軽い判断材料2つ(始発・終発)と朝より上', () => {
+    const list = [
+      cand('light', 'R', 0, ['firstTripOfRoute', 'lastTripOfRoute', 'morning']),
+      cand('heavy', 'R', 3600, ['onlyTripInBand']),
+      cand('medium', 'R', 0, ['firstTripLater']),
+      cand('morningOnly', 'R', 0, ['morning', 'evening']),
+    ]
+    expect([...list].sort(compareCandidates).map((c) => c.trip.tripId)).toEqual(['heavy', 'light', 'medium', 'morningOnly'])
   })
 
   it('手がかりの数が同じなら、時間帯の窓に当たる施設の重要拠点の優先順位の高い便を、人口より先にする', () => {
@@ -69,7 +79,7 @@ u1,07:00:00,07:00:00,A1,1
 u1,07:10:00,07:10:00,B,2`),
   })
   const endpoints = tripEndpoints(feed)
-  const candidates = [cand('t3', 'R', 35400), cand('t2', 'R', 32400, ['morning']), cand('t1', 'R', 28800), cand('u1', 'U', 25200)]
+  const candidates = [cand('t3', 'R', 35400), cand('t2', 'R', 32400, ['lastTripOfRoute']), cand('t1', 'R', 28800), cand('u1', 'U', 25200)]
   const editedDir: RouteDirection = { firstStopId: 'A1', firstStopName: '駅前', lastStopId: 'B', lastStopName: '市役所', trips: [], maxGapMin: 90 }
 
   it('stop_sequence の順の最初と最後の stop_id を始発・終着にする', () => {

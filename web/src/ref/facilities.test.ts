@@ -206,6 +206,14 @@ describe('defaultSelection', () => {
     expect(defaultSelection(cands(), order, 2)).toEqual(['P29:high', 'P04:hosp-small', 'P11:ほかのバス'])
   })
 
+  it('学校行きの便の終点の近くの学校(prioritized)を巡回より先に取り、上限に数える。選ばない条件(休校中など)は同じ', () => {
+    const prioritized = new Set(['P29:univ', 'P29:closed', 'P29:other'])
+    expect(defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 2, prioritized)).toEqual(['P29:univ', 'P04:hosp-small', 'P11:ほかのバス'])
+    expect(defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 30, prioritized)).toEqual(['P29:univ', 'P04:hosp-small', 'P29:high', 'P04:hosp-big', 'P11:ほかのバス'])
+    // 空なら今までと同じ
+    expect(defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 30, new Set())).toEqual(defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 30))
+  })
+
   it('同じ入力ならいつも同じ並び(候補の並びに左右されない)', () => {
     const a = defaultSelection(cands(), DEFAULT_PRIORITY_ORDER, 30)
     const b = defaultSelection([...cands()].reverse(), DEFAULT_PRIORITY_ORDER, 30)

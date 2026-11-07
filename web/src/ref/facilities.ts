@@ -269,6 +269,13 @@ const HIGH_SCHOOL_TYPES = new Set(['高等学校', '特別支援学校', '中等
 const HIGHER_EDUCATION_TYPES = new Set(['大学', '短期大学', '高等専門学校', '専修学校', '各種学校'])
 
 /**
+ * 平日便を戻す判断材料「学校・病院の近く」(nearFacility)と、学校・病院に着く便の確認(facility_access)に使わない学校の種別
+ * (2026-11-07)。都心に多く、都心を通るほとんどの便に付いて便を分けないため(道北バスでは、なくなる便 297 便のうち 248 便に付いた)。
+ * 調査の対象の候補と重要拠点の優先順位(大学・高専・専修学校)には、これまでどおり入れる
+ */
+export const HINT_EXCLUDED_SCHOOL_TYPES: ReadonlySet<string> = new Set(['専修学校', '各種学校'])
+
+/**
  * 施設の重要拠点の種類。優先順位の種類に入らないもの(事業者、種別が分からない学校)は null
  * (事業者は別にまとめる。種別が分からない学校は手で選べるが、既定では選ばない)
  */
@@ -383,7 +390,9 @@ export function compareOperators(a: ResearchCandidate, b: ResearchCandidate): nu
 export const DEFAULT_SELECT_WALK_M = 1200
 
 /**
- * 既定で選ぶ対象(target_id の並び)。周辺のバス事業者以外は、種類ごとの列を重要拠点の優先順位の順に並べ、
+ * 既定で選ぶ対象(target_id の並び)。prioritized(学校行きの便の終点の近くの学校。store/research.ts の schoolTerminalTargets)に
+ * 入る施設を先に(2026-11-07)、重要拠点の優先順位の順、同じ種類の中は compareWithinCategory の順で取る。ほかの選ぶ条件は同じで、
+ * max 件の中に数える。残りは、種類ごとの列を重要拠点の優先順位の順に並べ、
  * 列の先頭から1件ずつ順に取る巡回を、max 件になるまで繰り返す
  * (優先順位の高い種類ほど先に、多く選ばれる。病院の多い市街地で上限が病院だけで埋まらないようにするため)。
  * その後ろに、周辺のバス事業者を max とは別に、こちらの停留所の近くに停留所がある事業者(「近くに停留所なし」でないもの。
@@ -391,13 +400,22 @@ export const DEFAULT_SELECT_WALK_M = 1200
  * 種類の中は compareWithinCategory の順。休校中などの学校、優先順位の外の施設(種別が分からない学校)、
  * 停留所から DEFAULT_SELECT_WALK_M より遠い施設は選ばない
  */
-export function defaultSelection(candidates: readonly ResearchCandidate[], order: readonly PriorityKey[], max: number): string[] {
+export function defaultSelection(
+  candidates: readonly ResearchCandidate[],
+  order: readonly PriorityKey[],
+  max: number,
+  prioritized: ReadonlySet<string> = new Set(),
+): string[] {
+  const picked: string[] = []
   const queues: ResearchCandidate[][] = []
   for (const key of order) {
     const group = candidates.filter((c) => c.category === key && !c.closed && c.nearestStopM <= DEFAULT_SELECT_WALK_M).sort(compareWithinCategory)
-    if (group.length > 0) queues.push(group)
+    for (const c of group) {
+      if (picked.length < max && prioritized.has(c.facility.targetId)) picked.push(c.facility.targetId)
+    }
+    const rest = prioritized.size > 0 ? group.filter((c) => !prioritized.has(c.facility.targetId)) : group
+    if (rest.length > 0) queues.push(rest)
   }
-  const picked: string[] = []
   for (let round = 0; picked.length < max; round++) {
     let any = false
     for (const q of queues) {

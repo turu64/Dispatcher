@@ -3,7 +3,9 @@ import { create } from 'zustand'
 import { fetchDemoResults, type DemoResult, type ResearchResult, type ResearchTarget } from '@/claude/research'
 import { pickNoticeDate, type NoticeDateSource } from '@/gtfs/edit/notice'
 import { stopDiff } from '@/gtfs/edit/stopDiff'
+import type { GtfsFeed } from '@/gtfs/load'
 import type { Stop } from '@/gtfs/parse'
+import { distanceM } from '@/reach/mesh'
 import { originStops } from '@/reach/input'
 import { operatorOverlap, type OperatorOverlap, type OtherStop } from '@/ref/busstops'
 import {
@@ -195,6 +197,75 @@ export function overlapsFor(busstops: readonly OtherStop[], stops: readonly Stop
   return result
 }
 
+// ---- 学校行きの便の終点の近くの学校(既定の選び方で先に選ぶ。2026-11-07)----
+
+/** 行き先(trip_headsign)か系統名に含まれれば、学校へ行く便とみなす語 */
+export const SCHOOL_TRIP_WORD = /高校|高専|学校|大学/
+/** 学校行きの便の終点から、この距離(m)以内の学校を先に選ぶ */
+export const SCHOOL_TERMINAL_RADIUS_M = 600
+
+const WEEKDAY_COLUMNS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as const
+
+// フィードごとに1回だけ求める(stop_times を1回なめる)
+const terminalCache = new WeakMap<GtfsFeed, ReadonlySet<string>>()
+
+/**
+ * 学校へ行く平日の便(行き先か系統名に SCHOOL_TRIP_WORD を含む便)の終点の stop_id。
+ * 平日の便は、calendar.txt で月〜金のどれかが 1 の service の便(calendar.txt に無い service の便も含める。減便の方針を
+ * 決める前でも使えるよう、service のグループ分けは使わない)。終点は stop_sequence を数として比べて最大の行
+ */
+export function schoolTripTerminals(feed: GtfsFeed): ReadonlySet<string> {
+  const cached = terminalCache.get(feed)
+  if (cached) return cached
+  const trim = (v: string | undefined) => (v ?? '').trim()
+  const notWeekday = new Set<string>()
+  for (const c of feed.tables.get('calendar')?.rows ?? []) {
+    if (WEEKDAY_COLUMNS.every((d) => trim(c[d]) !== '1')) notWeekday.add(trim(c.service_id))
+  }
+  const routeNames = new Map<string, string>()
+  for (const r of feed.tables.get('routes')?.rows ?? []) routeNames.set(trim(r.route_id), `${trim(r.route_short_name)} ${trim(r.route_long_name)}`)
+  const schoolTrips = new Set<string>()
+  for (const t of feed.tables.get('trips')?.rows ?? []) {
+    if (notWeekday.has(trim(t.service_id))) continue
+    if (SCHOOL_TRIP_WORD.test(trim(t.trip_headsign)) || SCHOOL_TRIP_WORD.test(routeNames.get(trim(t.route_id)) ?? '')) schoolTrips.add(trim(t.trip_id))
+  }
+  const last = new Map<string, { seq: number; stopId: string }>()
+  if (schoolTrips.size > 0) {
+    for (const row of feed.tables.get('stop_times')?.rows ?? []) {
+      const tripId = trim(row.trip_id)
+      if (!schoolTrips.has(tripId)) continue
+      const seq = Number(trim(row.stop_sequence))
+      if (!Number.isFinite(seq)) continue
+      const prev = last.get(tripId)
+      if (!prev || seq > prev.seq) last.set(tripId, { seq, stopId: trim(row.stop_id) })
+    }
+  }
+  const out: ReadonlySet<string> = new Set([...last.values()].map((v) => v.stopId).filter((id) => id !== ''))
+  terminalCache.set(feed, out)
+  return out
+}
+
+/**
+ * 既定の選び方で先に選ぶ学校(target_id)。学校へ行く平日の便の終点(schoolTripTerminals)から SCHOOL_TERMINAL_RADIUS_M 以内の
+ * 学校(重要拠点の種類があるもの)。調べたい高校(南高校行・農業高校行など)が、病院や名寄の施設の巡回で上限から漏れないようにする
+ */
+export function schoolTerminalTargets(
+  feed: GtfsFeed,
+  stops: readonly Pick<Stop, 'id' | 'lat' | 'lon'>[],
+  candidates: readonly ResearchCandidate[],
+  radiusM: number = SCHOOL_TERMINAL_RADIUS_M,
+): Set<string> {
+  const terminals = schoolTripTerminals(feed)
+  const out = new Set<string>()
+  if (terminals.size === 0) return out
+  const points = stops.filter((s) => terminals.has(s.id) && Number.isFinite(s.lat) && Number.isFinite(s.lon))
+  for (const c of candidates) {
+    if (c.facility.kind !== 'school' || c.category === null) continue
+    if (points.some((p) => distanceM(c.facility, p) <= radiusM)) out.add(c.facility.targetId)
+  }
+  return out
+}
+
 /** 候補と、選んでいる対象(既定の選び方のままなら、その結果) */
 export interface ResearchView {
   candidates: ResearchCandidate[]
@@ -223,7 +294,11 @@ export function useResearchView(): ResearchView {
     // 事業者(自社を除く)に重なりを付ける。重なりの無い事業者は null(「近くに停留所なし」)
     return base.map((c) => (c.facility.kind === 'operator' && !c.ownOperator ? { ...c, overlap: overlaps.get(c.facility.targetId) ?? null } : c))
   }, [list, stops, agencyNames, overlaps])
-  const defaults = useMemo(() => defaultSelection(candidates, order, maxTargets), [candidates, order, maxTargets])
+  // 学校へ行く平日の便の終点の近くの学校を先に選ぶ(2026-11-07)。終点は読み込んだ GTFS の停留所(stops.txt の全部)から探す
+  const feed = useGtfsStore((s) => s.feed)
+  const allStops = useGtfsStore((s) => s.stops)
+  const prioritized = useMemo(() => (feed ? schoolTerminalTargets(feed, allStops, candidates) : new Set<string>()), [feed, allStops, candidates])
+  const defaults = useMemo(() => defaultSelection(candidates, order, maxTargets, prioritized), [candidates, order, maxTargets, prioritized])
   // 読み込んだ GTFS の事業者は調べる対象にしない(一覧のチェックボックスは変更できない。2026-11-07 に利用者の指示)
   const selectedIds = useMemo(() => {
     const own = new Set(candidates.filter((c) => c.ownOperator).map((c) => c.facility.targetId))

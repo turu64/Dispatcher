@@ -286,6 +286,27 @@ describe('学校の窓(schoolWindows)', () => {
     expect(w.arrive.fact).toEqual({ label: '始業・終業時刻', value: '始業 8:30、終業 15:20(日課表)', url: 'https://example.jp/s' })
   })
 
+  it('「課業」「授業」のラベルの範囲は始業〜終業とみなす(旭川永嶺高校の「課業日の時間 平日8:15～16:45」。2026-11-07)', () => {
+    const eirei = [
+      {
+        label: '課業日の時間(公式アクセスページ記載)',
+        value: '平日8:15～16:45（土曜、日曜、祝日、学校閉庁日を除く）。始業・終業の正式な時刻表記ではなく『課業日』の表記',
+      },
+    ]
+    expect(readSchoolTimes(eirei)).toMatchObject({ start: { minutes: h(8, 15) }, end: { minutes: h(16, 45) } })
+    const w = schoolWindows(eirei)
+    expect(span(w.arrive)).toEqual([h(7, 15), h(8, 15), 'research'])
+    expect(span(w.depart)).toEqual([h(16, 45), h(18, 45), 'research'])
+    expect(w.arrive.basis).toBe('始業 8:15')
+    expect(w.depart.basis).toBe('終業 16:45')
+    // 時限が並ぶ授業時間は、1日の始まりと終わり
+    const periods = readSchoolTimes([{ label: '授業時間', value: '1限 8:50〜9:40、6限 14:30〜15:20' }])
+    expect([periods.start?.minutes, periods.end?.minutes]).toEqual([h(8, 50), h(15, 20)])
+    // 範囲の無い授業の事実(時刻が1つ)と、授業料は読まない
+    expect(readSchoolTimes([{ label: '授業のある曜日', value: '月〜金(土曜授業は年10回、8時50分から)' }])).toEqual({ start: null, end: null })
+    expect(readSchoolTimes([{ label: '授業料', value: '年額 9:00〜17:00 に窓口で納付' }])).toEqual({ start: null, end: null })
+  })
+
   it('語が無ければ、範囲の始まりを始業・終わりを終業(ラベルが両方を指すとき)。時刻が1つならラベルの指すほう', () => {
     expect(readSchoolTimes([{ label: '始業・終業時刻', value: '8時40分〜15時30分' }])).toMatchObject({ start: { minutes: h(8, 40) }, end: { minutes: h(15, 30) } })
     const t = readSchoolTimes([
@@ -313,12 +334,15 @@ describe('学校の窓(schoolWindows)', () => {
     expect(span(w.depart)).toEqual([h(14), h(18), 'default'])
   })
 
-  it('デモの学校:「見つからず」の文・ラベルが始業・終業でない事実(課業日・電話対応・スクールバスの始発)は読まず、既定に戻る', () => {
+  it('デモの学校:「見つからず」の文・ラベルが始業・終業でない事実(電話対応・スクールバスの始発)は読まず、既定に戻る。課業日の時間は読む', () => {
     const def = defaultFacilityWindows('school')
     expect(span(def.arrive)).toEqual([h(7), h(9), 'default'])
-    for (const facts of [MIDORIGAOKA_JUNIOR, NAGAMINE_HIGH, NAYORO_HIGH, SHIHO_HIGH, KOGYO_HIGH, []]) {
+    for (const facts of [MIDORIGAOKA_JUNIOR, NAYORO_HIGH, SHIHO_HIGH, KOGYO_HIGH, []]) {
       expect(schoolWindows(facts)).toEqual(def)
     }
+    // 永嶺高校の「課業日の時間」は始業〜終業として読む(2026-11-07)
+    const nagamine = schoolWindows(NAGAMINE_HIGH)
+    expect([nagamine.arrive.basis, nagamine.depart.basis]).toEqual(['始業 8:15', '終業 16:45'])
   })
 
   it('始業が終業以後なら、どちらも読めないとする。5〜22 時の外の時刻は読まない', () => {

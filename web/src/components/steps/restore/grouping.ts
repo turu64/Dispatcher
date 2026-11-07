@@ -1,5 +1,5 @@
 import type { TripBrief } from '@/gtfs/edit/diff'
-import { bestFacilityRank, type RestoreHintDetail } from '@/gtfs/edit/restore'
+import { bestFacilityRank, hintWeight, type RestoreHintDetail } from '@/gtfs/edit/restore'
 import type { RouteDirection } from '@/gtfs/edit/stopDiff'
 import { compareStrings, sortByStopSequence, stopTimesByTrip } from '@/gtfs/edit/signature'
 import type { GtfsFeed } from '@/gtfs/load'
@@ -64,11 +64,13 @@ function compareSeconds(a: number | null, b: number | null): number {
 }
 
 /**
- * 候補の並び:手がかりの多い順、次に外れたセルの推計人口の多い順(人口の重みづけは、この第2キーまで)、
- * 次に始発の時刻の順(時刻の無い便は後ろ)、同じなら trip_id の順
+ * 候補の並び:判断材料の重み(restore.ts の hintWeight。2026-11-07 に数の多い順から変えた)の大きい順、次に窓に当たる学校・病院の
+ * 優先順位、外れたセルの推計人口の多い順(人口の重みづけは、ここまで)、次に始発の時刻の順(時刻の無い便は後ろ)、同じなら trip_id の順
  */
 export function compareCandidates(a: Candidate, b: Candidate): number {
-  if (a.detail.hints.length !== b.detail.hints.length) return b.detail.hints.length - a.detail.hints.length
+  const wa = hintWeight(a.detail)
+  const wb = hintWeight(b.detail)
+  if (wa !== wb) return wb - wa
   // 時間帯の窓に当たる学校・病院の、重要拠点の優先順位の高い便を先に(T19。当たる施設の無い便どうしは同じ扱い)
   const ra = bestFacilityRank(a.detail)
   const rb = bestFacilityRank(b.detail)

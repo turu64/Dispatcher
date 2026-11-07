@@ -25,10 +25,13 @@
  * - 着く窓 = [受付開始 − 30分, 午前の受付終了)、出る窓 = [午前の受付終了, 最後の受付終了 + 120分)
  * - 根拠の文には範囲を MAX_BASIS_RANGES 件まで書き、残りは「ほか N 件」とする(窓の計算にはすべての範囲を使う)
  *
- * 学校(schoolWindows):label に「始業|終業|登校|下校」を含む事実から読む。「始業式」「終業式」は学校行事の日なので、
- * label でも値の語でも始業・終業として扱わない。
+ * 学校(schoolWindows):label に「始業|終業|登校|下校|課業|授業」を含む事実から読む。「始業式」「終業式」は学校行事の日なので、
+ * label でも値の語でも始業・終業として扱わない。「授業料」は時刻ではないので当てない。
  * - 時刻の直前(同じ句の中)に「始業」「登校」があればその時刻を始業、「終業」「下校」があれば終業とする
- * - そういう時刻が無く範囲があれば、label に始業・登校があれば範囲の始まりを始業、終業・下校があれば範囲の終わりを終業とする
+ * - そういう時刻が無く範囲があれば、label に始業・登校があれば範囲の始まりを始業、終業・下校があれば範囲の終わりを終業とする。
+ *   label が始業・終業・登校・下校のどれも含まず「課業」「授業」を含めば(「課業日の時間」「授業時間」。2026-11-07)、範囲を
+ *   始業〜終業とみなし、範囲の始まりの最も早い時刻を始業、範囲の終わりの最も遅い時刻を終業とする(「平日8:15〜16:45」は始業 8:15・終業 16:45。
+ *   「1限 8:50〜9:40、6限 14:30〜15:20」のように時限が並んでも、1日の始まりと終わりを取る)
  * - 範囲も無く時刻が1つだけなら、label が始業・登校だけを含めば始業、終業・下校だけを含めば終業とする
  * - 着く窓 = [始業 − 60分, 始業)、出る窓 = [終業, 終業 + 120分)。始業と終業の片方だけ読めたら、もう片方の時間帯は既定のまま。
  *   両方読めて始業が終業より後(同じを含む)なら、どちらも読めないとする
@@ -110,7 +113,9 @@ const SCHOOL_DEPART_AFTER = 120
 const HOSPITAL_LABEL = /受付|外来|診療/
 const HOSPITAL_LABEL_EXCLUDED = /時間外|救急|面会/
 // 「始業式」「終業式」(学校行事の日と時刻)は毎日の始業・終業ではないので当てない
-const SCHOOL_LABEL = /始業(?!式)|終業(?!式)|登校|下校/
+const SCHOOL_LABEL = /始業(?!式)|終業(?!式)|登校|下校|課業|授業(?!料)/
+/** label が始業・終業を指さず、授業のある時間(課業日の時間・授業時間)を指す語。範囲を始業〜終業とみなす */
+const SCHOOL_DAY_WORD = /課業|授業(?!料)/
 const SCHOOL_START_WORD = /始業(?!式)|登校/
 const SCHOOL_END_WORD = /終業(?!式)|下校/
 const LONG_BREAK_LABEL = /休業|休暇|休み/
@@ -322,7 +327,7 @@ function lastIndexOfWord(text: string, word: RegExp): number {
   return at
 }
 
-/** 学校の始業・終業の時刻を、label に「始業|終業|登校|下校」を含む事実から読む */
+/** 学校の始業・終業の時刻を、label に「始業|終業|登校|下校|課業|授業」を含む事実から読む */
 export function readSchoolTimes(facts: readonly FactLike[]): SchoolTimes {
   let start: SchoolTimes['start'] = null
   let end: SchoolTimes['end'] = null
@@ -350,6 +355,12 @@ export function readSchoolTimes(facts: readonly FactLike[]): SchoolTimes {
     const labelEnd = SCHOOL_END_WORD.test(f.label)
     // 2. 範囲(始まりを始業、終わりを終業)
     const ranges = rangesIn(text, timeTokens(text))
+    if (ranges.length > 0 && !labelStart && !labelEnd && SCHOOL_DAY_WORD.test(f.label)) {
+      // 課業日の時間・授業時間:1日の授業の始まりと終わり(範囲の始まりの最も早い時刻と、終わりの最も遅い時刻)
+      if (start === null) start = { minutes: Math.min(...ranges.map((r) => r.from)), fact: ref }
+      if (end === null) end = { minutes: Math.max(...ranges.map((r) => r.to)), fact: ref }
+      continue
+    }
     if (ranges.length > 0) {
       if (labelStart && start === null) start = { minutes: ranges[0].from, fact: ref }
       if (labelEnd && end === null) end = { minutes: ranges[0].to, fact: ref }

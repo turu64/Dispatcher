@@ -31,6 +31,8 @@ const COLLEGE = fac({ targetId: 'P29:大学', kind: 'school', name: '東大学',
 const HOSPITAL = fac({ targetId: 'P04:病院', kind: 'hospital', name: '東病院', beds: 120 })
 const CLINIC = fac({ targetId: 'P04:診療所', kind: 'clinic', name: '東クリニック', beds: 0 })
 /** 種別が分からない学校(優先順位の外) */
+const SENSHU = fac({ targetId: 'P29:専修', kind: 'school', name: '東専門学校', schoolType: '専修学校' })
+const KAKUSHU = fac({ targetId: 'P29:各種', kind: 'school', name: '東各種学校', schoolType: '各種学校' })
 const UNKNOWN = fac({ targetId: 'P29:不明', kind: 'school', name: '東学校' })
 const CLOSED = fac({ targetId: 'P29:休校', kind: 'school', name: '休校高校', schoolType: '高等学校', openStatus: '休校中' })
 const OPERATOR = fac({ targetId: 'P11:事業者', kind: 'operator', name: 'ほかのバス' })
@@ -75,8 +77,9 @@ describe('施設の位置の区分(facilityRegionClass)', () => {
 describe('手がかりに使う施設(hintFacilities)', () => {
   const base = { results: new Map<string, ResearchResult>(), order: DEFAULT_PRIORITY_ORDER, ref: ref(), params: DEFAULT_REACH_PARAMS, result: NO_FALLBACK }
 
-  it('優先順位にある学校と入院設備のある病院だけを使う(診療所・種別が分からない学校・休校中の学校・事業者は使わない)', () => {
-    const got = hintFacilities([HIGH, TECH, COLLEGE, HOSPITAL, CLINIC, UNKNOWN, CLOSED, OPERATOR], base)
+  it('優先順位にある学校と入院設備のある病院だけを使う(診療所・専修学校・各種学校・種別が分からない学校・休校中の学校・事業者は使わない)', () => {
+    // 専修学校・各種学校も使わない(2026-11-07。調査の対象の候補には残る)
+    const got = hintFacilities([HIGH, TECH, COLLEGE, SENSHU, KAKUSHU, HOSPITAL, CLINIC, UNKNOWN, CLOSED, OPERATOR], base)
     expect(got.map((f) => [f.targetId, f.kind, f.categoryLabel, f.rank])).toEqual([
       ['P29:高校', 'school', '高校・特別支援学校', 3],
       ['P29:高専', 'school', '大学・高専・専修学校', 4],

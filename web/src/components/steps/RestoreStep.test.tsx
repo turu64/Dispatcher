@@ -146,16 +146,18 @@ describe('RestoreStep', () => {
     expect(screen.getByText('減便の方針を承認すると、なくなる平日便から戻す便を選べます。')).toBeTruthy()
   })
 
-  it('候補は消える平日便で、手がかりの多い順に並べ、停留所名・手がかりで絞り込める', () => {
+  it('候補は消える平日便で、判断材料の重みの大きい順に並べ、停留所名・手がかりで絞り込める', () => {
     render(<RestoreStep />)
-    // R1_0800_WK(終発・朝)と R2_0900_WK(始発・終発)は手がかりが2つずつで、始発の早い R1 が先。
+    // R2_0900_WK(始発・終発・始発が遅くなる。重み 4)が R1_0800_WK(終発・朝。重み 2)より先(2026-11-07 に重みの順にした)。
     // R2 の 09:00 は土曜の 10:00 と同じ 9〜12時なので、時間帯の便は 0 にならない(U05。公示第47号では 6〜9時台と 10〜14時台に分かれていた)
-    expect(candidateIds()).toEqual(['R3_0730_WK', 'R1_0800_WK', 'R2_0900_WK'])
+    expect(candidateIds()).toEqual(['R3_0730_WK', 'R2_0900_WK', 'R1_0800_WK'])
     fireEvent.change(screen.getByLabelText('停留所名(一部)'), { target: { value: '学校' } })
     expect(candidateIds()).toEqual(['R3_0730_WK'])
     fireEvent.change(screen.getByLabelText('停留所名(一部)'), { target: { value: '' } })
     fireEvent.change(screen.getByLabelText('判断材料'), { target: { value: 'lastTripOfRoute' } })
-    expect(candidateIds()).toEqual(['R3_0730_WK', 'R1_0800_WK', 'R2_0900_WK'])
+    expect(candidateIds()).toEqual(['R3_0730_WK', 'R2_0900_WK', 'R1_0800_WK'])
+    fireEvent.change(screen.getByLabelText('判断材料'), { target: { value: 'firstTripLater' } })
+    expect(candidateIds()).toEqual(['R2_0900_WK'])
     fireEvent.change(screen.getByLabelText('判断材料'), { target: { value: 'onlyTripInBand' } })
     expect(candidateIds()).toEqual(['R3_0730_WK'])
     fireEvent.change(screen.getByLabelText('系統'), { target: { value: 'R1' } })
@@ -167,8 +169,8 @@ describe('RestoreStep', () => {
     render(<RestoreStep />)
     // 最初は閉じている
     expect(candidateBoxes(false)).toEqual([])
-    // R3 は平日だけの系統で、全曜日で便がなくなる。R1 と R2 は手がかりの数が同じで、始発の早い R1 が先
-    expect(routeOrder()).toEqual(['系統 3', '系統 1', '系統 2'])
+    // R3 は平日だけの系統で、全曜日で便がなくなる。R2 は判断材料の重みが R1 より大きい(始発が遅くなる)ので先
+    expect(routeOrder()).toEqual(['系統 3', '系統 2', '系統 1'])
     const region = (name: string) => within(candidates()).getByRole('region', { name })
     expect(region('系統 3').textContent).toContain('全曜日で便がなくなる')
     expect(region('系統 1').textContent).not.toContain('全曜日で便がなくなる')
@@ -218,16 +220,17 @@ describe('RestoreStep', () => {
     expect(candidates().textContent).not.toContain('唯一')
     // 判断材料の絞り込みの名前と、説明の注記も同じ名前
     expect(within(screen.getByLabelText('判断材料')).getByRole('option', { name: '時間帯の便がなくなる' })).toBeTruthy()
-    expect(screen.getByText(/「時間帯の便がなくなる」は、始発の時間帯\(到達圏と同じ3時間ごと。.*方向は分けず、同じ時間帯のなくなる便すべてに付きます。/)).toBeTruthy()
+    expect(screen.getByText(/「時間帯の便がなくなる」は、始発の時間帯\(到達圏と同じ3時間ごと。.*方向は、始発と終着の停留所の組\(direction_id があればそれ\)で分け、同じ方向・時間帯のなくなる便すべてに付きます。/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('唯一')
   })
 
-  it('系統の並びは、手がかりの数、次に外れたセルの人口、次に始発の時刻', () => {
+  it('系統の並びは、判断材料の重み、次に外れたセルの人口、次に始発の時刻', () => {
     vi.mocked(buildRestoreHintContext).mockReturnValue(FAKE_CTX)
-    // 到達圏を使う手がかりを足して、R1_0800_WK(元の手がかり2つ)と R2_0900_WK(元の手がかり2つ)をどちらも4つにする
+    // 手がかりを足して、R1_0800_WK(元は終発・朝で重み 2)と R2_0900_WK(元は始発・終発・始発が遅くなるで重み 4)をどちらも重み 8 にする
+    const R1_EXTRA: RestoreHint[] = [...REACH_HINTS, 'firstTripLater']
     const order = (r1: number, r2: number) => {
       FAKE_EXTRA.current = {
-        R1_0800_WK: { hints: REACH_HINTS, lostCells: { cells: 1, population: r1 } },
+        R1_0800_WK: { hints: R1_EXTRA, lostCells: { cells: 1, population: r1 } },
         R2_0900_WK: { hints: REACH_HINTS, lostCells: { cells: 1, population: r2 } },
       }
       const { unmount } = render(<RestoreStep />)
@@ -240,9 +243,9 @@ describe('RestoreStep', () => {
     expect(order(5, 10)).toEqual(['系統 3', '系統 2', '系統 1'])
     // 人口も同じなら、始発の早い便(R1 08:00)のある系統が先
     expect(order(10, 10)).toEqual(['系統 3', '系統 1', '系統 2'])
-    // 手がかりの数が多い系統は、人口が少なくても先(R2 に手がかりを1つ足して5つにする)
+    // 重みの大きい系統は、人口が少なくても先(R2 に学校・病院の近く(重い)を足す)
     FAKE_EXTRA.current = {
-      R1_0800_WK: { hints: REACH_HINTS, lostCells: { cells: 1, population: 900 } },
+      R1_0800_WK: { hints: R1_EXTRA, lostCells: { cells: 1, population: 900 } },
       R2_0900_WK: { hints: [...REACH_HINTS, 'nearFacility'], lostCells: { cells: 1, population: 10 } },
     }
     render(<RestoreStep />)
@@ -433,8 +436,8 @@ describe('RestoreStep', () => {
     fireEvent.click(within(screen.getByRole('group', { name: 'AI の下書きを破棄する確認' })).getByRole('button', { name: '破棄して続ける' }))
     expect(useEditStore.getState().draft).toBeNull()
     expect(useEditStore.getState().history).toHaveLength(2)
-    // 2番目の候補は R1_0800_WK(R3・R1・R2 の順)
-    expect(useEditStore.getState().versions.at(-1)?.plan.addBackTripIds).toEqual(['R1_0800_WK'])
+    // 2番目の候補は R2_0900_WK(R3・R2・R1 の順)
+    expect(useEditStore.getState().versions.at(-1)?.plan.addBackTripIds).toEqual(['R2_0900_WK'])
     expect(useEditStore.getState().draftNotices).toEqual([expect.objectContaining({ draftId, result: 'replaced' })])
     expect(screen.getByRole('status').textContent).toContain('1 便を平日に戻しました')
     expect(boxes().every((b) => !b.checked)).toBe(true)

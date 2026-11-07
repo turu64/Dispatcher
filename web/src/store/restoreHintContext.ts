@@ -5,7 +5,7 @@ import type { GtfsFeed } from '../gtfs/load'
 import type { OriginStops } from '../reach/input'
 import { cellAreaKm2, meshCode, parentCode } from '../reach/mesh'
 import type { ReachParams, ReachResult, RefData, RegionClass } from '../reach/reach'
-import { facilityCategory, type Facility } from '../ref/facilities'
+import { facilityCategory, HINT_EXCLUDED_SCHOOL_TYPES, type Facility } from '../ref/facilities'
 import { priorityCategory, priorityRank, usePriorityStore, type PriorityKey } from './priority'
 import type { EditedSource, ReachSnapshot, RefState } from './reach'
 import { useResearchStore, type FacilityState } from './research'
@@ -172,7 +172,8 @@ function hourFactsOf(r: ResearchResult | undefined): FactLike[] {
 
 /**
  * 周辺の施設の参照データ(国土数値情報の学校 P29・医療機関 P04)から、学校・病院の手がかりに使う施設を作る。
- * 使うのは重要拠点の優先順位にある学校(高校・大学など)と入院設備のある病院(診療所・種別が分からない学校・事業者は使わない)。
+ * 使うのは重要拠点の優先順位にある学校(高校・大学など)と入院設備のある病院(診療所・種別が分からない学校・事業者と、
+ * 専修学校・各種学校(HINT_EXCLUDED_SCHOOL_TYPES。2026-11-07)は使わない)。
  * 徒歩圏は、施設の位置の区分のバス停の分数 × 分速(到達圏と同じ距離)。優先順位は order の順位、調査の結果があれば要点を付ける。
  * 時間帯の窓は、調査の結果の受付時間・始業・終業から施設ごとに決め、読めなければ既定(gtfs/edit/facilityHours.ts。T27)。
  * 学校は、調査の結果から長期休業の期間も読む(減便の期間と重なるかは画面が overlapLongBreaks で出す)
@@ -194,6 +195,8 @@ export function hintFacilities(
     const kind = HINT_CATEGORIES.get(category)
     if (!kind) continue
     if (f.kind === 'school' && f.openStatus === CLOSED_SCHOOL) continue
+    // 専修学校・各種学校は判断材料に使わない(HINT_EXCLUDED_SCHOOL_TYPES。調査の対象には残す)
+    if (f.kind === 'school' && f.schoolType !== undefined && HINT_EXCLUDED_SCHOOL_TYPES.has(f.schoolType)) continue
     const research = o.results.get(f.targetId)
     const facts = hourFactsOf(research)
     out.push({

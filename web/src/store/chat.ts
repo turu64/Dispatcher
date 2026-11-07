@@ -10,6 +10,7 @@ import { describeServices, feedValidity, guessServiceChoice, policyValidity } fr
 import { groupedPolicyServices } from '../gtfs/groups/view'
 import type { GtfsFeed } from '../gtfs/load'
 import { appNow, appToday } from '../lib/dates'
+import type { DriverVerdict } from './drivers'
 import { draftName, japanIso, useEditStore, type DraftNotice } from './edit'
 import { useHolidayStore } from './holidays'
 import { useReachStore } from './reach'
@@ -186,8 +187,42 @@ export function continueLine(tally: CheckedTally): string {
   return main.length === 0 ? CONTINUE_LINE : `${CONTINUE_LINE}${main.join('、')}を確かめ済みです。`
 }
 
-export const ASK_RESTORE_PROMPT =
-  '減便の方針でなくなる平日の便のうち、通勤・通学・通院などのために平日に戻したほうがよい便を、判断材料と停留所名から選び、理由をつけて、便を平日に戻す下書きにしてください。数は多くても 10 便くらいにしてください。'
+const ASK_RESTORE_HEAD =
+  '減便の方針でなくなる平日の便のうち、通勤・通学・通院などのために平日に戻したほうがよい便を、判断材料と停留所名から選び、理由をつけて、便を平日に戻す下書きにしてください。'
+
+/** 運転士の数の判定が無い(在籍の運転士の数を入れていない)ときの「AI に候補を聞く」の依頼の文 */
+export const ASK_RESTORE_PROMPT = `${ASK_RESTORE_HEAD}数は多くても 10 便くらいにしてください。`
+
+/** 運転士の数の判定から決める、戻す便の数の上限の幅(便) */
+export const ASK_RESTORE_CAP = { min: 5, max: 20 } as const
+
+/**
+ * 「AI に候補を聞く」に添える運転士の数の判定(store/drivers.ts の DriverVerdict の enough・short から作る)。
+ * enough は乗務できる運転士の数(目安)の余り、short は足りない数
+ */
+export type AskRestoreDrivers = { kind: 'enough'; spare: number } | { kind: 'short'; missing: number }
+
+/** 運転士の数の判定から、「AI に候補を聞く」に添える余り・足りない数を取り出す(判定が出ていなければ null) */
+export function askRestoreDriversOf(verdict: DriverVerdict | null): AskRestoreDrivers | null {
+  if (verdict?.kind === 'enough') return { kind: 'enough', spare: verdict.spare }
+  if (verdict?.kind === 'short') return { kind: 'short', missing: verdict.missing }
+  return null
+}
+
+/**
+ * 「AI に候補を聞く」の依頼の文(2026-11-07)。運転士の数の判定があれば、戻す便の数の上限を余りから決める
+ * (余り S なら min(20, max(5, S)) 便。足りないなら 5 便)。判定が無ければ ASK_RESTORE_PROMPT(10 便くらい)。
+ * 数はコードが入れる。余りは勤務の数(目安)と比べた数で、便の数とは1対1でない(上限は目安)
+ */
+export function askRestorePrompt(drivers: AskRestoreDrivers | null = null): string {
+  if (drivers === null) return ASK_RESTORE_PROMPT
+  if (drivers.kind === 'short') {
+    return `${ASK_RESTORE_HEAD}乗務できる運転士の数(目安)は、減便後もあと ${drivers.missing} 人足りない目安です。戻す便はできるだけ少なくしてください(多くても ${ASK_RESTORE_CAP.min} 便)。`
+  }
+  const spare = Math.max(0, Math.floor(drivers.spare))
+  const cap = Math.min(ASK_RESTORE_CAP.max, Math.max(ASK_RESTORE_CAP.min, spare))
+  return `${ASK_RESTORE_HEAD}乗務できる運転士の余りは ${spare} 人の目安です。余りの範囲に収まるよう、戻す便を選んでください(多くても ${cap} 便)。`
+}
 
 /** 利用者の文の上限(UTF-8 のバイト数。サーバーは [画面の…] の行と合わせて 32KB まで) */
 export const MAX_TEXT_BYTES = 24 * 1024
@@ -352,7 +387,8 @@ export interface ChatState {
    */
   send: (text: string, options?: { extraLines?: string[] }) => Promise<boolean>
   /** 足し戻しの手順の「AI に候補を聞く」 */
-  askRestore: () => Promise<boolean>
+  /** 「AI に候補を聞く」。drivers は運転士の数の判定(無ければ null。askRestorePrompt) */
+  askRestore: (drivers?: AskRestoreDrivers | null) => Promise<boolean>
   /**
    * 止めた知らせの「続きを頼む」。「続けてください。」を送り、[画面の操作] の行で続きを頼んだことを伝える。
    * 送れたら、止めた知らせのボタンを消す
@@ -828,8 +864,8 @@ export function createChatStore(deps: ChatStoreDeps) {
         }
       },
 
-      askRestore() {
-        return get().send(ASK_RESTORE_PROMPT)
+      askRestore(drivers = null) {
+        return get().send(askRestorePrompt(drivers))
       },
 
       async continueStopped() {

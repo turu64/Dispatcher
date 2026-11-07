@@ -149,7 +149,7 @@ export default function LoadStep() {
     // 読み込みを始めたら、削除の確かめは閉じる
     closedByLoad.current = true
     setConfirmingDelete(false)
-    // 前の GTFS と、その編集の履歴・下書き・到達圏・前提情報・AI との会話を捨てる(削除と同じ初期化。store/reset.ts)
+    // 前の GTFS と、その編集の履歴・下書き・到達圏・運行の前提・周辺の施設の調査・AI との会話を捨てる(削除と同じ初期化。store/reset.ts)
     resetAll('reload')
     try {
       const blob = await getData()

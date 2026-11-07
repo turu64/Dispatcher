@@ -74,7 +74,7 @@ function initial(): Pick<ResearchState, 'facilities' | 'selected' | 'targets' | 
 }
 
 /**
- * 前提情報の手順の store。施設の参照データ、選んだ対象、調査の結果(出典 URL と確認日時つき)を持つ。
+ * 周辺の施設の調査の store(平日便を戻す手順の「判断材料を調べる」の欄)。施設の参照データ、選んだ対象、調査の結果(出典 URL と確認日時つき)を持つ。
  * 調査の開始と結果の読み込み(AI の中継)は store/chat.ts の startResearch・loadResearch が行い、ここには結果だけを入れる
  */
 export const useResearchStore = create<ResearchState>()((set, get) => ({
@@ -179,7 +179,7 @@ function useAgencyNames(): string[] {
 /** 事業者ごとの重なり(target_id → 重なり)。停留所の参照データが無ければ null */
 export type OverlapMap = ReadonlyMap<string, OperatorOverlap>
 
-// 前提情報の手順と地図の両方が同じ入力で求めるので、最後の入力と結果を1つだけ覚えておく(kdbush の索引を作り直さないため)
+// 「判断材料を調べる」の欄と地図の両方が同じ入力で求めるので、最後の入力と結果を1つだけ覚えておく(kdbush の索引を作り直さないため)
 let overlapMemo: { busstops: readonly OtherStop[]; stops: readonly Stop[]; names: string; result: OverlapMap } | null = null
 
 /**
@@ -206,7 +206,7 @@ export interface ResearchView {
   overlaps: OverlapMap | null
 }
 
-/** 前提情報の手順と地図が共通で使う、候補と選択 */
+/** 「判断材料を調べる」の欄と地図が共通で使う、候補と選択 */
 export function useResearchView(): ResearchView {
   const stops = useResearchStops()
   const agencyNames = useAgencyNames()

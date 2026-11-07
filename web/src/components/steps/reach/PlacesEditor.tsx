@@ -16,7 +16,7 @@ const REMOTE_WAIT_TEXT =
   REMOTE_WAIT_MIN % 60 === 0 ? `${REMOTE_WAIT_MIN / 60} 時間` : `${Math.floor(REMOTE_WAIT_MIN / 60)} 時間 ${REMOTE_WAIT_MIN % 60} 分`
 
 /**
- * 前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)の中の、営業所を置く欄
+ * 運行の前提の手順の「運行の前提」の欄(research/OperationPremise.tsx)の中の、営業所を置く欄
  * (指摘 24、docs/tasks-1105.md の D05。11/5 に影響(到達圏)の手順から移した。11/6 に種類を営業所1つにまとめ、
  * 折りたたまずに出すようにし、JSON の書き出し・読み込みをなくした。どれも利用者の指示)。
  * 足し方は2つ:「地図で営業所を置く」を押して地図を1回押す(地図は map/PlacesLayer.tsx)か、停留所の名前で探して選ぶ。

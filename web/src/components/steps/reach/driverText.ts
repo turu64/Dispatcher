@@ -4,7 +4,7 @@ import type { ParseResult } from '@/reach/input'
 import { MAX_ROSTER, MAX_SHORTAGE, WORK_DAYS_RANGE, type DriverNeed, type DriverSupply, type DriverVerdict } from '@/store/drivers'
 
 /**
- * 要る運転士の数(目安)の欄(DriverPanel.tsx)と、前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)の文。語は docs/wording.md に従い、「あなた」を使わない。
+ * 要る運転士の数(目安)の欄(DriverPanel.tsx)と、運行の前提の手順の「運行の前提」の欄(research/OperationPremise.tsx)・減便の方針の手順の欠員の欄(policy/ShortageSection.tsx)の文。語は docs/wording.md に従い、「あなた」を使わない。
  * 数はすべて計算(store/drivers.ts の compareDrivers)から入れる。届出・勤務の要否は言い切らない
  */
 
@@ -24,17 +24,20 @@ export const ROSTER_LABEL = '在籍の運転士の数'
 /** 週の出勤日数の入力欄の名前 */
 export const WORK_DAYS_LABEL = '1人あたりの週の出勤日数'
 
-/** 前提情報の手順の「運行の前提」の欄の見出し */
+/** 運行の前提の手順の「運行の前提」の欄の見出し */
 export const PREMISE_TITLE = '運行の前提(営業所・運転士の数)'
 
-/** 影響(到達圏)の手順の欄から、運行の前提の欄へ移るボタン */
-export const PREMISE_JUMP = '前提情報で設定する'
+/** 影響(到達圏)の手順の欄から、運行の前提の手順の「運行の前提」の欄へ移るボタン */
+export const PREMISE_JUMP = '運行の前提で設定する'
+
+/** 影響(到達圏)の手順の欄から、減便の方針の手順の欠員の欄へ移るボタン */
+export const SHORTAGE_JUMP = '欠員を入れる(減便の方針)'
 
 /** 在籍の運転士の数を入れていないときに、結果の欄に出す文 */
 export const ROSTER_HINT = '在籍の運転士の数を入れると、足りるかの目安を出します。'
 
 /** 在籍の運転士の数を入れていないときに、平日便を戻す手順の1行に添える文(入れる場所を示す) */
-export const ROSTER_WHERE = '手順「前提情報」の「運行の前提」の欄で在籍の運転士の数を入れると、足りるかの目安を出します。'
+export const ROSTER_WHERE = '手順「運行の前提」で在籍の運転士の数を入れると、足りるかの目安を出します。'
 
 /** 分を「400時間42分」にする */
 export function formatHours(minutes: number): string {
@@ -99,7 +102,7 @@ export function supplyText(supply: DriverSupply): string {
 /** 欠員がその日に出勤する運転士の数より多いときの注意。そうでなければ null */
 export function supplyWarningText(supply: DriverSupply): string | null {
   return supply.shortageOverOnDuty
-    ? '注意:欠員が、その日に出勤する運転士の数(在籍 × 週の出勤日数 ÷ 7)より多くなっています。前提情報の数を確かめてください。'
+    ? '注意:欠員が、その日に出勤する運転士の数(在籍 × 週の出勤日数 ÷ 7)より多くなっています。手順「運行の前提」の在籍の運転士の数・週の出勤日数と、手順「減便の方針」の欠員を確かめてください。'
     : null
 }
 

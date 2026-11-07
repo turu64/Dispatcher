@@ -125,7 +125,7 @@ export function FacilityEvidence({ near }: { near: NearFacility }) {
               })}
             </dl>
           ) : !research ? (
-            <p className="text-muted-foreground">この施設は前提情報で調べていないため、時間帯の窓は既定です。</p>
+            <p className="text-muted-foreground">この施設は「判断材料を調べる」で調べていないため、時間帯の窓は既定です。</p>
           ) : research.status === 'not_found' ? (
             <p className="text-muted-foreground">調べましたが見つからなかったため、時間帯の窓は既定です。</p>
           ) : (

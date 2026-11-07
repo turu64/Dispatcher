@@ -24,14 +24,14 @@ export interface ReachStateForHints {
   ref?: RefState
 }
 
-/** 学校・病院の手がかり(T19)の材料。前提情報の store と重要拠点の優先順位の store の今の状態 */
+/** 学校・病院の手がかり(T19)の材料。周辺の施設の調査の store と重要拠点の優先順位の store の今の状態 */
 export interface FacilitySourceForHints {
   facilities: FacilityState
   results: ReadonlyMap<string, ResearchResult>
   order: readonly PriorityKey[]
 }
 
-/** 前提情報の store と優先順位の store から、学校・病院の手がかりの材料を読む */
+/** 周辺の施設の調査の store と優先順位の store から、学校・病院の手がかりの材料を読む */
 export function currentFacilitySource(): FacilitySourceForHints {
   const r = useResearchStore.getState()
   return { facilities: r.facilities, results: r.results, order: usePriorityStore.getState().order }
@@ -60,7 +60,7 @@ const cache = new WeakMap<ReachSnapshot, CacheEntry>()
  * - editedFeed を渡したとき、到達圏の store の編集後のフィードがそれと違う(承認前の下書きの結果など)
  *
  * 足し戻しの候補を、ある編集後のフィード(承認済みの版など)から作るときは、そのフィードを editedFeed に渡す。
- * facilitySource は前提情報の施設・調査の結果・重要拠点の優先順位(渡さなければ store の今の状態)。施設を読めていれば
+ * facilitySource は周辺の施設・調査の結果・重要拠点の優先順位(渡さなければ store の今の状態)。施設を読めていれば
  * ctx.facilities に学校・病院を入れる(hintFacilities)
  */
 export function buildRestoreHintContext(
@@ -171,7 +171,7 @@ function hourFactsOf(r: ResearchResult | undefined): FactLike[] {
 }
 
 /**
- * 前提情報の施設の参照データ(国土数値情報の学校 P29・医療機関 P04)から、学校・病院の手がかりに使う施設を作る。
+ * 周辺の施設の参照データ(国土数値情報の学校 P29・医療機関 P04)から、学校・病院の手がかりに使う施設を作る。
  * 使うのは重要拠点の優先順位にある学校(高校・大学など)と入院設備のある病院(診療所・種別が分からない学校・事業者は使わない)。
  * 徒歩圏は、施設の位置の区分のバス停の分数 × 分速(到達圏と同じ距離)。優先順位は order の順位、調査の結果があれば要点を付ける。
  * 時間帯の窓は、調査の結果の受付時間・始業・終業から施設ごとに決め、読めなければ既定(gtfs/edit/facilityHours.ts。T27)。

@@ -1,5 +1,5 @@
 ---
-# 前提情報の調査役。事業者・施設を1つずつ Web で調べ、save_research で保存する。docs/interfaces-1105.md §2・§3
+# 周辺の施設の調査役。事業者・施設を1つずつ Web で調べ、save_research で保存する。docs/interfaces-1105.md §2・§3
 # - 本文(下の --- の後)がシステムプロンプト
 # - 組み込みのツールは web_search と web_fetch だけ(bash・ファイル操作は切る)
 # - save_research はサーバーが実行する(11/6)。workflow run の中から呼んでも、呼び出しは調整役の流れに届く

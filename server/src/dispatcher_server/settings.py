@@ -242,6 +242,6 @@ DEFAULT_REF_DIR = REPO_ROOT / "data" / "out" / "ref"
 
 
 def ref_dir() -> Path:
-    """参照データの置き場所(DISPATCHER_REF_DIR。空の値は未設定として扱う)。前提情報の調査の対象をここから引く。"""
+    """参照データの置き場所(DISPATCHER_REF_DIR。空の値は未設定として扱う)。周辺の施設の調査の対象をここから引く。"""
     value = _env("DISPATCHER_REF_DIR")
     return Path(value) if value is not None else DEFAULT_REF_DIR

@@ -42,7 +42,7 @@ function policy(): EditOp {
 
 const originalReset = useChatStore.getState().reset
 
-/** GTFS を読み込み、方針を承認し、もう1つ下書きを作り、到達圏・地図・前提情報・会話・手順・タブを動かした状態にする */
+/** GTFS を読み込み、方針を承認し、もう1つ下書きを作り、到達圏・地図・運行の前提・周辺の施設の調査・会話・手順・タブを動かした状態にする */
 function loadAndWork() {
   const feed = smallFeed()
   useGtfsStore.getState().setLoaded({ label: 'test.zip', feed, size: 2048, loadedAt: 1 })

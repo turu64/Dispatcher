@@ -54,7 +54,7 @@ describe('手順の切り替え', () => {
   it('並びから外した手順へは移れず、並びを替えると開いている手順が無ければ先頭に戻る', () => {
     loadBase()
     useStepStore.getState().go('restore')
-    useStepStore.getState().setOrder(['load', 'research', 'policy', 'reach', 'output'])
+    useStepStore.getState().setOrder(['load', 'premise', 'policy', 'reach', 'output'])
     expect(useStepStore.getState().current).toBe('load')
     expect(useStepStore.getState().go('restore')).toBe(false)
     // 次へは、新しい並びの順に動く
@@ -67,8 +67,8 @@ describe('手順の切り替え', () => {
 describe('canOpenStep', () => {
   it('先頭はいつでも、ほかは読み込んだあとだけ開ける', () => {
     expect(canOpenStep('load', STEP_KEYS, false)).toBe(true)
-    expect(canOpenStep('research', STEP_KEYS, false)).toBe(false)
-    expect(canOpenStep('research', STEP_KEYS, true)).toBe(true)
+    expect(canOpenStep('premise', STEP_KEYS, false)).toBe(false)
+    expect(canOpenStep('premise', STEP_KEYS, true)).toBe(true)
     expect(canOpenStep('restore', ['load', 'reach'], true)).toBe(false)
   })
 })

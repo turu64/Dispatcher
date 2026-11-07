@@ -116,7 +116,7 @@ function ChatPanelBody({ store, active }: { store: ChatStoreHook; active: boolea
   const preparing = isPreparing(s)
 
   // 「送る」を押して送っている間(送信の POST が終わるまで)だけ、このボタンを処理中の形にする。
-  // store の sending は前提情報の調査・「AI に候補を聞く」の送信でも立つので、押していないボタンを処理中にしないよう、ここで持つ
+  // store の sending は周辺の施設の調査・「AI に候補を聞く」の送信でも立つので、押していないボタンを処理中にしないよう、ここで持つ
   const [submitting, setSubmitting] = useState(false)
 
   function submit() {

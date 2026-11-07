@@ -193,7 +193,7 @@ describe('DriverView の、置く前と後の勤務の数', () => {
     const without = compareDrivers({ ...input, places: [] })
     const placed = compareDrivers({ ...input, places: [far] })
     const view = (c: typeof placed, places: UserPlace[]) =>
-      render(<DriverView comparison={c} params={c.before.duties.params} places={places} onOpenPremise={() => {}} />)
+      render(<DriverView comparison={c} params={c.before.duties.params} places={places} onOpenPremise={() => {}} onOpenShortage={() => {}} />)
     view(without, [])
     expect(screen.queryByTestId('places-effect')).toBeNull()
     cleanup()

@@ -54,13 +54,13 @@ export const RESEARCH_PAUSED = '調査が止まっているかもしれません
 /** 足し戻しの手順の「AI に候補を聞く」で送る文(§6) */
 /** 調査を始めたときにサーバーが会話に入れる [画面の操作] の行(server の research.START_LINE と同じ文。「AI に送る情報」に残す) */
 export function researchStartLine(count: number): string {
-  return `[画面の操作] 利用者が前提情報の調査を始めました(対象 ${count} 件)。`
+  return `[画面の操作] 利用者が周辺の施設の調査を始めました(対象 ${count} 件)。`
 }
 
 /** 調査の API がつながっていないとき(テストで research を渡していないなど) */
 export const RESEARCH_UNAVAILABLE = '調査の API が使えません。'
 /** 調べた結果(デモを含む)の対象を、AI の会話に登録できなかったとき(送信は止めない。指摘15.1) */
-export const RESEARCH_KNOWN_FAILED = '調べた結果を AI に渡せませんでした。AI は前提情報の結果を読めないことがあります。'
+export const RESEARCH_KNOWN_FAILED = '調べた結果を AI に渡せませんでした。AI は周辺の施設の調査の結果を読めないことがあります。'
 
 /** AI がツールを使いすぎて、サーバーが止めたときの error の code(server の agent_session.py。指摘15.2) */
 export const TOO_MANY_TOOL_CALLS = 'too_many_tool_calls'
@@ -284,7 +284,7 @@ export interface ResearchProgress {
   phase: string | null
   /** run が一時停止した */
   paused: boolean
-  /** 保存した数と対象の数(save_research に答えたとき)。「前提情報を調べる」で始めたときは、利用者が選んだ対象だけで数える */
+  /** 保存した数と対象の数(save_research に答えたとき)。「周辺の施設を調べる」で始めたときは、利用者が選んだ対象だけで数える */
   saved: number
   total: number | null
   /** 調査役に1件ずつ頼んだ数 */
@@ -340,7 +340,7 @@ export interface ChatState {
   /** 予算に達した(入力欄を閉じ、「新しく始める」を出す) */
   budgetReached: boolean
   research: ResearchProgress
-  /** 前提情報の調査を始められなかった・結果を読めなかった理由(前提情報の手順に出す)。無ければ null */
+  /** 周辺の施設の調査を始められなかった・結果を読めなかった理由(平日便を戻す手順の「判断材料を調べる」に出す)。無ければ null */
   researchError: string | null
 
   /** 中継の状態を読む(画面を開いたとき、GTFS を読み込んだとき) */
@@ -359,7 +359,7 @@ export interface ChatState {
    */
   continueStopped: () => Promise<boolean>
   /**
-   * 前提情報の手順の「前提情報を調べる」。セッションが無ければ作り、ストリームをつないでから
+   * 平日便を戻す手順の「判断材料を調べる」の「周辺の施設を調べる」。セッションが無ければ作り、ストリームをつないでから
    * POST /api/claude/session/research に target_ids だけを送る([画面の操作] の行はサーバーが会話に入れる)。
    * 始められたら対象の一覧、始められなければ null(理由は researchError か、会話の欄の文)
    */
@@ -416,14 +416,14 @@ export interface ChatStoreDeps {
   now: () => Date
   /** GTFS を読み込み直したときに onChange を呼ぶように見張る(会話を消すため)。省けば見張らない */
   watchBase?: (onChange: () => void) => void
-  /** 前提情報の調査の API(createResearchApi)。省けば調査は始められない */
+  /** 周辺の施設の調査の API(createResearchApi)。省けば調査は始められない */
   research?: ResearchApi
   /**
-   * 前提情報の store に結果がある target_id(デモと Web の両方)。セッションを作ったときと、結果が増えたときに
+   * 周辺の施設の調査の store に結果がある target_id(デモと Web の両方)。セッションを作ったときと、結果が増えたときに
    * POST /api/claude/session/research/known で登録する(AI が get_research_results で読めるように。指摘15.1)。省けば登録しない
    */
   knownResearchTargets?: () => readonly string[]
-  /** 前提情報の結果が変わったときに onChange を呼ぶように見張る。省けば、発言を送るときにだけ登録する */
+  /** 周辺の施設の調査の結果が変わったときに onChange を呼ぶように見張る。省けば、発言を送るときにだけ登録する */
   watchResearch?: (onChange: () => void) => void
   /** セッションの待ち時間(テストで差し替える) */
   session?: Pick<SessionDeps, 'sleep' | 'reconnectDelays' | 'retryDelays' | 'batchDelayMs'>
@@ -442,7 +442,7 @@ function errorText(e: unknown, fallback: string): string {
 export function createChatStore(deps: ChatStoreDeps) {
   // store の中の関数から使う。store を作る関数の中で作る(onEvent が store の set を使うため)
   let session: ClaudeSession
-  // 調べた結果の対象の登録(store の中で作る。前提情報の見張りから呼ぶ)
+  // 調べた結果の対象の登録(store の中で作る。調査の結果の見張りから呼ぶ)
   let registerKnownRef: () => Promise<void> = async () => undefined
   const tracker = new ScreenLineTracker({ screen: deps.screen, edits: deps.edits, takeDraftNotices: deps.takeDraftNotices })
 
@@ -457,7 +457,7 @@ export function createChatStore(deps: ChatStoreDeps) {
     let checked: CheckedTally = new Map()
     // この相談の返答の終わりに出した件数の行(同じ文を2度出さない)
     let checkedShown: string | null = null
-    // 利用者が「前提情報を調べる」で選んだ対象の数(進み具合の分母。サーバーの数は、登録した調べた結果の対象も含む)
+    // 利用者が「周辺の施設を調べる」で選んだ対象の数(進み具合の分母。サーバーの数は、登録した調べた結果の対象も含む)
     let researchChosen: number | null = null
     // 「続きを頼む」で送っている(send が相談を数え直さない)
     let continuing = false
@@ -672,7 +672,7 @@ export function createChatStore(deps: ChatStoreDeps) {
     let known: { handle: string; ids: Set<string> } | null = null
 
     /**
-     * 前提情報の store に結果がある対象のうち、このセッションにまだ登録していないものを登録する
+     * 周辺の施設の調査の store に結果がある対象のうち、このセッションにまだ登録していないものを登録する
      * (POST /api/claude/session/research/known。1回に MAX_KNOWN_IDS 件まで送れるので分ける)。
      * 同じセッションに同じ対象を2度送らない。失敗しても送信は止めず、researchError に短い文を出す(次の機会に送り直す)
      */
@@ -999,7 +999,7 @@ export function createChatStore(deps: ChatStoreDeps) {
     const hadConversation = s.items.length > 0 || s.sending || session.handle !== null
     s.reset(hadConversation ? RELOAD_NOTICE : undefined)
   })
-  // 前提情報の結果が増えたら、セッションがある間はすぐ登録する(無ければ、次にセッションを作ったときに登録する)
+  // 周辺の施設の調査の結果が増えたら、セッションがある間はすぐ登録する(無ければ、次にセッションを作ったときに登録する)
   deps.watchResearch?.(() => {
     if (session.handle) void registerKnownRef()
   })
@@ -1159,7 +1159,7 @@ export function currentScreenState(): ScreenState {
   }
 }
 
-/** 前提情報の store に結果がある target_id(デモと Web の両方) */
+/** 周辺の施設の調査の store に結果がある target_id(デモと Web の両方) */
 function knownResearchTargets(): string[] {
   return [...useResearchStore.getState().results.keys()]
 }

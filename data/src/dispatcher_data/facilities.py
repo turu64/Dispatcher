@@ -1,4 +1,4 @@
-"""前提情報の調査の対象(事業者・学校・病院・診療所)の参照データを作る。
+"""周辺の施設の調査の対象(事業者・学校・病院・診療所)の参照データを作る。
 
 国土数値情報の次の3つから、1次メッシュごとの JSON(data/out/ref/facilities/{1次メッシュ}.json)を書く。
 
@@ -36,7 +36,7 @@ kind と detail:
 - ``hospital`` / ``clinic``(病床数が 20 床以上なら hospital、未満なら clinic。歯科診療所は入れない)
     detail ``{"beds", "emergency"(救急告示病院か), "disaster_base"("基幹"・"地域"・null), "address"}``
 
-busstops(バス停留所 P11 の停留所ごと。前提情報の手順で、編集する GTFS の停留所の近くにある他事業者の停留所と系統を数えるのに使う):
+busstops(バス停留所 P11 の停留所ごと。平日便を戻す手順の「判断材料を調べる」で、編集する GTFS の停留所の近くにある他事業者の停留所と系統を数えるのに使う):
 
 - 停留所はその位置の1次メッシュのファイルにだけ入る(事業者と違い、複数のファイルには現れない)
 - name は停留所名(bsn)、operators は事業者の target_id(上の ``P11:…`` と同じ)、routes は系統名(bri の brn。重複なし、名前の順)
@@ -108,7 +108,7 @@ SCHOOL_TYPES = {
     "16015": "各種学校",
     "16016": "専修学校",
 }
-# 前提情報の調査の対象外の学校(幼稚園・幼保連携型認定こども園・小学校・中学校・義務教育学校)。施設に入れない
+# 周辺の施設の調査の対象外の学校(幼稚園・幼保連携型認定こども園・小学校・中学校・義務教育学校)。施設に入れない
 # (2026-11-06 に利用者が決定。中等教育学校 16003 は高校の課程を含むので残す)。画面の読み込み(web/src/ref/facilities.ts の
 # EXCLUDED_SCHOOL_TYPES)でも外す
 EXCLUDED_SCHOOL_CODES = {"16001", "16002", "16011", "16013", "16014"}
@@ -631,7 +631,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     data_dir = Path(__file__).resolve().parents[2]
-    parser = argparse.ArgumentParser(prog="dispatcher_data.facilities", description="前提情報の調査の対象の参照データを作る")
+    parser = argparse.ArgumentParser(prog="dispatcher_data.facilities", description="周辺の施設の調査の対象の参照データを作る")
     parser.add_argument("--raw", type=Path, default=data_dir / "raw")
     parser.add_argument("--out", type=Path, default=data_dir / "out" / "ref" / "facilities")
     parser.add_argument("--mesh1", nargs="+", help="1次メッシュ(4桁)。省略すると施設のある1次メッシュすべて")

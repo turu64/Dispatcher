@@ -47,6 +47,7 @@ const RULES: Rule[] = [
   { old: '無い・無く・無くなる', use: 'ない・なく・なくなる', pattern: /無い|無く/ },
   { old: '承認前の下書き', use: '承認待ちの下書き', pattern: /承認前の下書き/ },
   { old: '下書き d1(ID の d)', use: '下書き #1', pattern: /下書き\s?d\d|下書き [0-9]/ },
+  { old: '前提情報(手順・調査の名前)', use: '運行の前提・周辺の施設の調査・判断材料を調べる', pattern: /前提情報/ },
   { old: 'Claude(AI の呼び方)', use: 'AI', pattern: /Claude/, allow: [/AI[(（]Claude[)）]/, /Built with Claude/, /ClaudeRequestError/] },
 ]
 
@@ -154,6 +155,8 @@ describe('古い語が画面の文に残っていない(docs/wording.md)', () =>
     expect(olds('復旧の見込み')).toEqual([])
     expect(olds('バス停留所(P11)')).toEqual([])
     expect(olds('近くのバス停')).toEqual(['バス停'])
+    expect(olds('手順「前提情報」で調べた結果')).toEqual(['前提情報(手順・調査の名前)'])
+    expect(olds('周辺の施設の調査の結果')).toEqual([])
   })
 
   it('テスト以外の web/src のファイルの文に、古い語がない(例外は ALLOWED だけ)', () => {

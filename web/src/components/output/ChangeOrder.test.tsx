@@ -358,8 +358,8 @@ describe('ChangeOrder', () => {
     expect(within(protectedSection).queryByText(/ほか \d+ 便/)).toBeNull()
     expect(within(protectedSection).queryByRole('button')).toBeNull()
   })
-  describe('周辺の事業者の動き(前提情報で調べた結果)', () => {
-    const TITLE = '8. 周辺の事業者の動き(前提情報で調べた結果)'
+  describe('周辺の事業者の動き(周辺の施設の調査の結果)', () => {
+    const TITLE = '8. 周辺の事業者の動き(周辺の施設の調査の結果)'
 
     function result(over: Partial<ResearchResult> = {}): ResearchResult {
       return {
@@ -420,7 +420,7 @@ describe('ChangeOrder', () => {
       const text = section(TITLE).textContent ?? ''
       // 見出しで絞った結果だけを言い、「動きがない」とは書かない
       expect(text).toContain(
-        '調べた 1 事業者の結果(確認日時 2026年10月19日 09:00)に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、手順「前提情報」で確かめてください。',
+        '調べた 1 事業者の結果(確認日時 2026年10月19日 09:00)に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、手順「平日便を戻す」の「判断材料を調べる」で確かめてください。',
       )
       expect(text).not.toContain('記載はありませんでした')
       expect(text).not.toContain('調べていません')

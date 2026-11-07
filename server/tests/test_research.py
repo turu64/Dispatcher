@@ -1,4 +1,4 @@
-"""前提情報の調査(サーバーの側)のテスト。docs/interfaces-1105.md §3.2・§4.2、docs/tasks-1103.md の T07。
+"""周辺の施設の調査(サーバーの側)のテスト。docs/interfaces-1105.md §3.2・§4.2、docs/tasks-1103.md の T07。
 
 参照データはテスト用のフィクスチャ(tests/fixtures/research_ref)。T06 の実データが無くても通る。
 SDK のクライアントは偽物(tests/fake_anthropic.py)。本物の API は呼ばない。
@@ -492,7 +492,7 @@ def test_post_research_sets_targets_and_puts_the_screen_line_into_the_conversati
     assert events == [
         {
             "type": "user.message",
-            "content": [{"type": "text", "text": "[画面の操作] 利用者が前提情報の調査を始めました(対象 2 件)。"}],
+            "content": [{"type": "text", "text": "[画面の操作] 利用者が周辺の施設の調査を始めました(対象 2 件)。"}],
         }
     ]
     row_id = row_id_of(handle)
@@ -504,7 +504,7 @@ def test_post_research_sets_targets_and_puts_the_screen_line_into_the_conversati
     assert get_store().research_target_ids(row_id) == [HOSPITAL, SCHOOL, OPERATOR]
     assert [target["target_id"] for target in response.json()["targets"]] == [HOSPITAL, SCHOOL, OPERATOR]
     # 会話に入れる行の件数は、送った対象の数
-    assert fake.sent[-1][0]["content"][0]["text"] == "[画面の操作] 利用者が前提情報の調査を始めました(対象 2 件)。"
+    assert fake.sent[-1][0]["content"][0]["text"] == "[画面の操作] 利用者が周辺の施設の調査を始めました(対象 2 件)。"
 
 
 def test_post_research_keeps_the_targets_registered_from_saved_results(monkeypatch: pytest.MonkeyPatch, client: TestClient, fake: FakeAnthropic, tmp_path: Path) -> None:

@@ -16,7 +16,7 @@ import { compareStrings, sortByStopSequence, stopTimesByTrip } from './signature
  * 基準と編集後の便の表だけで決まる手がかり(weekdayOnlyRoute〜evening)は、いつでも出す。
  * 到達圏を使う onlyServiceAtStop・restoresLostCells は、到達圏の前後の比較(ctx。store/restoreHintContext.ts の
  * buildRestoreHintContext で作る)を渡したときだけ出す。ctx を渡さなければ 11/4 と同じ結果になる。
- * 学校・病院の手がかり nearFacility(docs/tasks-1103.md の T19)は、ctx に前提情報の施設(ctx.facilities)があるときだけ出す。
+ * 学校・病院の手がかり nearFacility(docs/tasks-1103.md の T19)は、ctx に周辺の施設(ctx.facilities)があるときだけ出す。
  * 時間帯の窓は施設ごと(HintFacility.windows。調べた受付時間・始業・終業から facilityHours.ts が決め、読めなければ既定。T27)。
  * 時間帯はすべて開始を含み終わりを含まない。
  * 時間帯の区切りは到達圏の3時間ごとにそろえる(docs/tasks-1105.md の U05、指摘17)。onlyTripInBand は始発の時間帯
@@ -106,7 +106,7 @@ export function facilityWindowLabel(kind: FacilityHintKind, timing: FacilityTimi
   return `${FACILITY_WINDOW_NAMES[kind][timing]}(${formatMinutes(w.from)}〜${formatMinutes(w.to)}${mark}。調べた${w.basis ?? '結果'} に合わせた窓)`
 }
 
-/** 前提情報の調査の結果の要点(調べた施設だけ) */
+/** 周辺の施設の調査の結果の要点(調べた施設だけ) */
 export interface FacilityResearchNote {
   status: 'found' | 'partial' | 'not_found'
   /** 確認日時(日本時間の ISO 8601) */
@@ -116,7 +116,7 @@ export interface FacilityResearchNote {
   facts: { label: string; value: string; url: string | null }[]
 }
 
-/** 手がかりに使う施設(store/restoreHintContext.ts が、前提情報の施設の参照データと到達圏の条件から作る) */
+/** 手がかりに使う施設(store/restoreHintContext.ts が、周辺の施設の参照データと到達圏の条件から作る) */
 export interface HintFacility {
   targetId: string
   name: string
@@ -129,7 +129,7 @@ export interface HintFacility {
   lon: number
   /** 徒歩圏の半径(m)。施設のあるセルの区分のバス停の分数 × 分速(到達圏の計算と同じ距離) */
   radiusM: number
-  /** 前提情報の調査の結果(あれば) */
+  /** 周辺の施設の調査の結果(あれば) */
   research?: FacilityResearchNote
   /**
    * 時間帯の窓(施設ごと。T27)。調べた受付時間・始業・終業を読めた窓は source が research で、読めなければ既定
@@ -212,7 +212,7 @@ export interface RestoreHintContext {
   /** 到達圏の起点の停留所(store の origins.stops)。停留所の位置はここから取る */
   stops: readonly { id: string; lat: number; lon: number }[]
   /**
-   * 学校・病院の手がかり(nearFacility)に使う施設(T19)。前提情報の施設の参照データを読めていなければ undefined で、
+   * 学校・病院の手がかり(nearFacility)に使う施設(T19)。周辺の施設の参照データを読めていなければ undefined で、
    * nearFacility を出さない。読めていて対象の施設が無ければ空の配列
    */
   facilities?: readonly HintFacility[]

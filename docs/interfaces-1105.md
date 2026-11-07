@@ -728,9 +728,9 @@ CREATE TABLE jev_usage (                                                        
 | 便の区間と営業運行時間 | `web/src/gtfs/edit/serviceHours.ts`(`tripLegs`・`serviceHours`・`compareServiceHours`) |
 | 勤務の数の推定と仮定の文 | `web/src/gtfs/edit/duties.ts`(`estimateDuties`・`DUTY_DEFAULTS`・`dutyAssumptions`・`operatorRunsOf`) |
 | 減便の前後の比較と欠員の判定 | `web/src/store/drivers.ts`(`compareDrivers`・`useDriverComparison`。欠員・在籍の運転士の数・仮定・場所はメモリだけ) |
-| 入力の画面 | 手順2「前提情報」の「運行の前提(営業所・運転士の数)」の欄 `research/OperationPremise.tsx`(在籍の運転士の数・欠員・営業所・推定の仮定。11/5 の利用者の指摘で、手順4 から移した) |
-| 結果の画面 | 手順4「影響(到達圏)」の `reach/DriverPanel.tsx`(結果だけ。「前提情報で設定する」で運行の前提の欄へ移る。`steps/stepIds.ts` の `jumpToPremise`。文は `reach/driverText.ts`)、変更指示書の `output/DriverSummary.tsx`、手順5「平日便を戻す」の1行 |
-| 営業所 | `reach/PlacesEditor.tsx`(地図で置く・停留所から選ぶ。運行の前提の欄の中に出す)、`map/PlacesLayer.tsx`(記号は前提情報・影響・平日便を戻す手順の地図に出し、地図で置けるのは前提情報の手順だけ)、種類と名前・緯度経度の整え方は `lib/userPlaces.ts`(JSON の書き出し・読み込みは 2026-11-06 に利用者の指示でなくした) |
+| 入力の画面 | 手順2「運行の前提」(`steps/PremiseStep.tsx`)の「運行の前提(営業所・運転士の数)」の欄 `research/OperationPremise.tsx`(在籍の運転士の数・週の出勤日数・営業所・推定の仮定。11/5 の利用者の指摘で、手順4 から移した)と、手順3「減便の方針」の欠員の欄 `policy/ShortageSection.tsx`(11/7 に分けた。§14) |
+| 結果の画面 | 手順4「影響(到達圏)」の `reach/DriverPanel.tsx`(結果だけ。「運行の前提で設定する」で運行の前提の欄へ、「欠員を入れる(減便の方針)」で欠員の欄へ移る。`steps/stepIds.ts` の `jumpToPremise`・`jumpToShortage`。文は `reach/driverText.ts`)、変更指示書の `output/DriverSummary.tsx`、手順5「平日便を戻す」の1行 |
+| 営業所 | `reach/PlacesEditor.tsx`(地図で置く・停留所から選ぶ。運行の前提の欄の中に出す)、`map/PlacesLayer.tsx`(記号は運行の前提・影響・平日便を戻す手順の地図に出し、地図で置けるのは運行の前提の手順だけ)、種類と名前・緯度経度の整え方は `lib/userPlaces.ts`(JSON の書き出し・読み込みは 2026-11-06 に利用者の指示でなくした) |
 | AI | `summarize_impact` の結果の `drivers`(`web/src/claude/tools.ts` の `driversJson`。§13.7) |
 
 ### 13.2 区間の作り方
@@ -796,3 +796,14 @@ CREATE TABLE jev_usage (                                                        
 - 在籍の運転士の数(参考。`rosterCheck`):任意の数(0〜9999 の整数、空も可)。入れたときだけ、判定の下に「参考:乗務できる運転士(在籍 − 欠員)N 人/減便後に要る勤務の数(目安)M。」を出す(N は在籍 − 欠員で、欠員が空なら在籍のまま、欠員が在籍より多ければ 0 にして数を確かめる注意を出す。減便後の GTFS がなければ M は減便前の数)。M が N を超えるときは注意にする。勤務の数は下限の目安で、事業者の運用番号の数(入力の運用番号の数(参考))とは差があることを1文で添える。主な判定(減る勤務の数と欠員の比較)は変えない。変更指示書・手順5 の1行・AI にも、在籍を入れたときだけ出す
 - 入力の運用番号の数(参考):減便前の GTFS だけで出す。その日に走る service が1つで、trip_id がすべて `{運用}_{順番}_{01}_{service_id}_{始発の時刻}` の形(道北バス。`docs/interfaces-1104.md` §5.4)のときに、先頭の部分の種類の数。減便後の GTFS では運用番号の意味が保てないので出さない。事業者の実際の勤務の数とは限らないと添える
 - AI(`summarize_impact` の `drivers`。調整役の版 4):`{date, draft, service_hours: {before_min, after_min, reduction_min, before_trips, after_trips}, duties: {before, after, diff}, operator_runs_before, shortage, verdict: {kind, reduced?, missing?}, places, assumptions, roster_check?: {roster, available, shortage_over_roster, needed_duties, needed_basis, over}}`。`roster_check` は在籍の運転士の数を入れたときだけ足し、その意味は `notes` の1文で伝える(ツールの定義 `claude_tools.json`・`agents/coordinator.md` は変えない)。画面の欄と同じ `compareDrivers` の値で、欠員・在籍の運転士の数・仮定・場所は前提情報の手順の運行の前提の欄の今の値。置いた場所の名前は送らない(数だけ)。AI は「目安」「下限」を外さず、休息期間・予備の要員・実際の仕業は事業者が判断すると添える(調整役の system に書く)。平日に戻した便の集計(`add_back_trips` の `totals.note`)は、要る運転士の数は `drivers` で見られると案内する
+
+## 14. 手順の並びの改め(11/7 の追記。利用者の決定)
+
+この節は、上の節(前提情報の手順のことを書いた所)より優先する。上の節の文は、当時の決定として残す。
+
+- 手順は 1 読み込み → 2 運行の前提 → 3 減便の方針 → 4 影響(到達圏)→ 5 平日便を戻す → 6 出力。手順2の key は `research` から `premise` に変えた(`store/steps.ts` の STEP_KEYS)。調査の store・SSE の `research`・`claude/research.ts` などの名前は変えない
+- 手順2「運行の前提」(`steps/PremiseStep.tsx`)は、運行の前提の欄(`research/OperationPremise.tsx`。在籍の運転士の数・1人あたりの週の出勤日数・道北バスのサンプルのボタン・営業所・推定の仮定)だけ。地図を出し、営業所を地図で置けるのはこの手順だけ。済みの印は、GTFS を読み込んでいて、在籍の運転士の数か営業所があるとき
+- 欠員は手順3「減便の方針」の欄(`policy/ShortageSection.tsx`、`stepIds.ts` の `SHORTAGE_SECTION_ID`)で入れる。減便の方針の下書き・承認の外に置き、承認の前後と「減便の方針を変える」の後も出す。値は `useDriversStore` の shortage のまま。`apply_policy` の入力には入れない
+- 周辺の施設の調査(前の「前提情報の調査」)は、手順5「平日便を戻す」の開閉「判断材料を調べる(周辺の学校・病院・事業者)」(`restore/ResearchSection.tsx`。既定で閉じる)の中。減便の方針の承認を待たず、GTFS を読み込めば出す。施設の読み込みは開閉と関係なく行う(`ResearchLoader`)。学校・病院の施設の記号は手順5の地図だけに出す
+- 語:ボタンは「周辺の施設を調べる」。§4 の [画面の操作] の行は「[画面の操作] 利用者が周辺の施設の調査を始めました(対象 {N} 件)。」(`server/.../research.py` の START_LINE、`web/src/store/chat.ts`、`web/src/claude/screenLines.ts` の3か所で同じ文)、[画面の状態] の行は「[画面の状態] 周辺の施設の調査:調査の結果 {N} 件…」。調整役の workflow run の名前も「周辺の施設の調査」。AI に送る文で、調べた結果を「判断材料」と呼ばない(判断材料はコードが出す hints の名前)
+- 調整役の定義(`agents/coordinator.md`)と `claude_tools.json` の手順の呼び方を、在籍・週の出勤日数・営業所は手順2「運行の前提」、欠員は手順3「減便の方針」に直した(ツールの入力の形は変えていない。適用は利用者が `ant apply` で行う)

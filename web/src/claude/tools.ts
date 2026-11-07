@@ -212,14 +212,14 @@ export interface ToolDeps {
   /** search_trips が、到達圏の計算中に終わるのを待つ上限(ミリ秒)。既定 20000。過ぎたら到達圏を使う手がかりを出さずに返す */
   hintWaitMs?: number
   /**
-   * 要る運転士の数(目安)の入力(前提情報の手順の「運行の前提」の欄の、欠員・在籍の運転士の数・仮定・営業所の位置。D06)。
+   * 要る運転士の数(目安)の入力(手順「運行の前提」の在籍の運転士の数・仮定・営業所の位置と、手順「減便の方針」の欠員。D06)。
    * summarize_impact の drivers に使う。
    * 省けば要る運転士の数の store(useDriversStore)の今の値を読む
    */
   drivers?: () => DriverSettings
 }
 
-/** 要る運転士の数(目安)の推定の入力のうち、利用者が前提情報の手順の「運行の前提」の欄で決めるもの */
+/** 要る運転士の数(目安)の推定の入力のうち、利用者が手順「運行の前提」と手順「減便の方針」(欠員)で決めるもの */
 export interface DriverSettings {
   params: DutyParams
   places: readonly DutyPlace[]
@@ -259,7 +259,7 @@ const REACH_BUSY_HINTS = '到達圏の計算が終わらなかったため、到
 const NO_FACILITY_HINTS_WITHOUT_REACH =
   '学校・病院の判断材料(nearFacility・nearby_facilities)も、到達圏の比較ができてから出します(徒歩圏の距離に到達圏の条件を使うため)。'
 const NO_FACILITY_DATA =
-  '手順2「前提情報」の学校・病院の参照データを読み込めていないため、学校・病院の判断材料(nearFacility・nearby_facilities)は出していません(該当がないという意味ではありません)。'
+  '手順5「平日便を戻す」の「判断材料を調べる」で使う学校・病院の参照データを読み込めていないため、学校・病院の判断材料(nearFacility・nearby_facilities)は出していません(該当がないという意味ではありません)。'
 const FACILITY_NOTE =
   'nearby_facilities は、便の停留所の徒歩圏にあり施設ごとの時間帯の窓に当たる学校・病院の 1 件です。項目のない便は、窓に当たる施設が徒歩圏にありません。window のない施設は既定の窓です。'
 const LOST_CELLS_NOTE = 'lost_cells は、ほかの便を平日に戻したときとの重なりを考えていません。'
@@ -1087,7 +1087,7 @@ const FACILITY_ACCESS_TOOL_NOTE =
   'facility_access は、学校・病院ごとに、徒歩圏の停留所で降りられて着く窓の中に着く便と、乗れて出る窓の中に出る便を、比較する日付に走る便だけ減便前と減便後で数えたものです。facilities は、着く便か出る便が減便後に 0 便になる施設だけを、重要拠点の優先順位(priority_rank)・距離の順に上位 20 件まで(省いた数は facilities_omitted)。窓は始業・外来の受付などに間に合う時間帯の目安で、source が research なら調べた結果(basis に読んだ時刻、source_url に出典)、default なら既定の窓です。乗車人数・混み具合・鉄道との乗り継ぎは判定していません。'
 
 const DRIVERS_NOTE =
-  'drivers は、比較する日付の便を時刻順に勤務へつなぎ、改善基準告示の上限で区切った勤務の数(duties。要る運転士の数の下限の目安)と営業運行時間を、減便前と減便後で比べたものです(画面の手順4「影響(到達圏)」の「要る運転士の数(目安)」と同じ計算)。欠員・在籍の運転士の数・週の出勤日数・営業所の位置・仮定は、利用者が画面の手順2「前提情報」の「運行の前提」の欄で入れた値です。判定(verdict)は、乗務できる運転士の数(目安。supply.available = 在籍 × 週の出勤日数 ÷ 7 − 欠員。小数は切り捨て。欠員が未入力なら 0 として数える)と、減便後に要る勤務の数(needed_duties.after)の比較です。needed_duties.basis が operator_runs なら、減便前は入力の運用番号の数、減便後はそれに推定した勤務の数の比(duties.after / duties.before)を掛けた数(四捨五入)、estimate なら推定した勤務の数のままです。verdict の kind は enough(足りる目安。spare が余り)・short(足りない目安。missing が足りない数)・no_roster(在籍の運転士の数が未入力で判定なし)・not_weekday(比較する日付に平日ダイヤが走らない)・no_edited(減便後の GTFS がない)で、before_margin は減便前のままでの過不足(負なら足りない数)です。目安であって、休息期間・休日・予備の要員・実際の仕業と交番は事業者が判断します。'
+  'drivers は、比較する日付の便を時刻順に勤務へつなぎ、改善基準告示の上限で区切った勤務の数(duties。要る運転士の数の下限の目安)と営業運行時間を、減便前と減便後で比べたものです(画面の手順4「影響(到達圏)」の「要る運転士の数(目安)」と同じ計算)。在籍の運転士の数・週の出勤日数・営業所の位置・仮定は利用者が画面の手順2「運行の前提」で、欠員は手順3「減便の方針」で入れた値です。判定(verdict)は、乗務できる運転士の数(目安。supply.available = 在籍 × 週の出勤日数 ÷ 7 − 欠員。小数は切り捨て。欠員が未入力なら 0 として数える)と、減便後に要る勤務の数(needed_duties.after)の比較です。needed_duties.basis が operator_runs なら、減便前は入力の運用番号の数、減便後はそれに推定した勤務の数の比(duties.after / duties.before)を掛けた数(四捨五入)、estimate なら推定した勤務の数のままです。verdict の kind は enough(足りる目安。spare が余り)・short(足りない目安。missing が足りない数)・no_roster(在籍の運転士の数が未入力で判定なし)・not_weekday(比較する日付に平日ダイヤが走らない)・no_edited(減便後の GTFS がない)で、before_margin は減便前のままでの過不足(負なら足りない数)です。目安であって、休息期間・休日・予備の要員・実際の仕業と交番は事業者が判断します。'
 
 function sideJson(s: RoundTripSide): Record<string, unknown> {
   return { trips: s.trips, first: s.first, last: s.last }
@@ -1177,7 +1177,7 @@ function facilityAccessJson(
   if (!ctx.facilities) {
     return {
       json: null,
-      unavailable: '手順2「前提情報」の学校・病院の参照データを読み込めていないため、学校・病院に着く便は確かめていません(該当がないという意味ではありません)。',
+      unavailable: '手順5「平日便を戻す」の「判断材料を調べる」で使う学校・病院の参照データを読み込めていないため、学校・病院に着く便は確かめていません(該当がないという意味ではありません)。',
     }
   }
   if (weekdays !== undefined) {

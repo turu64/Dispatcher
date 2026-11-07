@@ -17,7 +17,7 @@ import { nearOtherStops, operatorNameOf, OTHER_STOP_RADIUS_M, type OtherStop } f
  * - 数字(本数・時刻・距離)はこのファイルが出す。文面の自由記入の部分は、画面で利用者が書く
  * - 他事業者の便は扱わない(国土数値情報の停留所には時刻が無い)。代替手段は、同じ停留所と近くの停留所に期間中も残る自社の便と、
  *   近くにある他事業者の停留所・系統名(位置は参照データの P11。引数で受ける)と、自由記入で出す
- * - 他事業者の減便の動きは、前提情報で調べた結果の事実を引用するだけ(要約や推測はしない)。確認日時はいつも添える
+ * - 他事業者の減便の動きは、周辺の施設の調査で調べた結果の事実を引用するだけ(要約や推測はしない)。確認日時はいつも添える
  */
 
 /** 頻繁な系統とみなす間隔の上限(分)。隣り合う発車が15分以内なら、1時間に4本以上になる(運輸規則第5条第3項の「頻繁」の目安) */
@@ -446,7 +446,7 @@ export function alternativesFor(
   return { sameStop, nearby, noCoordinates: false, otherOperators }
 }
 
-// ---- 周辺の事業者の減便の動き(前提情報で調べた結果の引用) ----
+// ---- 周辺の事業者の減便の動き(周辺の施設の調査で調べた結果の引用) ----
 
 /** 調べた結果の確認日時が古いとみなす日数。これを超えたら、出典で確かめるよう添える */
 export const STALE_CHECK_DAYS = 30
@@ -457,7 +457,7 @@ export function isStaleCheck(checkedAt: string, now: number): boolean {
   return Number.isFinite(t) && now - t > STALE_CHECK_DAYS * 86_400_000
 }
 
-/** 調べた結果の1件(前提情報の ResearchResult のうち、引用に使う項目) */
+/** 調べた結果の1件(周辺の施設の調査の ResearchResult のうち、引用に使う項目) */
 export interface ResearchedOperator {
   targetId: string
   name: string

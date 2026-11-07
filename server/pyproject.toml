@@ -16,7 +16,7 @@ dependencies = [
 
 [project.scripts]
 dispatcher-server = "dispatcher_server:main"
-# デモ用の前提情報の調査の結果を取り込む(uv run dispatcher-research-seed <file>)。形は research.py の説明
+# デモ用の周辺の施設の調査の結果を取り込む(uv run dispatcher-research-seed <file>)。形は research.py の説明
 dispatcher-research-seed = "dispatcher_server.research:seed_main"
 
 [build-system]

@@ -139,7 +139,7 @@ FACILITIES_NOT_FOUND = (
 )
 
 
-# 前提情報の調査の対象(国土数値情報の学校 P29・医療機関 P04・バス停留所 P11 の事業者)。data/ の facilities.py が
+# 周辺の施設の調査の対象(国土数値情報の学校 P29・医療機関 P04・バス停留所 P11 の事業者)。data/ の facilities.py が
 # data/out/ref/facilities/{mesh1}.json に書き出す。画面は停留所の外接矩形 +2km の対象を選ぶのに使う。
 # 公開データなので合言葉は掛けない(利用者の決定 11/3)。区切りを含む「facilities/6542」は /api/ref/{mesh1} に
 # 当たらないので、下の受け皿(/api/ref/{rest:anypath})より先に置く

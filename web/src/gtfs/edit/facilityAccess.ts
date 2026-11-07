@@ -234,7 +234,7 @@ const BOX_MARGIN = 1.05
 
 /**
  * 学校・病院ごとに、窓に着く便と窓に出る便を、減便前(base)と減便後(edited)で数える。
- * date は比較する日付('YYYYMMDD')、facilities は前提情報の施設(HintFacility)、stops は停留所の位置と名前
+ * date は比較する日付('YYYYMMDD')、facilities は周辺の施設(HintFacility)、stops は停留所の位置と名前
  * (減便前の stops.txt。toStops(base).stops)
  */
 export function facilityAccess(

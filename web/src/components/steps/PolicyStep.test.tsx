@@ -6,10 +6,12 @@ import { basePlan, smallFeed, withRows } from '@/gtfs/edit/form2.fixture'
 import type { RouteDiff, WeekdayDiff } from '@/gtfs/edit/diff'
 import type { EditOp } from '@/gtfs/edit/ops'
 import { chatToolDeps } from '@/store/chat'
+import { useDriversStore } from '@/store/drivers'
 import { useEditStore } from '@/store/edit'
 import { useHolidayStore } from '@/store/holidays'
 import { PolicyForm } from './policy/PolicyForm'
 import PolicyStep, { Notice47Table } from './PolicyStep'
+import { SHORTAGE_SECTION_ID } from './stepIds'
 
 // 到達圏の store への受け渡し(setEdited)は、この画面では計算しない
 vi.mock('@/reach/workerClient', () => ({ computeReachInWorker: async () => new Promise(() => {}) }))
@@ -27,7 +29,10 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
-  act(() => useEditStore.getState().setBase(null))
+  act(() => {
+    useEditStore.getState().setBase(null)
+    useDriversStore.getState().reset()
+  })
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -1140,6 +1145,80 @@ describe('PolicyStep', () => {
       const box = history().getByRole('group', { name: 'AI の下書きを破棄する確認' })
       expect(box.textContent).toContain(`AI の下書き #${next} を破棄して、この操作をしますか。`)
     })
+  })
+})
+
+describe('PolicyStep の欠員の欄', () => {
+  const region = () => screen.getByRole('region', { name: '欠員' })
+  const input = () => within(region()).getByLabelText('欠員(その日に乗務できない運転士の数)') as HTMLInputElement
+
+  it('GTFS を読み込む前は出さない', () => {
+    act(() => useEditStore.getState().setBase(null))
+    render(<PolicyStep />)
+    expect(screen.queryByRole('region', { name: '欠員' })).toBeNull()
+  })
+
+  it('方針の入力の前(先頭)に出し、入れた欠員は store に入る。読めない値は入れず、空にすると入れていない状態に戻る。焦点を置ける', () => {
+    render(<PolicyStep />)
+    const r = region()
+    expect(r.id).toBe(SHORTAGE_SECTION_ID)
+    expect(r.tabIndex).toBe(-1)
+    expect(r.compareDocumentPosition(sentence()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 方針の入力(隠すことのある包み)の外にある
+    expect(sentence().contains(r)).toBe(false)
+    fireEvent.change(input(), { target: { value: '１９' } })
+    expect(useDriversStore.getState().shortage).toBe(19)
+    fireEvent.change(input(), { target: { value: '1.5' } })
+    expect(within(region()).getByText('0 以上の整数を入れてください')).toBeTruthy()
+    expect(useDriversStore.getState().shortage).toBe(19)
+    fireEvent.change(input(), { target: { value: '' } })
+    expect(useDriversStore.getState().shortage).toBeNull()
+    expect(r.textContent).not.toContain('あなた')
+  })
+
+  it('在籍の運転士の数が無ければ、手順「運行の前提」で入れる案内を出し、あれば乗務できる運転士の数(目安)の数え方を出す', () => {
+    render(<PolicyStep />)
+    expect(within(region()).getByTestId('shortage-supply').textContent).toBe(
+      '在籍の運転士の数は、手順「運行の前提」で入れます。入れると、乗務できる運転士の数(目安)をここにも出します。',
+    )
+    act(() => useDriversStore.getState().setRoster(150))
+    fireEvent.change(input(), { target: { value: '19' } })
+    expect(within(region()).getByTestId('shortage-supply').textContent).toBe(
+      '乗務できる運転士の数(目安)は、在籍 150 × 週の出勤日数 5 ÷ 7 = 107(小数は切り捨て)から欠員 19 を引いた 88 です。',
+    )
+    expect(within(region()).queryByTestId('shortage-supply-warning')).toBeNull()
+    // 欠員がその日に出勤する運転士の数より多ければ、数を確かめる注意を出す
+    fireEvent.change(input(), { target: { value: '200' } })
+    expect(within(region()).getByTestId('shortage-supply-warning').textContent).toContain('欠員が、その日に出勤する運転士の数')
+  })
+
+  it('対象便を確かめている間(下書き)も、承認したあとも、「方針を変える」の後も、同じ値で出る', () => {
+    act(() => useDriversStore.getState().setShortage(19))
+    render(<PolicyStep />)
+    expect(input().value).toBe('19')
+    // 対象便を確かめている間(方針の入力は隠れる)
+    act(() => {
+      useEditStore.getState().propose(policy(), 'user')
+    })
+    expect(sentence().closest('[hidden]')).not.toBeNull()
+    expect(region().closest('[hidden]')).toBeNull()
+    expect(input().value).toBe('19')
+    fireEvent.change(input(), { target: { value: '20' } })
+    expect(useDriversStore.getState().shortage).toBe(20)
+    // 承認したあと
+    act(() => {
+      useEditStore.getState().commit()
+    })
+    const summary = screen.getByRole('region', { name: '承認した減便の方針' })
+    expect(input().value).toBe('20')
+    // 方針を変える
+    fireEvent.click(within(summary).getByRole('button', { name: '減便の方針を変える' }))
+    expect(sentence()).toBeTruthy()
+    expect(input().value).toBe('20')
+    expect(useDriversStore.getState().shortage).toBe(20)
+    // 欠員は方針の操作に入れない
+    const record = useEditStore.getState().history.at(-1)!
+    expect(JSON.stringify(record.op)).not.toContain('shortage')
   })
 })
 

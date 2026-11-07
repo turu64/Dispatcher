@@ -4,8 +4,8 @@ import MapOverlays from '@/map/FacilityLayer'
 import { useStepStore, type StepKey } from '@/store/steps'
 import LoadStep from './LoadStep'
 import PolicyStep from './PolicyStep'
+import PremiseStep from './PremiseStep'
 import ReachStep from './ReachStep'
-import ResearchStep from './ResearchStep'
 import RestoreStep from './RestoreStep'
 
 /** 手順の一覧の1項目 */
@@ -20,18 +20,20 @@ export interface StepDef {
   /**
    * 地図に重ねる部品。同じ部品を続けて使う手順の間では作り直さない(地図の位置合わせをやり直さないため)。
    * 地図を出さない手順では、直前の重ねを残しておく。
-   * 地図を出す手順はすべて MapOverlays(到達圏と、前提情報の手順でだけ見せる施設の記号)を使う
+   * 地図を出す手順はすべて MapOverlays(到達圏と、平日便を戻す手順でだけ見せる施設の記号と、利用者が置いた場所)を使う
    */
   mapOverlay?: ComponentType
 }
 
 /**
  * 左の欄の手順の一覧。App.tsx はこの一覧を描くだけなので、手順を足す・外す・並べ替えるときはここだけを直す。
- * 並びは docs/tasks-1103.md の指摘3・7(読み込み → 前提情報 → 減便の方針 → 影響(到達圏。日付と時間帯を含む)→ 足し戻し → 出力)
+ * 並びは docs/tasks-1103.md の指摘3・7(読み込み → 前提情報 → 減便の方針 → 影響(到達圏。日付と時間帯を含む)→ 足し戻し → 出力)。
+ * 2026-11-07 に利用者の指示で、前提情報を「運行の前提」(営業所・在籍の運転士の数など)に変え、欠員は減便の方針へ、
+ * 周辺の施設の調査は平日便を戻す手順へ移した
  */
 export const STEPS: readonly StepDef[] = [
   { key: 'load', title: '読み込み', component: LoadStep, showMap: true, mapOverlay: MapOverlays },
-  { key: 'research', title: '前提情報', component: ResearchStep, showMap: true, mapOverlay: MapOverlays },
+  { key: 'premise', title: '運行の前提', component: PremiseStep, showMap: true, mapOverlay: MapOverlays },
   { key: 'policy', title: '減便の方針', component: PolicyStep, showMap: false },
   { key: 'reach', title: '影響(到達圏)', component: ReachStep, showMap: true, mapOverlay: MapOverlays },
   { key: 'restore', title: '平日便を戻す', component: RestoreStep, showMap: true, mapOverlay: MapOverlays },

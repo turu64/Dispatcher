@@ -5,7 +5,7 @@
  *   位置・停留所名・事業者(target_id)・系統名を書く。施設(facilities)と同じファイルなので、取得の回数は増えない
  * - 停留所はその位置の1次メッシュのファイルにだけ入る(事業者と違い、ファイルをまたいで重ならない)
  * - 同じ場所の停留所でも事業者が違えば別の行(系統名をその事業者のものとして数えるため)。operators はふつう1件
- * - P11 には時刻表が無いので、本数や時間帯は扱わない(画面の断り書きは前提情報の手順・周知文が出す)
+ * - P11 には時刻表が無いので、本数や時間帯は扱わない(画面の断り書きは「判断材料を調べる」の欄・周知文が出す)
  *
  * 計算はすべてブラウザで行う。距離は到達圏と同じ distanceM(直線)
  */
@@ -105,7 +105,7 @@ export function operatorNameOf(targetId: string): string {
 /**
  * 読み込んだ GTFS の事業者(agency_name。isOwnOperator で比べる)を除いた停留所。
  * 事業者が複数ある停留所は、自社を除いた事業者だけを残し、残らなければ停留所ごと除く。
- * nearOtherStops はこの結果を受ける(前提情報の手順と周知文で、除き方をそろえるため)
+ * nearOtherStops はこの結果を受ける(「判断材料を調べる」の欄と周知文で、除き方をそろえるため)
  */
 export function excludeOwnOperators(stops: readonly OtherStop[], agencyNames: readonly string[]): OtherStop[] {
   const out: OtherStop[] = []

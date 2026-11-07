@@ -28,7 +28,8 @@ import { useReachStore } from './reach'
 
 /**
  * 要る運転士の数(目安)の入力と、減便の前後の比較(指摘 24・18.1、docs/tasks-1105.md の D03)。
- * 入力は前提情報の手順の「運行の前提」の欄(components/steps/research/OperationPremise.tsx)、結果は影響(到達圏)の手順の
+ * 入力は運行の前提の手順の「運行の前提」の欄(components/steps/research/OperationPremise.tsx)と、欠員だけは減便の方針の手順の
+ * 欠員の欄(components/steps/policy/ShortageSection.tsx)、結果は影響(到達圏)の手順の
  * components/steps/reach/DriverPanel.tsx。値はメモリだけに持ち、ブラウザにもサーバーにも保存しない。
  *
  * - 欠員:その日に乗務できない運転士の数(0〜999 の整数。空なら null。判定では 0 として数える)

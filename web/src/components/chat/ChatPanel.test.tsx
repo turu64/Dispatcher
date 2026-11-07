@@ -875,7 +875,7 @@ describe('AI に候補を聞く', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'AI に候補を聞く' }).getAttribute('aria-busy')).toBeNull())
   })
 
-  it('ほかの処理(前提情報の調査など)で送っている間は、2つのボタンとも押せないが処理中の形にはしない', async () => {
+  it('ほかの処理(周辺の施設の調査など)で送っている間は、2つのボタンとも押せないが処理中の形にはしない', async () => {
     const { store } = setup()
     render(
       <>

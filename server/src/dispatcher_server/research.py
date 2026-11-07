@@ -1,4 +1,4 @@
-"""前提情報の調査(サーバーの側)。docs/interfaces-1105.md §3.2・§4.2・§4.10、docs/tasks-1103.md の T07。
+"""周辺の施設の調査(サーバーの側。2026-11-07 に「前提情報の調査」から改名)。docs/interfaces-1105.md §3.2・§4.2・§4.10、docs/tasks-1103.md の T07。
 
 - 調査の対象は、サーバーの参照データ(DISPATCHER_REF_DIR)の施設・事業者から target_id で引く。
   名前・種類・市町村・位置はサーバーのデータを使い、ブラウザや Claude が送った名前は使わない
@@ -83,7 +83,7 @@ SOURCE_KEYS = frozenset({"url", "title"})
 # デモ用の結果のファイルで、あっても読まない項目(--export が書き出す)
 SEED_IGNORED_KEYS = frozenset({"kind", "name", "origin"})
 
-START_LINE = "[画面の操作] 利用者が前提情報の調査を始めました(対象 {count} 件)。"
+START_LINE = "[画面の操作] 利用者が周辺の施設の調査を始めました(対象 {count} 件)。"
 
 MSG_NO_REF = "調査の対象の参照データがありません。data/ の加工で施設・事業者のデータを作ってください"
 MSG_TOOL_FAILED = "調査のデータを読めませんでした。もう一度試してください"
@@ -638,7 +638,7 @@ def run_seed(argv: list[str]) -> int:
     """dispatcher-research-seed の中身(テストから呼ぶ)。終了コードを返す。"""
     parser = argparse.ArgumentParser(
         prog="dispatcher-research-seed",
-        description="デモ用の前提情報の調査の結果を、JSON から origin: demo で取り込む(期限で消えず、調査で上書きされない)",
+        description="デモ用の周辺の施設の調査の結果を、JSON から origin: demo で取り込む(期限で消えず、調査で上書きされない)",
     )
     parser.add_argument("file", type=Path, nargs="?", help="取り込む JSON のファイル")
     parser.add_argument("--export", type=Path, metavar="FILE", help="取り込む代わりに、今ある結果をこの形で書き出す")

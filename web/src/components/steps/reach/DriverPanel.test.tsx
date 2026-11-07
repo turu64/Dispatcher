@@ -60,7 +60,7 @@ function showInStore(base: GtfsFeed, edited: GtfsFeed | null, date: string, draf
   })
 }
 
-function viewOf(input: Partial<DriverInput> & Pick<DriverInput, 'base'>, onOpenPremise: () => void = () => {}) {
+function viewOf(input: Partial<DriverInput> & Pick<DriverInput, 'base'>, onOpenPremise: () => void = () => {}, onOpenShortage: () => void = () => {}) {
   const c = compareDrivers({
     edited: null,
     date: WEDNESDAY,
@@ -71,7 +71,7 @@ function viewOf(input: Partial<DriverInput> & Pick<DriverInput, 'base'>, onOpenP
     ...input,
   })
   return render(
-    <DriverView comparison={c} params={c.before.duties.params} places={input.places ?? []} onOpenPremise={onOpenPremise} />,
+    <DriverView comparison={c} params={c.before.duties.params} places={input.places ?? []} onOpenPremise={onOpenPremise} onOpenShortage={onOpenShortage} />,
   )
 }
 
@@ -232,7 +232,7 @@ describe('DriverPanel(store とつないだ欄)', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('入力の欄は無く、結果と「前提情報で設定する」ボタンだけを出す', () => {
+  it('入力の欄は無く、結果と「運行の前提で設定する」「欠員を入れる(減便の方針)」のボタンだけを出す', () => {
     showInStore(shuttleFeed(14), shuttleFeed(6), WEDNESDAY)
     render(<DriverPanel />)
     expect(screen.queryByRole('textbox')).toBeNull()
@@ -240,11 +240,13 @@ describe('DriverPanel(store とつないだ欄)', () => {
     expect(screen.queryByRole('radio')).toBeNull()
     expect(screen.queryByTestId('places-editor')).toBeNull()
     expect(screen.queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
-    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['前提情報で設定する'])
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['運行の前提で設定する', '欠員を入れる(減便の方針)'])
+    expect(screen.getByText(/在籍の運転士の数・週の出勤日数・営業所の位置・推定の仮定は手順「運行の前提」で、欠員は手順「減便の方針」で変えられます/)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('前提情報')
     expect(screen.getByTestId('driver-verdict').textContent).toBe('在籍の運転士の数を入れると、足りるかの目安を出します。')
   })
 
-  it('store の在籍・欠員・週の出勤日数・仮定を変えると(前提情報の欄で入れたとき)、判定と表を数え直す', () => {
+  it('store の在籍・欠員・週の出勤日数・仮定を変えると(運行の前提・減便の方針の欄で入れたとき)、判定と表を数え直す', () => {
     showInStore(shuttleFeed(14), shuttleFeed(6), WEDNESDAY)
     useEditStore.setState({ versions: [] })
     render(<DriverPanel />)
@@ -283,15 +285,21 @@ describe('DriverView(乗務できる運転士の数(目安)の数え方)', () =>
     viewOf({ base: shuttleFeed(14), edited: { feed: shuttleFeed(6), draft: false }, weekdayServices: new Set(['WK']), roster: 10, shortage: 20 })
     const warning = screen.getByTestId('supply-warning')
     expect(warning.textContent).toContain('欠員が、その日に出勤する運転士の数')
+    expect(warning.textContent).toContain('手順「運行の前提」の在籍の運転士の数・週の出勤日数と、手順「減便の方針」の欠員を確かめてください。')
     expect(warning.className).toContain('text-destructive')
   })
 })
 
-describe('DriverView(前提情報で設定する)', () => {
-  it('ボタンを押すと onOpenPremise を呼ぶ', () => {
+describe('DriverView(運行の前提で設定する・欠員を入れる)', () => {
+  it('「運行の前提で設定する」を押すと onOpenPremise を、「欠員を入れる(減便の方針)」を押すと onOpenShortage を呼ぶ', () => {
     const open = vi.fn()
-    viewOf({ base: smallFeed() }, open)
-    fireEvent.click(screen.getByRole('button', { name: '前提情報で設定する' }))
+    const shortage = vi.fn()
+    viewOf({ base: smallFeed() }, open, shortage)
+    fireEvent.click(screen.getByRole('button', { name: '運行の前提で設定する' }))
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(shortage).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '欠員を入れる(減便の方針)' }))
+    expect(shortage).toHaveBeenCalledTimes(1)
     expect(open).toHaveBeenCalledTimes(1)
   })
 })

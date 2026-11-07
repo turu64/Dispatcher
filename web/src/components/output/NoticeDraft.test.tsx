@@ -350,7 +350,7 @@ describe('NoticeDraft', () => {
       render(<NoticeDraft />)
       pick(/駅前/)
       const note = screen.getByTestId('other-operators-missing')
-      expect(note.textContent).toContain('手順「前提情報」で参照データを読み込むと表示します')
+      expect(note.textContent).toContain('参照データを読み込むと表示します(読み込めないときは、手順「平日便を戻す」の「判断材料を調べる」で読み込み直せます)')
       expect(note.className).toContain('print-hide')
       expect(screen.queryByTestId('other-operators')).toBeNull()
     })

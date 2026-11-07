@@ -461,7 +461,7 @@ async def session_events(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-# ---- 前提情報の調査(§3.2・§4.2) ----
+# ---- 周辺の施設の調査(§3.2・§4.2) ----
 
 
 @router.post("/session/research")
@@ -505,7 +505,7 @@ async def start_research(request: Request) -> dict[str, Any]:
 async def register_known_research(request: Request) -> dict[str, int]:
     """保存済みの調査の結果(デモを含む)がある対象を、会話の行を送らずにこのセッションの対象へ足す。返すのは {registered, total}。
 
-    画面が、セッションを作ったときと、前提情報の結果が増えたときに呼ぶ。get_research_results で読めるようにするだけで、
+    画面が、セッションを作ったときと、周辺の施設の調査の結果が増えたときに呼ぶ。get_research_results で読めるようにするだけで、
     user.message は送らず、発言の回数の上限も数えない(POST /session/research と違い、調整役に調査を始めさせない)。
     使える結果の無い ID は足さない。今の対象は消さずに後ろへ足し、重なりは除く。
     """

@@ -43,7 +43,7 @@ const DATA_SOURCES: readonly DataSourceRow[] = [
 const HOLIDAY_LICENSE = '公共データ利用規約(第1.0版)'
 
 /**
- * 前提情報の調査の対象(国土数値情報の P11・P29・P04)の出典。年度は data/raw/README.md の入手した版。
+ * 周辺の施設の調査の対象(国土数値情報の P11・P29・P04)の出典。年度は data/raw/README.md の入手した版。
  * 利用条件は配布ページの「オープンデータ(CC_BY_4.0)」
  */
 export const FACILITY_SOURCES: readonly DataSourceRow[] = [
@@ -66,7 +66,7 @@ export const FACILITY_SOURCES: readonly DataSourceRow[] = [
 
 /** 出典の行を決める、使っているデータの状態 */
 export interface DataSourceUsage {
-  /** 前提情報の手順で施設の参照データ(P11・P29・P04)を読み込んだ */
+  /** GTFS を読み込んで施設の参照データ(P11・P29・P04)を読み込んだ */
   facilities?: boolean
   /** ダイヤのグループ分けの確かめで、service ごとの集計を Jev に送った(送っている途中を含む) */
   jevSent?: boolean
@@ -75,7 +75,7 @@ export interface DataSourceUsage {
 /**
  * 画面に出す出典の行。実際に使っているデータだけを出す:
  * - 祝日一覧は、読み込めたとき(ready)だけ「国民の祝日(内閣府)」の行を足す
- * - バス停留所(P11)・学校(P29)・医療機関(P04)は、前提情報の手順で施設を読み込んだときだけ足す(鉄道駅の後ろ)
+ * - バス停留所(P11)・学校(P29)・医療機関(P04)は、GTFS を読み込んで施設を読み込んだときだけ足す(鉄道駅の後ろ)
  * 背景地図の行はいつも最後
  */
 export function dataSourceRows(holidays: HolidayState, usage: DataSourceUsage = {}): DataSourceRow[] {

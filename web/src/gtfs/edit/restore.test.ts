@@ -771,7 +771,7 @@ describe('足し戻しの手がかり:学校・病院(nearFacility)', () => {
     expect(swapped.facilities!.map((n) => n.facility.targetId)).toEqual([COLLEGE.targetId, HIGH.targetId, HOSPITAL_A.targetId])
   })
 
-  it('ctx に施設が無ければ(前提情報を読めていない)出さない。編集後の便には出さない', () => {
+  it('ctx に施設が無ければ(周辺の施設を読めていない)出さない。編集後の便には出さない', () => {
     const { hinter, byId, diff } = facilitySetup()
     const trip = byId.get('R3_0730_WK')!
     expect(hinter(trip, facilityCtx(undefined))).toEqual(hinter(trip))

@@ -663,7 +663,7 @@ describe('RestoreStep', () => {
       pick('R3_0730_WK')
       expect(reasons().textContent).toContain('窓は既定')
       fireEvent.click(within(reasons()).getByRole('button', { name: '市立病院の調べた要点' }))
-      expect(reasons().textContent).toContain('この施設は前提情報で調べていないため、時間帯の窓は既定です。')
+      expect(reasons().textContent).toContain('この施設は「判断材料を調べる」で調べていないため、時間帯の窓は既定です。')
       unmount()
 
       const unread = hintFacility({ kind: 'hospital', windows: facilityWindows('hospital', []), research: note('2026-11-01T09:00:00+09:00') })
@@ -809,7 +809,7 @@ R1_1700_WK,17:10:00,17:10:00,A,2,1,0`))
         '乗車人数・混み具合・鉄道との乗り継ぎの時刻は、データがないため判定していません。窓は始業・受付の時刻からの目安です。',
       )
       // 学校・病院を読み込んでいなければ、理由を出す
-      expect(facilityCheck().textContent).toContain('手順「前提情報」で学校・病院を読み込むと、施設ごとに確かめます。')
+      expect(facilityCheck().textContent).toContain('周辺の学校・病院の参照データを読み込むと、施設ごとに確かめます。')
     })
 
     it('行の「候補を開く」で、その系統の候補のまとまりを開く。絞り込みで隠れていれば、絞り込みを外す', () => {

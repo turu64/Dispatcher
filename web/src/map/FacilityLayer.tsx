@@ -30,7 +30,7 @@ import PlacesLayer from './PlacesLayer'
 import ReachLayers from './ReachLayers'
 
 /**
- * 前提情報の手順の地図:停留所の外接矩形 +2km にある施設(調査の対象の候補)と、こちらの停留所から 300m 以内にある
+ * 平日便を戻す手順の地図:停留所の外接矩形 +2km にある施設(調査の対象の候補)と、こちらの停留所から 300m 以内にある
  * ほかの事業者の停留所を、種類ごとの記号で出す(レイヤーと記号の画像は facilityLayers.ts)。押すと名前を出す。
  * 一覧で焦点の当たっている対象(store/map.ts の highlightedTargetId)には輪を付けて記号を大きくする。地図は動かさない
  */
@@ -132,7 +132,7 @@ export function FacilityLayer({ visible }: { visible: boolean }) {
     setPickedFeed(feed)
     setPicked(null)
   }
-  // レイヤーは、前提情報の手順を初めて開いたときに足す(開かない人の地図に記号の画像を足さない)。足した後は隠すだけ
+  // レイヤーは、平日便を戻す手順を初めて開いたときに足す(開かない人の地図に記号の画像を足さない)。足した後は隠すだけ
   const [used, setUsed] = useState(visible)
   // 記号の画像とレイヤーを足し終えた回数(足し終えたら、点と表示の状態を渡し直す)
   const [ready, setReady] = useState(0)
@@ -229,11 +229,11 @@ export function FacilityLayer({ visible }: { visible: boolean }) {
 }
 
 /**
- * 地図を出す手順に共通の重ね:到達圏(ReachLayers)と、前提情報の手順でだけ見せる施設(FacilityLayer)と、
- * 前提情報・影響・平日便を戻す手順で見せる利用者が置いた場所(PlacesLayer。前提情報の手順の「運行の前提」の欄で置く)。
+ * 地図を出す手順に共通の重ね:到達圏(ReachLayers)と、平日便を戻す手順でだけ見せる施設(FacilityLayer)と、
+ * 運行の前提・影響・平日便を戻す手順で見せる利用者が置いた場所(PlacesLayer。運行の前提の手順の「運行の前提」の欄で置く)。
  * 手順の一覧(registry.ts)で、地図を出す手順すべてにこの同じ部品を渡す。部品が同じなので、手順を移っても
  * 到達圏の重ねを作り直さない(地図の位置合わせをやり直さない)。
- * 施設と場所の凡例は、右上の拡大・縮小のボタンの下に1つの列で縦に積む(前提情報の手順で両方が出ても重ならない)
+ * 施設と場所の凡例は、右上の拡大・縮小のボタンの下に1つの列で縦に積む(平日便を戻す手順で両方が出ても重ならない)
  */
 /** 施設と場所の凡例を積む、地図の右上の列(拡大・縮小のボタンの下) */
 export const MAP_OVERLAY_COLUMN_CLASS = 'pointer-events-none absolute top-24 right-3 flex flex-col items-end gap-2'
@@ -244,8 +244,8 @@ export default function MapOverlays() {
     <>
       <ReachLayers />
       <div className={MAP_OVERLAY_COLUMN_CLASS} data-testid="map-overlay-column">
-        <FacilityLayer visible={current === 'research'} />
-        <PlacesLayer visible={current === 'research' || current === 'reach' || current === 'restore'} placeable={current === 'research'} />
+        <FacilityLayer visible={current === 'restore'} />
+        <PlacesLayer visible={current === 'premise' || current === 'reach' || current === 'restore'} placeable={current === 'premise'} />
       </div>
     </>
   )

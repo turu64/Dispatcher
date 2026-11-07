@@ -5,6 +5,7 @@ import { lastVersion, useEditStore } from '@/store/edit'
 import { STEP_IDS } from './stepIds'
 import { EditHistoryPanel, PolicyReview, PolicySummary } from './policy/ApprovalPanel'
 import { PolicyForm } from './policy/PolicyForm'
+import ShortageSection from './policy/ShortageSection'
 import { baseKeyOf, type OpDraft } from './policy/types'
 
 // テストなどが従来の場所から読めるように残す
@@ -14,6 +15,7 @@ export { Notice47Table } from './policy/DiffTables'
  * 減便の方針の手順(docs/interfaces-1104.md §3・§6)。
  * 方針を入れて「対象便を確かめる」で下書きにし、対象便を確かめて「この内容で進める」で承認する。
  * 承認したあとは、適用した方針と件数を出し、「方針を変える」で入力に戻る。編集の履歴(元に戻す・すべて戻す)もここに出す。
+ * 先頭に欠員の欄(policy/ShortageSection.tsx)を置く。方針の入力・確かめの欄の外なので、承認の前後・確かめている間も出る
  */
 export default function PolicyStep() {
   const base = useEditStore((s) => s.base)
@@ -52,6 +54,7 @@ export default function PolicyStep() {
         <p className="text-sm text-muted-foreground">手順「読み込み」で GTFS を読み込むと、減便の方針を選べます。</p>
       ) : (
         <>
+          <ShortageSection />
           {showForm && (
             // 確かめている間も入力は残す(「やめる」で戻ったときに、入れた値のまま直せるように)
             <div hidden={reviewing !== null}>

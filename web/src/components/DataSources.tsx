@@ -57,7 +57,7 @@ export function JevDestination() {
 export default function DataSources() {
   const holidays = useHolidayStore((s) => s.holidays)
   const loadHolidays = useHolidayStore((s) => s.load)
-  // 前提情報の手順で施設(P11・P29・P04)を読み込んだときだけ、その出典を出す
+  // GTFS を読み込んで施設(P11・P29・P04)を読み込んだときだけ、その出典を出す
   const facilities = useResearchStore(facilitiesInUse)
   // 画面を開いたときに祝日一覧を 1 回だけ読む(読み込み中・読み込み済みなら load は何もしない)。
   // 読めなかった(missing・error)ときの読み込み直しは、祝日を使う手順のボタンから load を呼ぶ

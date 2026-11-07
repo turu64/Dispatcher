@@ -98,11 +98,11 @@ describe('画面の骨組み', () => {
     expect(screen.queryByText('北海道オープンデータプラットフォーム')).toBeNull()
   })
 
-  it('手順は 読み込み → 前提情報 → 減便の方針 → 影響(到達圏。日付と時間帯を含む)→ 足し戻し → 出力 の順に並ぶ', () => {
+  it('手順は 読み込み → 運行の前提 → 減便の方針 → 影響(到達圏。日付と時間帯を含む)→ 平日便を戻す → 出力 の順に並ぶ', () => {
     render(<App />)
     const nav = screen.getByRole('navigation', { name: '手順の切り替え' })
     // ボタンの名前(読み上げ)で並びを見る。見える名前には折り返しの区切り(<wbr>)が入るため、textContent では見ない
-    const names = ['1. 読み込み', '2. 前提情報', '3. 減便の方針', '4. 影響(到達圏)', '5. 平日便を戻す', '6. 出力']
+    const names = ['1. 読み込み', '2. 運行の前提', '3. 減便の方針', '4. 影響(到達圏)', '5. 平日便を戻す', '6. 出力']
     const buttons = within(nav).getAllByRole('button')
     expect(buttons).toHaveLength(names.length)
     names.forEach((n, i) => expect(buttons[i]).toBe(stepButton(n)))
@@ -275,28 +275,46 @@ function proposeClaudePolicy() {
   })
 }
 
-describe('運行の前提(前提情報の手順)と要る運転士の数(影響の手順)', () => {
-  it('影響の手順の「前提情報で設定する」で、前提情報の手順の運行の前提の欄へ移り、焦点を置く。AI のタブを開いていても編集に戻す', () => {
+describe('運行の前提・欠員(運行の前提と減便の方針の手順)と要る運転士の数(影響の手順)', () => {
+  it('影響の手順の「運行の前提で設定する」で運行の前提の欄へ、「欠員を入れる(減便の方針)」で減便の方針の手順の欠員の欄へ移り、焦点を置く。AI のタブを開いていても編集に戻す', () => {
     load()
     render(<App />)
     act(() => {
       useStepStore.getState().go('reach')
     })
-    // 影響の手順の欄には欠員の入力が無い(描いてあって隠れている前提情報の手順の欄にだけある)
+    // 影響の手順の欄には欠員の入力が無い(描いてあって隠れている減便の方針の手順の欄にだけある)
     const reach = screen.getByRole('heading', { name: '4. 影響(到達圏)' }).closest('[data-slot="card"]') as HTMLElement
     expect(within(reach).queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
     expect(within(reach).getByTestId('roster-hint').textContent).toBe('在籍の運転士の数を入れると、足りるかの目安を出します。')
     act(() => useSidePanelStore.getState().show('chat'))
     act(() => {
-      fireEvent.click(within(reach).getByRole('button', { name: '前提情報で設定する', hidden: true }))
+      fireEvent.click(within(reach).getByRole('button', { name: '運行の前提で設定する', hidden: true }))
     })
-    expect(useStepStore.getState().current).toBe('research')
+    expect(useStepStore.getState().current).toBe('premise')
     expect(useSidePanelStore.getState().tab).toBe('edit')
     const premise = screen.getByRole('region', { name: '運行の前提(営業所・運転士の数)' })
     expect(document.activeElement).toBe(premise)
-    // そこで入れた在籍・欠員は、影響の手順の結果に出る
+    expect(screen.getByRole('heading', { name: '2. 運行の前提' }).closest('[data-slot="card"]')!.contains(premise)).toBe(true)
+    // 運行の前提の欄には欠員の入力が無い
+    expect(within(premise).queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
     fireEvent.change(within(premise).getByLabelText('在籍の運転士の数'), { target: { value: '150' } })
-    fireEvent.change(within(premise).getByLabelText('欠員(その日に乗務できない運転士の数)'), { target: { value: '1' } })
+
+    act(() => {
+      useStepStore.getState().go('reach')
+    })
+    act(() => useSidePanelStore.getState().show('chat'))
+    act(() => {
+      fireEvent.click(within(reach).getByRole('button', { name: '欠員を入れる(減便の方針)', hidden: true }))
+    })
+    expect(useStepStore.getState().current).toBe('policy')
+    expect(useSidePanelStore.getState().tab).toBe('edit')
+    const shortage = screen.getByRole('region', { name: '欠員' })
+    expect(document.activeElement).toBe(shortage)
+    expect(screen.getByRole('heading', { name: '3. 減便の方針' }).closest('[data-slot="card"]')!.contains(shortage)).toBe(true)
+    fireEvent.change(within(shortage).getByLabelText('欠員(その日に乗務できない運転士の数)'), { target: { value: '1' } })
+    expect(within(shortage).getByTestId('shortage-supply').textContent).toContain('から欠員 1 を引いた 106 です。')
+
+    // そこで入れた在籍・欠員は、影響の手順の結果に出る
     act(() => {
       useStepStore.getState().go('reach')
     })

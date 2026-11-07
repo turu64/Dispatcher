@@ -21,12 +21,14 @@ import { activeServiceIds } from '@/gtfs/calendar'
 import { toStops } from '@/gtfs/parse'
 import { formatDateJa } from '@/lib/dates'
 import { diffOf, draftName, lastVersion, useEditStore, type BaseGtfs, type Draft } from '@/store/edit'
+import { useGtfsStore } from '@/store/gtfs'
 import { usePriorityStore } from '@/store/priority'
 import { useReachStore } from '@/store/reach'
-import { useResearchStore, type FacilityState } from '@/store/research'
+import { useResearchStore, useResearchView, type FacilityState } from '@/store/research'
 import { buildRestoreHintContext } from '@/store/restoreHintContext'
 import { draftActor, proposeAndCommit, replaceClaudeDraftMessage } from './editActions'
 import { AskRestoreButton } from '@/components/chat/AskRestoreButton'
+import { useChatStore } from '@/store/chat'
 import { DriverLine } from '@/components/output/DriverSummary'
 import { InlineConfirm, NoteList } from './editParts'
 import {
@@ -44,6 +46,7 @@ import { AiPicks, FacilityEvidence, SelectedTrips } from './restore/PickLists'
 import { TripLine } from './restore/TripLine'
 import { RoundTripPanel } from './restore/RoundTripPanel'
 import { CHECK_LIMITS_NOTE, FacilityAccessPanel } from './restore/FacilityAccessPanel'
+import { RESEARCH_SECTION_TITLE, ResearchLoader, ResearchSection } from './restore/ResearchSection'
 
 /** 到達圏を使う2つの手がかりの名前(「停留所の発車がなくなる」と「到達圏が戻る」) */
 const REACH_PAIR = `「${RESTORE_HINT_LABELS.onlyServiceAtStop}」と「${RESTORE_HINT_LABELS.restoresLostCells}」`
@@ -99,16 +102,16 @@ function reachHintStatus(o: {
 
 /** 学校・病院の手がかりの説明(施設を読めていて、到達圏の比較があるとき) */
 const FACILITY_HINT_NOTE =
-  '「学校・病院の近く」は、停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)にある、高校・大学などの学校と入院設備のある病院(国土数値情報)に当たる便です。当たる時間帯は、手順「前提情報」で調べた始業・終業や外来の受付時間を読めた施設ではその時刻から決め、読めない施設(着・発の片方だけ読めないときはその向き)では既定の時間帯(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)を使います。'
+  '「学校・病院の近く」は、停留所から徒歩圏(到達圏の徒歩の分数と同じ距離)にある、高校・大学などの学校と入院設備のある病院(国土数値情報)に当たる便です。当たる時間帯は、この手順の「判断材料を調べる」で調べた始業・終業や外来の受付時間を読めた施設ではその時刻から決め、読めない施設(着・発の片方だけ読めないときはその向き)では既定の時間帯(学校は 7〜9時着・14〜18時発、病院は 8〜11時着・11〜16時発)を使います。'
 
 /** 学校・病院の手がかりの状態の文。出していれば説明、出していなければ理由 */
 function facilityHintStatus(ctx: RestoreHintContext | null, facilities: FacilityState): string {
   if (!ctx) return '「学校・病院の近く」も、到達圏の前後の比較ができてから出します。徒歩圏の距離に、到達圏の条件を使うためです。'
   if (ctx.facilities) return FACILITY_HINT_NOTE
-  if (facilities.status === 'loading') return '前提情報の学校・病院を読み込んでいます。読み込むと「学校・病院の近く」も出します。'
+  if (facilities.status === 'loading') return '周辺の学校・病院の参照データを読み込んでいます。読み込むと「学校・病院の近く」も出します。'
   if (facilities.status === 'error')
-    return '前提情報の学校・病院の参照データを読み込めなかったため、「学校・病院の近く」は出していません。手順「前提情報」で読み込み直せます。'
-  return '手順「前提情報」で学校・病院を読み込むと、「学校・病院の近く」も出します。'
+    return '周辺の学校・病院の参照データを読み込めなかったため、「学校・病院の近く」は出していません。この手順の「判断材料を調べる」で読み込み直せます。'
+  return '周辺の学校・病院の参照データを読み込むと、「学校・病院の近く」も出します。'
 }
 
 /** 時間帯の窓に当たる施設(優先順位の順) */
@@ -140,9 +143,9 @@ const MAX_FACILITY_TALLY = 8
  */
 function facilityCheckUnavailable(ctx: RestoreHintContext | null, facilities: FacilityState): string | null {
   if (ctx?.facilities) return null
-  if (facilities.status === 'loading') return '前提情報の学校・病院を読み込んでいます。読み込むと確かめます。'
-  if (facilities.status === 'error') return '前提情報の学校・病院の参照データを読み込めなかったため、確かめていません。手順「前提情報」で読み込み直せます。'
-  if (facilities.status !== 'ready') return '手順「前提情報」で学校・病院を読み込むと、施設ごとに確かめます。'
+  if (facilities.status === 'loading') return '周辺の学校・病院の参照データを読み込んでいます。読み込むと確かめます。'
+  if (facilities.status === 'error') return '周辺の学校・病院の参照データを読み込めなかったため、確かめていません。この手順の「判断材料を調べる」で読み込み直せます。'
+  if (facilities.status !== 'ready') return '周辺の学校・病院の参照データを読み込むと、施設ごとに確かめます。'
   return '到達圏の前後の比較ができると、学校・病院ごとに確かめます。徒歩圏の距離に、到達圏の条件を使うためです。'
 }
 
@@ -154,7 +157,9 @@ function facilityCheckUnavailable(ctx: RestoreHintContext | null, facilities: Fa
  * 「AI に候補を聞く」の結果(Claude の足し戻しの下書き)の便は、一覧の先頭の「AI のおすすめ」にまとめる。
  * 足し戻す便ごとに「休校日運休(学)」の印を付けられる(addBack の schoolDaysOnly。GTFS には入れない)。
  * 「足し戻す」「取り消す」は押したことを承認とみなす。
- * 学校・病院の手がかり(nearFacility、T19)は、前提情報の施設と到達圏の条件から出し、施設ごとの便の数と、選んだ便の理由の文を出す。
+ * 学校・病院の手がかり(nearFacility、T19)は、周辺の施設(参照データ)と到達圏の条件から出し、施設ごとの便の数と、選んだ便の理由の文を出す。
+ * 2026-11-07 に利用者の指示で、前の前提情報の手順にあった周辺の施設の調査を、この手順の「判断材料を調べる」(閉じた開閉)に移した。
+ * 欄は減便の方針の承認を待たずに GTFS を読み込めば出し、施設の読み込み(ResearchLoader)は欄の開閉と関係なくいつも置いておく
  */
 export default function RestoreStep() {
   const base = useEditStore((s) => s.base)
@@ -163,9 +168,12 @@ export default function RestoreStep() {
   const draft = useEditStore((s) => s.draft)
   const plan = useMemo(() => planOf(history), [history])
   const version = lastVersion({ versions })
+  const feed = useGtfsStore((s) => s.feed)
 
   return (
     <StepSection title="5. 平日便を戻す" id={STEP_IDS.restore}>
+      {feed && <ResearchLoader />}
+      {feed && <ResearchDetails />}
       {!base ? (
         <p className="text-sm text-muted-foreground">GTFS を読み込み、減便の方針を承認すると、平日に戻す便を選べます。</p>
       ) : !plan || !version ? (
@@ -174,6 +182,36 @@ export default function RestoreStep() {
         <RestorePanel base={base} plan={plan} version={version} draft={draft} />
       )}
     </StepSection>
+  )
+}
+
+/** 「判断材料を調べる」の見出しに添える、閉じた中に失敗の知らせがあることの印 */
+export const RESEARCH_DETAILS_FAILED = '開くと、うまくいかなかったことの知らせがあります'
+
+/**
+ * 「判断材料を調べる」の開閉(最初は閉じておく)。中身は閉じている間も描いたままにする(選んだ対象・入力中の値を残すため)。
+ * 見出しには調べた結果の数(候補のうち結果のあるもの)と、調べている最中か、失敗の知らせ(調査・施設の読み込み)があるかを添える
+ */
+function ResearchDetails() {
+  const results = useResearchStore((s) => s.results)
+  const facilitiesFailed = useResearchStore((s) => s.facilities.status === 'error')
+  const { candidates } = useResearchView()
+  const count = useMemo(() => candidates.filter((c) => results.has(c.facility.targetId)).length, [candidates, results])
+  const active = useChatStore((s) => s.research.active)
+  // 調査・施設の読み込みの失敗は閉じた中にしか出ないので、見出しにも印を出す
+  const failed = useChatStore((s) => s.researchError !== null) || facilitiesFailed
+  const status = active ? (count > 0 ? `調べた結果 ${count} 件・調べています` : '調べています') : count > 0 ? `調べた結果 ${count} 件` : 'まだ調べていません'
+  return (
+    <details className="rounded-md border" data-testid="research-details">
+      <summary className="cursor-pointer px-3 py-2 text-sm">
+        <span className="font-medium">{RESEARCH_SECTION_TITLE}</span>
+        <span className="ml-2 text-xs text-muted-foreground">{status}</span>
+        {failed && <span className="ml-1 text-xs text-destructive">・{RESEARCH_DETAILS_FAILED}</span>}
+      </summary>
+      <div className="flex flex-col gap-3 border-t px-3 py-2">
+        <ResearchSection />
+      </div>
+    </details>
   )
 }
 
@@ -189,7 +227,7 @@ function RestorePanel({ base, plan, version, draft }: { base: BaseGtfs; plan: Fo
   const reachError = useReachStore((s) => s.error)
   const reachSnapshot = useReachStore((s) => s.snapshot)
   const reachRef = useReachStore((s) => s.ref)
-  // 学校・病院の手がかり(T19)の材料。前提情報の施設・調査の結果・重要拠点の優先順位が変わったら作り直す
+  // 学校・病院の手がかり(T19)の材料。周辺の施設・調査の結果・重要拠点の優先順位が変わったら作り直す
   const facilities = useResearchStore((s) => s.facilities)
   const researchResults = useResearchStore((s) => s.results)
   const priorityOrder = usePriorityStore((s) => s.order)

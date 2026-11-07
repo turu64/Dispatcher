@@ -835,7 +835,7 @@ WK0800,08:10:00,08:10:00,B,2`),
       expect(counts).toEqual([...counts].sort((x, y) => y - x))
     })
 
-    it('前提情報の施設を読めていなければ nearby_facilities を入れず、出していない理由を書く', async () => {
+    it('周辺の施設を読めていなければ nearby_facilities を入れず、出していない理由を書く', async () => {
       const { store, deps } = setup({ hintContext: () => ctxWith(undefined) })
       await withPolicy(deps, store)
       const body = parse((await runTool('search_trips', { ...SEARCH, limit: 50 }, deps)).content)

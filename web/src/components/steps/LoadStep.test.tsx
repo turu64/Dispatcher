@@ -275,7 +275,7 @@ describe('読み込んだ GTFS の削除', () => {
     // 本文はダイアログの説明(aria-describedby)になる
     const described = document.getElementById(dialog.getAttribute('aria-describedby') ?? '')
     expect(described?.textContent).toBe(
-      '読み込んだ GTFS と、減便の方針・平日に戻した便などの編集、前提情報の調査の結果、AI との会話を消して、最初の状態に戻します。パソコンの中の元のファイルは消えません。',
+      '読み込んだ GTFS と、減便の方針・平日に戻した便などの編集、運行の前提(在籍の運転士の数・営業所)と欠員、周辺の施設の調査の結果、AI との会話を消して、最初の状態に戻します。パソコンの中の元のファイルは消えません。',
     )
     expect(within(dialog).getByRole('button', { name: '削除する' }).getAttribute('data-variant')).toBe('destructive')
     // 最初の焦点は「やめる」
@@ -377,7 +377,7 @@ describe('読み込んだ GTFS の削除', () => {
     expect(screen.queryByRole('heading', { name: 'dohoku.zip' })).toBeNull()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'ファイルを選ぶ' })))
     expect((screen.getByLabelText('GTFS の ZIP ファイル') as HTMLInputElement).value).toBe('')
-    // store:GTFS・編集・到達圏・会話・前提情報・手順・タブ
+    // store:GTFS・編集・到達圏・会話・周辺の施設の調査・手順・タブ
     expect(useGtfsStore.getState().feed).toBeNull()
     expect(useEditStore.getState()).toMatchObject({ base: null, history: [], versions: [], draft: null })
     expect(useReachStore.getState()).toMatchObject({ source: null, edited: null, snapshot: null })
@@ -405,7 +405,7 @@ describe('読み込んだ GTFS の削除', () => {
 
   it('サンプルなら、元のファイルではなく、もう一度読み込めることを添える', () => {
     expect(deleteConfirmMessage({ draft: null, committed: 0, sample: true })).toBe(
-      '読み込んだ GTFS と、減便の方針・平日に戻した便などの編集、前提情報の調査の結果、AI との会話を消して、最初の状態に戻します。サンプルは、もう一度読み込めます。',
+      '読み込んだ GTFS と、減便の方針・平日に戻した便などの編集、運行の前提(在籍の運転士の数・営業所)と欠員、周辺の施設の調査の結果、AI との会話を消して、最初の状態に戻します。サンプルは、もう一度読み込めます。',
     )
     expect(deleteConfirmMessage({ draft: { id: '3' }, committed: 0, sample: false })).toContain('承認待ちの下書き #3 も消えます。')
     expect(deleteConfirmMessage({ draft: null, committed: 2, sample: false })).toContain('承認済みの編集 2 件も消えます。')

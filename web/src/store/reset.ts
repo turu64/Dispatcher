@@ -29,7 +29,7 @@ export type ResetReason = 'reload' | 'delete'
  * 3. store/edit:編集の履歴・下書き・出力の feed_version(setBase(null))。これを見張って、ほかの store も戻る(下の「見張り」)。
  *    削除では、下書きの番号も 1 からに戻す(会話の発言も消えるので、前の「下書き #N」と重ならない)
  * 4. store/map:地図の施設の強調
- * 5. store/research:前提情報の手順の施設・事業者・選択・調査の結果・デモの調査結果(reset)
+ * 5. store/research:周辺の施設の調査の施設・事業者・選択・調査の結果・デモの調査結果(reset)
  * 6. store/serviceGroups:ダイヤのグループ分け(判断材料・案・利用者の直し・Jev の答え)。Jev に送っている問い合わせは中断し、
  *    届いた答えと、送るかを聞いている状態(awaitingConsent)を捨てる。送るかは残さず、読み込むたびにダイアログ
  *    (components/steps/load/JevConsentDialog.tsx)で聞き直す(ブラウザに保存しない決定のため)

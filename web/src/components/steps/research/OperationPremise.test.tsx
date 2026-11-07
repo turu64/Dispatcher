@@ -24,14 +24,16 @@ function openSettings() {
   return trigger
 }
 
-describe('OperationPremise(前提情報の手順の運行の前提の欄)', () => {
-  it('見出しと、在籍の運転士の数・欠員の欄、営業所を置く欄、推定の仮定の要約と「勤務時間の設定」のボタンを出す。焦点を置ける', () => {
+describe('OperationPremise(運行の前提の手順の運行の前提の欄)', () => {
+  it('見出しと、在籍の運転士の数・週の出勤日数の欄、営業所を置く欄、推定の仮定の要約と「勤務時間の設定」のボタンを出す。欠員の欄は無い。焦点を置ける', () => {
     render(<OperationPremise />)
     const s = section()
     expect(s.id).toBe(PREMISE_SECTION_ID)
     expect(s.tabIndex).toBe(-1)
     expect(within(s).getByLabelText('在籍の運転士の数')).toBeTruthy()
-    expect(within(s).getByLabelText('欠員(その日に乗務できない運転士の数)')).toBeTruthy()
+    // 欠員は減便の方針の手順(policy/ShortageSection.tsx)で入れる
+    expect(within(s).queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
+    expect(s.textContent).toContain('欠員(その日に乗務できない運転士の数)は、手順「減便の方針」で入れます。')
     expect((within(s).getByLabelText('1人あたりの週の出勤日数') as HTMLInputElement).value).toBe('5')
     expect(within(s).getByTestId('places-editor')).toBeTruthy()
     // サンプルの GTFS でなければ、道北バスのサンプルのボタンは出さない
@@ -43,18 +45,6 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
     expect(screen.queryByLabelText('入庫後の点呼')).toBeNull()
     expect(s.textContent).toContain('サーバーには送りません')
     expect(s.textContent).not.toContain('あなた')
-  })
-
-  it('欠員を入れると store に入り、読めない値は入れず、空にすると入れていない状態に戻る', () => {
-    render(<OperationPremise />)
-    const input = screen.getByLabelText('欠員(その日に乗務できない運転士の数)')
-    fireEvent.change(input, { target: { value: '２０' } })
-    expect(useDriversStore.getState().shortage).toBe(20)
-    fireEvent.change(input, { target: { value: '1.5' } })
-    expect(screen.getByText('0 以上の整数を入れてください')).toBeTruthy()
-    expect(useDriversStore.getState().shortage).toBe(20)
-    fireEvent.change(input, { target: { value: '' } })
-    expect(useDriversStore.getState().shortage).toBeNull()
   })
 
   it('在籍の運転士の数は 0〜9999 の整数か空', () => {
@@ -109,14 +99,9 @@ describe('OperationPremise(前提情報の手順の運行の前提の欄)', () =
 
   it('store の値が外から変わると(GTFS の読み込み直しで消えると)、欄の文字も合わせる', () => {
     render(<OperationPremise />)
-    act(() => {
-      useDriversStore.getState().setShortage(20)
-      useDriversStore.getState().setRoster(110)
-    })
-    expect((screen.getByLabelText('欠員(その日に乗務できない運転士の数)') as HTMLInputElement).value).toBe('20')
+    act(() => useDriversStore.getState().setRoster(110))
     expect((screen.getByLabelText('在籍の運転士の数') as HTMLInputElement).value).toBe('110')
     act(() => useDriversStore.getState().reset())
-    expect((screen.getByLabelText('欠員(その日に乗務できない運転士の数)') as HTMLInputElement).value).toBe('')
     expect((screen.getByLabelText('在籍の運転士の数') as HTMLInputElement).value).toBe('')
   })
 

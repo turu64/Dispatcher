@@ -11,7 +11,8 @@ import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
 import { useReachStore } from '@/store/reach'
 import { useResearchStore } from '@/store/research'
-import { FacilityLayer, MAP_OVERLAY_COLUMN_CLASS, OTHER_STOPS_LEGEND, OTHER_STOPS_LEGEND_NOTE } from './FacilityLayer'
+import { useStepStore } from '@/store/steps'
+import MapOverlays, { FacilityLayer, MAP_OVERLAY_COLUMN_CLASS, OTHER_STOPS_LEGEND, OTHER_STOPS_LEGEND_NOTE } from './FacilityLayer'
 import {
   FACILITIES_HIGHLIGHT_LAYER,
   FACILITIES_HIGHLIGHT_RING,
@@ -33,6 +34,9 @@ import {
   facilitySymbolParts,
   facilitySymbolSvg,
 } from './facilitySymbols'
+
+// MapOverlays の手順ごとの出し分けだけを見るため、到達圏の重ねは描かない
+vi.mock('./ReachLayers', () => ({ default: () => null }))
 
 const STOPS: Stop[] = [
   { id: 'S1', name: '停留所1', lat: 43.76, lon: 142.35, locationType: 0, parentStation: '' },
@@ -238,7 +242,7 @@ describe('facilitiesToGeoJson', () => {
 })
 
 describe('FacilityLayer', () => {
-  it('前提情報の手順を開くまではレイヤーを足さない', () => {
+  it('平日便を戻す手順を開くまではレイヤーを足さない', () => {
     const { layers, images } = fakeMap()
     render(<FacilityLayer visible={false} />)
     expect(layers.size).toBe(0)
@@ -322,7 +326,7 @@ describe('FacilityLayer', () => {
     expect(screen.getByRole('status').textContent).toContain('病院')
   })
 
-  it('GTFS を削除・読み込み直したら、押した記号の名前を消す(次の GTFS で前提情報の手順を開いても出さない)', async () => {
+  it('GTFS を削除・読み込み直したら、押した記号の名前を消す(次の GTFS で平日便を戻す手順を開いても出さない)', async () => {
     const { map, layers } = fakeMap()
     const { rerender } = render(<FacilityLayer visible />)
     await waitFor(() => expect(layers.has(FACILITIES_LAYER)).toBe(true))
@@ -330,7 +334,7 @@ describe('FacilityLayer', () => {
     act(() => onClick({ features: [{ properties: { name: '前の病院', kind: 'hospital', symbol: 'hospital' } }] }))
     expect(screen.getByRole('status').textContent).toContain('前の病院')
 
-    // 手順「読み込み」に戻って削除し(部品は外れず、隠れるだけ)、次の GTFS を読み込んで前提情報の手順を開き直す
+    // 手順「読み込み」に戻って削除し(部品は外れず、隠れるだけ)、次の GTFS を読み込んで平日便を戻す手順を開き直す
     rerender(<FacilityLayer visible={false} />)
     act(() => useGtfsStore.getState().clear())
     act(() => {
@@ -460,5 +464,52 @@ describe('FacilityLayer の事業者と強調', () => {
     for (const id of FACILITY_LAYER_IDS) expect(layout[`${id}.visibility`]).toBe('none')
     unmount()
     expect(layers.size).toBe(0)
+  })
+})
+
+describe('MapOverlays の手順ごとの出し分け', () => {
+  afterEach(() => {
+    act(() => {
+      useStepStore.setState({ current: useStepStore.getState().order[0] })
+      useDriversStore.getState().reset()
+    })
+  })
+
+  it('施設は平日便を戻す手順だけ。利用者が置いた場所は運行の前提・影響・平日便を戻す手順で見せ、置けるのは運行の前提の手順だけ', async () => {
+    const { layers, layout } = fakeMap()
+    act(() => {
+      useDriversStore.getState().addPlace({ name: '営業所A', lat: 43.77, lon: 142.36, type: 'office' })
+      useStepStore.setState({ current: 'premise' })
+    })
+    render(<MapOverlays />)
+    const facilityLegend = () => screen.queryByRole('group', { name: '施設の凡例' })
+    const placesLegend = () => screen.queryByRole('group', { name: '利用者が置いた場所の凡例' })
+    expect(facilityLegend()).toBeNull()
+    expect(layers.has(FACILITIES_LAYER)).toBe(false)
+    expect(placesLegend()).not.toBeNull()
+
+    // 運行の前提の手順では地図で置ける。影響の手順に移ると、置いている途中ならやめる(場所は見せたまま)
+    act(() => useDriversStore.getState().startPlacing('office'))
+    expect(useDriversStore.getState().placing).toBe('office')
+    act(() => useStepStore.setState({ current: 'reach' }))
+    expect(useDriversStore.getState().placing).toBeNull()
+    expect(placesLegend()).not.toBeNull()
+    expect(facilityLegend()).toBeNull()
+
+    act(() => useStepStore.setState({ current: 'restore' }))
+    await waitFor(() => expect(layers.has(FACILITIES_LAYER)).toBe(true))
+    expect(layout[`${FACILITIES_LAYER}.visibility`]).toBe('visible')
+    expect(facilityLegend()).not.toBeNull()
+    expect(placesLegend()).not.toBeNull()
+    // 平日便を戻す手順でも置けない
+    act(() => useDriversStore.getState().startPlacing('office'))
+    expect(useDriversStore.getState().placing).toBeNull()
+
+    for (const step of ['load', 'policy', 'output'] as const) {
+      act(() => useStepStore.setState({ current: step }))
+      expect(facilityLegend()).toBeNull()
+      expect(placesLegend()).toBeNull()
+      expect(layout[`${FACILITIES_LAYER}.visibility`]).toBe('none')
+    }
   })
 })

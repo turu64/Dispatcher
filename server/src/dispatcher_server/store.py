@@ -2,7 +2,7 @@
 
 - agent_sessions:セッションの取っ手の行(Anthropic のセッションの ID はブラウザに渡さない)
 - cost_ledger:日本時間の日付ごとの利用額(セント。定価で数えた額)
-- research_targets・research_results:前提情報の調査(11/6。公開情報だけ)
+- research_targets・research_results:周辺の施設の調査(11/6。公開情報だけ)
 - jev_usage:日本時間の日付ごとの、Jev に問うた target の数と額(マイクロドル。service_groups.py)
 
 会話の中身・ツールの入力と結果・IP アドレスは入れない。

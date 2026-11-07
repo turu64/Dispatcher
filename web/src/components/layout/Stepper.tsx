@@ -4,7 +4,7 @@ import { Fragment, useId } from 'react'
 import { STEPS } from '@/components/steps/registry'
 import { planOf } from '@/gtfs/edit/ops'
 import { useEditStore, type Draft } from '@/store/edit'
-import { useResearchStore } from '@/store/research'
+import { useDriversStore } from '@/store/drivers'
 import { canOpenStep, useStepStore, type StepKey } from '@/store/steps'
 
 const KEYS = STEPS.map((s) => s.key)
@@ -38,18 +38,18 @@ function pendingStepOf(draft: Draft | null): StepKey | null {
 
 /**
  * 済んだ手順。開いたかどうかではなく、データで決める。
- * 読み込み = GTFS を読み込んだ、前提情報 = 調査の結果(デモ用の保存済みの結果を含む)がある、
+ * 読み込み = GTFS を読み込んだ、運行の前提 = 在籍の運転士の数を入れたか、営業所を1つ以上置いた、
  * 減便の方針 = 承認した方針がある、平日便を戻す = 平日に戻した便が1便以上ある(承認済みの履歴から。取り消した便は数えない)。
  * 影響(到達圏)と出力は見るだけの手順なので、済みにしない
  */
 function useDoneSteps(): ReadonlySet<StepKey> {
   const loaded = useEditStore((s) => s.base !== null)
   const history = useEditStore((s) => s.history)
-  const researched = useResearchStore((s) => s.results.size > 0)
+  const premised = useDriversStore((s) => s.roster !== null || s.places.length > 0)
   const plan = planOf(history)
   const done = new Set<StepKey>()
   if (loaded) done.add('load')
-  if (loaded && researched) done.add('research')
+  if (loaded && premised) done.add('premise')
   if (loaded && plan) done.add('policy')
   if (loaded && plan && plan.addBackTripIds.length > 0) done.add('restore')
   return done

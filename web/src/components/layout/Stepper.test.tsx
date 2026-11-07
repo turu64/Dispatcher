@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
 import type { EditOp, EditRecord, PolicySettings } from '@/gtfs/edit/ops'
 import type { ResearchResult } from '@/claude/research'
+import { useDriversStore } from '@/store/drivers'
 import { useEditStore, type Draft } from '@/store/edit'
 import { useGtfsStore } from '@/store/gtfs'
 import { useResearchStore } from '@/store/research'
@@ -90,6 +91,7 @@ afterEach(() => {
     useEditStore.getState().setBase(null)
     useGtfsStore.getState().clear()
     useResearchStore.getState().reset()
+    useDriversStore.getState().reset()
     useStepStore.setState({ current: 'load' })
   })
 })
@@ -98,7 +100,7 @@ describe('手順のステッパー', () => {
   it('6つの手順を番号つきの名前で並べ、名前に状態を混ぜない', () => {
     render(<Stepper />)
     expect(within(nav()).getAllByRole('listitem')).toHaveLength(6)
-    const names = ['1. 読み込み', '2. 前提情報', '3. 減便の方針', '4. 影響(到達圏)', '5. 平日便を戻す', '6. 出力']
+    const names = ['1. 読み込み', '2. 運行の前提', '3. 減便の方針', '4. 影響(到達圏)', '5. 平日便を戻す', '6. 出力']
     const buttons = within(nav()).getAllByRole('button')
     expect(buttons).toHaveLength(6)
     names.forEach((n, i) => expect(buttons[i]).toBe(stepButton(n)))
@@ -115,7 +117,7 @@ describe('手順のステッパー', () => {
     expect(first.disabled).toBe(false)
     expect(circleOf(first).className).toContain('bg-primary')
     expect(labelOf(first).className).toContain('font-semibold')
-    for (const name of ['2. 前提情報', '3. 減便の方針', '4. 影響(到達圏)', '5. 平日便を戻す', '6. 出力']) {
+    for (const name of ['2. 運行の前提', '3. 減便の方針', '4. 影響(到達圏)', '5. 平日便を戻す', '6. 出力']) {
       const b = stepButton(name)
       expect(b.disabled).toBe(true)
       expect(b.title).toBe('GTFS を読み込むと開けます')
@@ -144,7 +146,7 @@ describe('手順のステッパー', () => {
     // 丸の中は番号の代わりにチェック。名前は変わらない(stepButton('1. 読み込み') で見つかる)
     expect(circleOf(first).textContent).toBe('')
     // 押せる手順は薄くしない
-    expect(circleOf(stepButton('2. 前提情報')).className).not.toContain('text-muted-foreground/50')
+    expect(circleOf(stepButton('2. 運行の前提')).className).not.toContain('text-muted-foreground/50')
 
     fireEvent.click(stepButton('4. 影響(到達圏)'))
     expect(useStepStore.getState().current).toBe('reach')
@@ -161,13 +163,30 @@ describe('手順のステッパー', () => {
     expect(hasNoStatus('4. 影響(到達圏)')).toBe(true)
   })
 
-  it('済みはデータで決める:調査の結果、承認した方針、平日に戻した便', () => {
+  it('済みはデータで決める:在籍の運転士の数か営業所、承認した方針、平日に戻した便', () => {
     load()
     render(<Stepper />)
-    for (const name of ['2. 前提情報', '3. 減便の方針', '5. 平日便を戻す', '6. 出力']) expect(hasCheck(stepButton(name))).toBe(false)
+    for (const name of ['2. 運行の前提', '3. 減便の方針', '5. 平日便を戻す', '6. 出力']) expect(hasCheck(stepButton(name))).toBe(false)
 
+    // 周辺の施設の調査の結果だけでは、運行の前提は済みにしない
     act(() => useResearchStore.getState().mergeResults([{ targetId: 'op:1' } as unknown as ResearchResult]))
-    expect(hasCheck(stepButton('2. 前提情報'))).toBe(true)
+    expect(hasCheck(stepButton('2. 運行の前提'))).toBe(false)
+    // 欠員だけでも済みにしない(欠員は減便の方針の手順で入れる)
+    act(() => useDriversStore.getState().setShortage(19))
+    expect(hasCheck(stepButton('2. 運行の前提'))).toBe(false)
+    // 在籍の運転士の数を入れたら済み
+    act(() => useDriversStore.getState().setRoster(150))
+    expect(hasCheck(stepButton('2. 運行の前提'))).toBe(true)
+    expect(hasStatus('2. 運行の前提', '済み')).toBe(true)
+    // 在籍を消しても、営業所を置いていれば済み
+    act(() => {
+      useDriversStore.getState().setRoster(null)
+      useDriversStore.setState({ places: [{ id: 'p1', type: 'office', name: '営業所', lat: 43.76, lon: 142.36 }] })
+    })
+    expect(hasCheck(stepButton('2. 運行の前提'))).toBe(true)
+    act(() => useDriversStore.setState({ places: [] }))
+    expect(hasCheck(stepButton('2. 運行の前提'))).toBe(false)
+    act(() => useDriversStore.getState().setRoster(150))
 
     act(() => useEditStore.setState({ history: [record(POLICY)] }))
     expect(hasCheck(stepButton('3. 減便の方針'))).toBe(true)
@@ -228,7 +247,7 @@ describe('手順のステッパー', () => {
     // 読み込みだけでは、塗る横線は無い
     expect(litPairs()).toEqual([])
 
-    act(() => useResearchStore.getState().mergeResults([{ targetId: 'op:1' } as unknown as ResearchResult]))
+    act(() => useDriversStore.getState().setRoster(150))
     act(() => useEditStore.setState({ history: [record(POLICY), record(ADD_BACK)] }))
     // 1・2・3・5 が済み。1→5 は切れ目なく塗り、5→6 は塗らない
     expect(new Set(litPairs())).toEqual(new Set(['1-2', '2-3', '3-4', '4-5']))
@@ -239,8 +258,8 @@ describe('手順のステッパー', () => {
     act(() => useGtfsStore.getState().setLoaded({ label: 'test.zip', feed: smallFeed() }))
     load()
     render(<Stepper />)
-    act(() => useResearchStore.getState().mergeResults([{ targetId: 'op:1' } as unknown as ResearchResult]))
-    expect(hasCheck(stepButton('2. 前提情報'))).toBe(true)
+    act(() => useDriversStore.getState().setRoster(150))
+    expect(hasCheck(stepButton('2. 運行の前提'))).toBe(true)
 
     act(() => {
       expect(useEditStore.getState().propose(POLICY, 'user').ok).toBe(true)
@@ -272,13 +291,13 @@ describe('手順のステッパー', () => {
     })
     expect(hasCheck(stepButton('3. 減便の方針'))).toBe(true)
 
-    // 読み込み直し(LoadStep と同じく、前の GTFS を捨ててから読み込む)。調査の結果は gtfs の store の購読で消える
+    // 読み込み直し(LoadStep と同じく、前の GTFS を捨ててから読み込む)。在籍の運転士の数は gtfs の store の購読で消える
     act(() => {
       useGtfsStore.getState().clear()
       useEditStore.getState().setBase(null)
     })
-    expect(useResearchStore.getState().results.size).toBe(0)
-    for (const name of ['2. 前提情報', '3. 減便の方針', '4. 影響(到達圏)']) expect(stepButton(name).disabled).toBe(true)
+    expect(useDriversStore.getState().roster).toBeNull()
+    for (const name of ['2. 運行の前提', '3. 減便の方針', '4. 影響(到達圏)']) expect(stepButton(name).disabled).toBe(true)
     act(() => useGtfsStore.getState().setLoaded({ label: 'test.zip', feed: smallFeed() }))
     load()
     const checked = within(nav())

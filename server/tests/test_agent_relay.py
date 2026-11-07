@@ -592,7 +592,7 @@ def test_stream_research_events(monkeypatch: pytest.MonkeyPatch, client: TestCli
         FakeStream(
             [
                 ev("session.thread_created", session_thread_id=CHILD_THREAD, agent_name="dispatcher-researcher", workflow_run_id=None),
-                ev("workflow_run.created", workflow_run_id="wrun_1", name="前提情報の調査", description=None, phases=[{"id": "ph_1", "name": "調べる", "description": None}]),
+                ev("workflow_run.created", workflow_run_id="wrun_1", name="周辺の施設の調査", description=None, phases=[{"id": "ph_1", "name": "調べる", "description": None}]),
                 ev("session.thread_created", session_thread_id=RUN_THREAD, agent_name="dispatcher-researcher", workflow_run_id="wrun_1"),
                 ev("workflow_run.status_running", workflow_run_id="wrun_1"),
                 ev("workflow_run.phase_started", workflow_run_id="wrun_1", workflow_run_phase_id="ph_1"),
@@ -606,7 +606,7 @@ def test_stream_research_events(monkeypatch: pytest.MonkeyPatch, client: TestCli
     frames = [frame for frame in stream(client, handle) if frame[0] == "research"]
     assert [frame[1] for frame in frames] == [
         {"kind": "delegated", "name": "dispatcher-researcher"},
-        {"kind": "run_started", "run_id": "wrun_1", "name": "前提情報の調査"},
+        {"kind": "run_started", "run_id": "wrun_1", "name": "周辺の施設の調査"},
         {"kind": "phase_started", "run_id": "wrun_1", "name": "調べる"},
         {"kind": "phase_ended", "run_id": "wrun_1", "name": "調べる"},
         {"kind": "run_paused", "run_id": "wrun_1"},

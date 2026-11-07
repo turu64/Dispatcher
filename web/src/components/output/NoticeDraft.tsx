@@ -108,7 +108,7 @@ function OtherOperatorsBlock({
   if (others === null) {
     return (
       <p className="print-hide text-xs text-muted-foreground" data-testid="other-operators-missing">
-        周辺の事業者の停留所は、手順「前提情報」で参照データを読み込むと表示します。
+        周辺の事業者の停留所は、参照データを読み込むと表示します(読み込めないときは、手順「平日便を戻す」の「判断材料を調べる」で読み込み直せます)。
       </p>
     )
   }
@@ -463,7 +463,7 @@ function NoticeBody({
   }, [stops, changedOnly, query])
   const shown = rows.slice(0, limit)
   const selectedStop = selected === null ? null : (stops.find((s) => s.stopId === selected) ?? null)
-  // 近くの他の事業者の停留所(前提情報の手順で読み込んだ参照データ。自社の事業者は除く)と、調べた減便の動き
+  // 近くの他の事業者の停留所(GTFS を読み込むと読む参照データ。自社の事業者は除く)と、調べた減便の動き
   const busstops = useResearchStore((s) => (s.facilities.status === 'ready' ? (s.facilities.busstops ?? null) : null))
   const researched = useResearchStore((s) => s.results)
   const otherStops = useMemo<OtherStop[] | null>(

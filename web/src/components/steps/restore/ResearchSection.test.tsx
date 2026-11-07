@@ -8,15 +8,14 @@ import { basePlan, smallFeed } from '@/gtfs/edit/form2.fixture'
 import type { Stop } from '@/gtfs/parse'
 import { mergeBusstopFiles } from '@/ref/busstops'
 import { facilityMeshes, mergeFacilityFiles } from '@/ref/facilities'
-import { createChatStore, RESEARCH_KEEP_OPEN, TOKEN_MISSING, type ChatStoreDeps, type TokenStorage } from '@/store/chat'
-import { useDriversStore } from '@/store/drivers'
+import { createChatStore, RESEARCH_KEEP_OPEN, TOKEN_MISSING, useChatStore, type ChatStoreDeps, type TokenStorage } from '@/store/chat'
 import { useEditStore } from '@/store/edit'
 import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
 import { usePriorityStore } from '@/store/priority'
 import { useReachStore } from '@/store/reach'
 import { reducedStopsOf, useResearchStore } from '@/store/research'
-import ResearchStep, {
+import {
   MOVEMENT_NONE,
   NOT_RESEARCHED_BADGE,
   NOT_RESEARCHED_TITLE,
@@ -35,7 +34,11 @@ import ResearchStep, {
   PRIORITY_TITLE,
   RESEARCH_SUMMARY_TITLE,
   RESULT_ALL_LABEL,
-} from './ResearchStep'
+  RESEARCH_SECTION_TITLE,
+  ResearchLoader,
+  ResearchSection,
+} from './ResearchSection'
+import RestoreStep, { RESEARCH_DETAILS_FAILED } from '../RestoreStep'
 
 // 停留所は旭川の近くの3つ。施設はその周り(範囲の外のものを1つ含む)。smallFeed の事業者は「テストバス」
 const STOPS: Stop[] = [
@@ -122,7 +125,13 @@ function setup(options: { tokenRequired?: boolean; start?: ResearchApi['start'];
     session: { sleep: async () => undefined, batchDelayMs: 0 },
   }
   const chat = createChatStore(deps)
-  render(<ResearchStep chat={chat} />)
+  // 施設の読み込みと結果の読み直しは ResearchLoader(平日便を戻す手順がいつも置いておく)が受け持つ
+  render(
+    <>
+      <ResearchLoader chat={chat} />
+      <ResearchSection chat={chat} />
+    </>,
+  )
   return { chat, research, fake }
 }
 
@@ -172,31 +181,19 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('ResearchStep', () => {
-  it('GTFS を読み込む前は案内だけ', () => {
-    act(() => useGtfsStore.getState().clear())
+describe('ResearchSection', () => {
+
+  it('運行の前提(営業所・運転士の数)の欄は出さない(運行の前提の手順に分けた)', () => {
     setup()
-    expect(screen.getByText(/GTFS を読み込むと、運行の前提.+を設定し、周辺の事業者・学校・病院を調べられます/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: RESEARCH_START })).toBeNull()
+    expect(screen.queryByRole('region', { name: '運行の前提(営業所・運転士の数)' })).toBeNull()
+    expect(screen.queryByLabelText('欠員(その日に乗務できない運転士の数)')).toBeNull()
+    expect(screen.getByText(includes('調べなくても、便は平日に戻せます。'))).toBeTruthy()
   })
 
-  it('調査の欄の上に、運行の前提(営業所・運転士の数)の欄を出し、欠員・在籍の運転士の数を入れられる', () => {
-    setup()
-    const premise = screen.getByRole('region', { name: '運行の前提(営業所・運転士の数)' })
-    const research = screen.getByRole('heading', { name: '周辺の事業者・施設の調査' })
-    expect(premise.compareDocumentPosition(research) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(premise).getByTestId('places-editor')).toBeTruthy()
-    fireEvent.change(within(premise).getByLabelText('欠員(その日に乗務できない運転士の数)'), { target: { value: '20' } })
-    fireEvent.change(within(premise).getByLabelText('在籍の運転士の数'), { target: { value: '110' } })
-    expect(useDriversStore.getState()).toMatchObject({ shortage: 20, roster: 110 })
-    act(() => useDriversStore.getState().reset())
-  })
-
-  it('施設を読めないときも、運行の前提の欄は出す', () => {
+  it('施設を読めないときは理由を出す', () => {
     setup()
     act(() => useResearchStore.setState({ facilities: { status: 'error', key: facilityMeshes(STOPS).join(','), message: '施設を読み込めませんでした' } }))
     expect(screen.getByText('施設を読み込めませんでした')).toBeTruthy()
-    expect(screen.getByRole('region', { name: '運行の前提(営業所・運転士の数)' })).toBeTruthy()
   })
 
   it('停留所の周り 2km の候補を種類ごとにまとめ、既定で事業者と優先順位の上から選ぶ(自社と優先順位の外は選ばない)', () => {
@@ -334,7 +331,7 @@ describe('ResearchStep', () => {
     expect(checkedNames()).toEqual(['となりバス', 'テスト総合病院', 'テスト高等学校', 'テスト大学'])
   })
 
-  it('「前提情報を調べる」で、選んだ対象の target_id だけを送り、進み具合と結果(事実・出典 URL・確認日時・どこから来た結果か)を出す', async () => {
+  it('「周辺の施設を調べる」で、選んだ対象の target_id だけを送り、進み具合と結果(事実・出典 URL・確認日時・どこから来た結果か)を出す', async () => {
     const { chat, research } = setup()
     expect(screen.getByText(includes('調べる施設・事業者の名前と位置(国土数値情報)を送り、AI が Web で検索します'))).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: RESEARCH_START }))
@@ -345,7 +342,7 @@ describe('ResearchStep', () => {
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('調べています 1 / 4 件'))
     expect(screen.getByText(RESEARCH_KEEP_OPEN)).toBeTruthy()
     // 「AI に送る情報」に、サーバーが会話に入れた行を残す
-    expect(chat.getState().sentLog.at(-1)?.parts).toEqual([{ kind: 'screen', text: '[画面の操作] 利用者が前提情報の調査を始めました(対象 4 件)。' }])
+    expect(chat.getState().sentLog.at(-1)?.parts).toEqual([{ kind: 'screen', text: '[画面の操作] 利用者が周辺の施設の調査を始めました(対象 4 件)。' }])
     // 調査の間は、もう一度は押せない
     expect((screen.getByRole('button', { name: RESEARCH_START }) as HTMLButtonElement).disabled).toBe(true)
 
@@ -502,7 +499,7 @@ describe('ResearchStep', () => {
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(calls))
   })
 
-  it('「前提情報を調べる」は送信の間、処理中(無効・aria-busy・読み上げ)になる', async () => {
+  it('「周辺の施設を調べる」は送信の間、処理中(無効・aria-busy・読み上げ)になる', async () => {
     let resolve: (v: ResearchStartView) => void = () => {}
     setup({ start: () => new Promise<ResearchStartView>((r) => (resolve = r)) })
     fireEvent.click(screen.getByRole('button', { name: RESEARCH_START }))
@@ -608,7 +605,7 @@ describe('ResearchStep', () => {
   })
 })
 
-describe('ResearchStep の一覧の畳み方', () => {
+describe('ResearchSection の一覧の畳み方', () => {
   // 大学 8 件(停留所 S1 から西へ、番号の順に遠くなる)と、優先順位の外の学校 8 件
   function many(prefix: string, label: string, detail: Record<string, unknown>) {
     return Array.from({ length: 8 }, (_, k) => item(`${prefix}${k + 1}`, 'school', `${label}${k + 1}`, 43.76 + 0.0005 * k, 142.34 - 0.0005 * k, detail))
@@ -676,7 +673,7 @@ describe('ResearchStep の一覧の畳み方', () => {
   })
 })
 
-describe('ResearchStep の周辺の事業者', () => {
+describe('ResearchSection の周辺の事業者', () => {
   function stop(name: string, lat: number, lon: number, operator: string, routes: string[] = []) {
     return { name, lat, lon, operators: [`P11:${operator}`], routes }
   }
@@ -887,5 +884,74 @@ describe('ResearchStep の周辺の事業者', () => {
     expect(screen.queryByTestId('reduced-summary')).toBeNull()
     expect(screen.queryByText(REDUCED_AFTER_POLICY)).toBeNull()
     expect(screen.getByText(REDUCED_NO_DATE)).toBeTruthy()
+  })
+})
+
+describe('平日便を戻す手順の「判断材料を調べる」', () => {
+  const details = () => screen.getByTestId('research-details') as HTMLDetailsElement
+
+  it('GTFS を読み込む前は出さない', () => {
+    act(() => useGtfsStore.getState().clear())
+    render(<RestoreStep />)
+    expect(screen.queryByText(RESEARCH_SECTION_TITLE)).toBeNull()
+    expect(screen.queryByTestId('research-details')).toBeNull()
+  })
+
+  it('減便の方針の承認を待たずに出し、最初は閉じておく。閉じている間も中身は描いたまま。見出しに調べた結果の数を添える', () => {
+    render(<RestoreStep />)
+    expect(screen.getByText(RESEARCH_SECTION_TITLE)).toBeTruthy()
+    expect(details().open).toBe(false)
+    expect(details().querySelector('summary')?.textContent).toContain('まだ調べていません')
+    // 承認前の案内は、開閉の後ろに出す
+    expect(screen.getByText('GTFS を読み込み、減便の方針を承認すると、平日に戻す便を選べます。')).toBeTruthy()
+    expect(within(details()).getByRole('checkbox', { name: 'テスト高等学校', hidden: true })).toBeTruthy()
+    act(() => useResearchStore.getState().mergeResults([HIGH_RESULT]))
+    expect(details().querySelector('summary')?.textContent).toContain('調べた結果 1 件')
+  })
+
+  it('調べている最中は、結果がなくても「まだ調べていません」と並べて出さない', () => {
+    const before = useChatStore.getState()
+    act(() => useChatStore.setState({ research: { ...before.research, active: true } }))
+    try {
+      render(<RestoreStep />)
+      const summary = details().querySelector('summary')?.textContent ?? ''
+      expect(summary).toContain('調べています')
+      expect(summary).not.toContain('まだ調べていません')
+      act(() => useResearchStore.getState().mergeResults([HIGH_RESULT]))
+      expect(details().querySelector('summary')?.textContent).toContain('調べた結果 1 件・調べています')
+    } finally {
+      act(() => useChatStore.setState({ research: before.research }))
+    }
+  })
+
+  it('調査や施設の読み込みに失敗したら、閉じたままでも見出しに印を出す', () => {
+    const before = useChatStore.getState()
+    render(<RestoreStep />)
+    expect(details().querySelector('summary')?.textContent).not.toContain(RESEARCH_DETAILS_FAILED)
+    try {
+      act(() => useChatStore.setState({ researchError: '調査の結果を読めませんでした。' }))
+      expect(details().open).toBe(false)
+      expect(details().querySelector('summary')?.textContent).toContain(RESEARCH_DETAILS_FAILED)
+      act(() => useChatStore.setState({ researchError: null }))
+      expect(details().querySelector('summary')?.textContent).not.toContain(RESEARCH_DETAILS_FAILED)
+      act(() => useResearchStore.setState({ facilities: { status: 'error', key: facilityMeshes(STOPS).join(','), message: '周辺の施設を読み込めませんでした。' } }))
+      expect(details().querySelector('summary')?.textContent).toContain(RESEARCH_DETAILS_FAILED)
+    } finally {
+      act(() => useChatStore.setState({ researchError: before.researchError }))
+    }
+  })
+
+  it('開閉と関係なく、GTFS を読み込んでいれば周辺の施設を読み込む', () => {
+    const original = useResearchStore.getState().loadFacilities
+    const loadFacilities = vi.fn(async () => {})
+    act(() => useResearchStore.setState({ facilities: { status: 'idle' }, loadFacilities }))
+    try {
+      render(<RestoreStep />)
+      expect(details().open).toBe(false)
+      expect(loadFacilities).toHaveBeenCalledTimes(1)
+      expect(loadFacilities.mock.calls[0]).toEqual([STOPS])
+    } finally {
+      act(() => useResearchStore.setState({ loadFacilities: original }))
+    }
   })
 })

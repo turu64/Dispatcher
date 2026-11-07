@@ -19,8 +19,8 @@ import {
 
 /**
  * 変更指示書と平日便を戻す手順に出す、要る運転士の数(目安)のまとめ(指摘 24・18.1、docs/tasks-1105.md の D04)。
- * 数はすべて store/drivers.ts の compareDrivers が出し、ここでは並べるだけ。欠員・在籍の運転士の数・週の出勤日数・仮定・場所は、
- * 前提情報の手順の「運行の前提」の欄(steps/research/OperationPremise.tsx)で入れる。判定(乗務できる運転士の数(目安)と
+ * 数はすべて store/drivers.ts の compareDrivers が出し、ここでは並べるだけ。在籍の運転士の数・週の出勤日数・仮定・場所は、
+ * 運行の前提の手順の「運行の前提」の欄(steps/research/OperationPremise.tsx)で、欠員は減便の方針の手順(steps/policy/ShortageSection.tsx)で入れる。判定(乗務できる運転士の数(目安)と
  * 減便後に要る勤務の数の比較)は、在籍の運転士の数を入れたときだけ出す
  */
 

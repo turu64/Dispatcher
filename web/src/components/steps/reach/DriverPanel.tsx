@@ -1,5 +1,5 @@
 import { CircleCheck, Info, TriangleAlert } from 'lucide-react'
-import { jumpToPremise } from '@/components/steps/stepIds'
+import { jumpToPremise, jumpToShortage } from '@/components/steps/stepIds'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,7 @@ import {
   OPERATOR_RUNS_NOTE,
   PREMISE_JUMP,
   SERVICE_HOURS_NOTE,
+  SHORTAGE_JUMP,
   supplyText,
   supplyWarningText,
   verdictText,
@@ -32,15 +33,16 @@ import { placesEffectText } from './places'
  * 比較する日付の、減便前・減便後の便の数・営業運行時間・勤務の数の目安と、入力の運用番号の数から出した要る勤務の数を表で出し、
  * 在籍の運転士の数を入れていれば、乗務できる運転士の数(目安。在籍 × 週の出勤日数 ÷ 7 − 欠員)と減便後に要る勤務の数を比べた
  * 目安を出す(減便前のままでの過不足も並べる)。置いた営業所があれば、置く前と後の勤務の数を表の下に出す。
- * 入力(欠員・在籍の運転士の数・週の出勤日数・営業所の位置・仮定)は、前提情報の手順の「運行の前提」の欄(research/OperationPremise.tsx)で行い、
- * この欄の「前提情報で設定する」でそこへ移る。計算は store/drivers.ts(compareDrivers)
+ * 入力のうち、在籍の運転士の数・週の出勤日数・営業所の位置・仮定は運行の前提の手順の「運行の前提」の欄(research/OperationPremise.tsx)、
+ * 欠員は減便の方針の手順の欠員の欄(policy/ShortageSection.tsx)で行い、この欄の「運行の前提で設定する」「欠員を入れる(減便の方針)」で
+ * それぞれへ移る。計算は store/drivers.ts(compareDrivers)
  */
 export default function DriverPanel() {
   const comparison = useDriverComparison()
   const params = useDriversStore((s) => s.params)
   const places = useDriversStore((s) => s.places)
   if (!comparison) return null
-  return <DriverView comparison={comparison} params={params} places={places} onOpenPremise={jumpToPremise} />
+  return <DriverView comparison={comparison} params={params} places={places} onOpenPremise={jumpToPremise} onOpenShortage={jumpToShortage} />
 }
 
 /** 欄の中身(store を使わない。テストでは値を直接渡す) */
@@ -49,12 +51,15 @@ export function DriverView({
   params,
   places,
   onOpenPremise,
+  onOpenShortage,
 }: {
   comparison: DriverComparison
   params: DutyParams
   places: readonly DutyPlace[]
-  /** 「前提情報で設定する」を押したとき */
+  /** 「運行の前提で設定する」を押したとき */
   onOpenPremise: () => void
+  /** 「欠員を入れる(減便の方針)」を押したとき */
+  onOpenShortage: () => void
 }) {
   const { verdict } = comparison
   return (
@@ -90,10 +95,17 @@ export function DriverView({
         ))}
       </ul>
       <AssumptionsList comparison={comparison} params={params} places={places} />
-      <Button type="button" variant="outline" size="sm" className="self-start" onClick={onOpenPremise}>
-        {PREMISE_JUMP}
-      </Button>
-      <p className="text-xs text-muted-foreground">欠員・在籍の運転士の数・週の出勤日数・営業所の位置・推定の仮定は、手順「前提情報」の「運行の前提」の欄で変えられます。</p>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onOpenPremise}>
+          {PREMISE_JUMP}
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={onOpenShortage}>
+          {SHORTAGE_JUMP}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        在籍の運転士の数・週の出勤日数・営業所の位置・推定の仮定は手順「運行の前提」で、欠員は手順「減便の方針」で変えられます。
+      </p>
     </section>
   )
 }

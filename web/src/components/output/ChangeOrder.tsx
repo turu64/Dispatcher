@@ -226,7 +226,7 @@ function Sheet({
   const gtfsReminder = texts.changes.find((t) => t.startsWith('次に運行管理システム')) ?? null
   const excluded = plan.excludedRoutes.map((id) => routeNames.get(id.trim()) ?? id)
 
-  // 周辺の事業者の動き(前提情報で調べた結果の引用。調べていなければ「調べていません」)
+  // 周辺の事業者の動き(周辺の施設の調査の結果の引用。調べていなければ「調べていません」)
   const researchResults = useResearchStore((s) => s.results)
   const [nowMs] = useState(() => Date.now())
   const movement = useMemo(() => {
@@ -541,7 +541,7 @@ function Sheet({
         </ul>
       </Section>
       </div>
-      <Section title="8. 周辺の事業者の動き(前提情報で調べた結果)" avoidBreak={false}>
+      <Section title="8. 周辺の事業者の動き(周辺の施設の調査の結果)" avoidBreak={false}>
         <div data-testid="movement-section" className="flex flex-col gap-1">
           {movement.researched === 0 ? (
             <p>調べていません。</p>
@@ -550,7 +550,7 @@ function Sheet({
               {/* 見出しで絞った結果だけを言う(廃止など、絞り込みの語に当たらない事実がありうるため) */}
               調べた {movement.researched} 事業者の結果
               {movement.latestCheckedAt && `(確認日時 ${checkedAtText(movement.latestCheckedAt)})`}
-              に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、手順「前提情報」で確かめてください。
+              に、減便・ダイヤ改正・運休・特別ダイヤの見出しの事実はありません。廃止などのほかの動きは、手順「平日便を戻す」の「判断材料を調べる」で確かめてください。
             </p>
           ) : (
             <>
@@ -562,7 +562,7 @@ function Sheet({
                 ))}
               </div>
               {movement.quotes.length > MOVEMENT_MAX_OPERATORS && (
-                <p>ほか {movement.quotes.length - MOVEMENT_MAX_OPERATORS} 事業者の動きは、手順「前提情報」で確かめられます。</p>
+                <p>ほか {movement.quotes.length - MOVEMENT_MAX_OPERATORS} 事業者の動きは、手順「平日便を戻す」の「判断材料を調べる」で確かめられます。</p>
               )}
             </>
           )}

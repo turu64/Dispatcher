@@ -1,9 +1,7 @@
 import { ArrowDown, ArrowUp, BusFront, Clock, ExternalLink, GripVertical, TriangleAlert } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStore, type StoreApi, type UseBoundStore } from 'zustand'
-import StepSection from '@/components/StepSection'
 import { researchSummary, resultHighlights } from '@/components/steps/research/highlights'
-import OperationPremise from '@/components/steps/research/OperationPremise'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -22,7 +20,6 @@ import {
   type ResearchCandidate,
 } from '@/ref/facilities'
 import { RESEARCH_KEEP_OPEN, RESEARCH_SEND_NOTE, researchText, useChatStore, type ChatState } from '@/store/chat'
-import { useGtfsStore } from '@/store/gtfs'
 import { useMapStore } from '@/store/map'
 import { DEFAULT_PRIORITY, priorityCategory, usePriorityStore, type PriorityKey } from '@/store/priority'
 import {
@@ -40,7 +37,7 @@ type ChatStoreHook = UseBoundStore<StoreApi<ChatState>>
 
 // ---- 文言 ----
 
-export const RESEARCH_START = '前提情報を調べる'
+export const RESEARCH_START = '周辺の施設を調べる'
 export const RESEARCH_DEMO = '保存済みの結果(デモ)を使う'
 /** 処理中のボタンの読み上げ */
 export const RESEARCH_STARTING = '調査を始めています'
@@ -59,7 +56,7 @@ export const OWN_OPERATOR_FIXED = '読み込んだ GTFS の事業者は、調べ
 export const RESULT_ALL_LABEL = '調べた結果のすべて'
 /** 欄の先頭のまとめの見出し */
 export const RESEARCH_SUMMARY_TITLE = '調べた結果のまとめ'
-export const RESEARCH_SUMMARY_NOTE = '読めた時刻は、「平日便を戻す」の判断材料(学校・病院に着く便・出る便)の時間帯に使います。各行には要点だけを出し、事実と出典のすべては「調べた結果のすべて」を開くと見られます。'
+export const RESEARCH_SUMMARY_NOTE = '読めた時刻は、この手順の判断材料(学校・病院に着く便・出る便)の時間帯に使います。各行には要点だけを出し、事実と出典のすべては「調べた結果のすべて」を開くと見られます。'
 /** 重要拠点の優先順位の Dialog を開くボタンの文と、Dialog の見出し */
 export const PRIORITY_TITLE = '重要拠点の優先順位'
 export const CLOSED_SCHOOL = '休校中か不明'
@@ -696,57 +693,27 @@ function RowResult({ result }: { result: ResearchResult }) {
   )
 }
 
+/** 平日便を戻す手順の「判断材料を調べる」の見出し(開閉の summary) */
+export const RESEARCH_SECTION_TITLE = '判断材料を調べる(周辺の学校・病院・事業者)'
+
 /**
- * 前提情報の手順。停留所の分布の外接矩形 +2km にある周辺のバス事業者・学校・病院を参照データ(国土数値情報)から洗い出し、
- * 調べる対象を選んで AI に Web で調べてもらう(docs/interfaces-1105.md §3.2・§6.4、docs/tasks-1103.md の T16)。
- * 対象は重要拠点の優先順位の上から既定で選び、上限は 30 件。保存済みの結果(デモ)を使えば、AI を呼ばずに結果を見られる。
- * サーバーに送るのは target_id だけ。GTFS の中身は送らない。
- * 調査の欄の上に、運行の前提(営業所・運転士の数。research/OperationPremise.tsx)の欄を置く
+ * 周辺の施設の参照データの読み込みと、調べた結果の読み直し(画面には何も出さない)。
+ * 「判断材料を調べる」の欄の開閉や、減便の方針の承認と関係なく、GTFS を読み込んでいる間はいつも置いておく
+ * (平日便を戻す手順の判断材料・地図・周知文・変更指示書が、施設と調べた結果を使うため)。
+ * GTFS を読み込んだら(停留所が決まったら)、その周りの施設を読む。調べた結果が保存されたら
+ * (進み具合の saved が増えた・調べ終えた)、保存済みの結果を読み直す
  */
-export default function ResearchStep({ chat = useChatStore }: { chat?: ChatStoreHook }) {
-  const feed = useGtfsStore((s) => s.feed)
-  return <StepSection title="2. 前提情報">{!feed ? <p className="text-sm text-muted-foreground">GTFS を読み込むと、運行の前提(営業所・運転士の数)を設定し、周辺の事業者・学校・病院を調べられます。</p> : <ResearchBody chat={chat} />}</StepSection>
-}
-
-function ResearchBody({ chat }: { chat: ChatStoreHook }) {
+export function ResearchLoader({ chat = useChatStore }: { chat?: ChatStoreHook }) {
   const stops = useResearchStops()
-  const facilities = useResearchStore((s) => s.facilities)
-  const loadFacilities = useResearchStore((s) => s.loadFacilities)
-  const results = useResearchStore((s) => s.results)
   const targets = useResearchStore((s) => s.targets)
-  const demo = useResearchStore((s) => s.demo)
-  const inUse = useResearchStore(facilitiesInUse)
-  const order = usePriorityStore((s) => s.order)
-  const { candidates, selectedIds, isDefault, maxTargets, overlaps } = useResearchView()
-  const reduced = useReducedStops()
-  const selected = useMemo(() => new Set(selectedIds), [selectedIds])
-  const byId = useMemo(() => new Map(candidates.map((c) => [c.facility.targetId, c])), [candidates])
-  // 選んだ対象のうち、上限に数えるもの(周辺のバス事業者以外)と、事業者
-  const pickedOperators = selectedIds.filter((id) => byId.get(id)?.facility.kind === 'operator').length
-  const pickedOthers = selectedIds.length - pickedOperators
-  const groups = useMemo(() => groupCandidates(candidates, order), [candidates, order])
-  const [limitNote, setLimitNote] = useState<string | null>(null)
-  // 「前提情報を調べる」の送信(POST)の間
-  const [starting, setStarting] = useState(false)
-  // 「読み込み直す」を押した後、読み込み終えるまで、前の理由とボタン(処理中)を残す
-  const [retryMessage, setRetryMessage] = useState<string | null>(null)
-
-  // 手順を離れたら、地図の強調を解く
-  useEffect(() => () => useMapStore.getState().setHighlighted(null), [])
-
-  const sending = useStore(chat, (s) => s.sending)
   const progress = useStore(chat, (s) => s.research)
-  const researchError = useStore(chat, (s) => s.researchError)
-  const progressText = researchText(progress)
+  const saved = progress.saved
+  const outcome = progress.outcome
 
-  // GTFS を読み込んだら(停留所が決まったら)、その周りの施設を読む
   useEffect(() => {
     if (stops.length > 0) void useResearchStore.getState().loadFacilities(stops)
   }, [stops])
 
-  // 調べた結果が保存されたら(進み具合の saved が増えた・調べ終えた)、保存済みの結果を読み直す
-  const saved = progress.saved
-  const outcome = progress.outcome
   useEffect(() => {
     if (targets === null) return
     let cancelled = false
@@ -761,6 +728,47 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
       cancelled = true
     }
   }, [chat, targets, saved, outcome])
+
+  return null
+}
+
+/**
+ * 平日便を戻す手順の「判断材料を調べる」の中身(2026-11-07 に利用者の指示で、前の前提情報の手順から移した)。
+ * 停留所の分布の外接矩形 +2km にある周辺のバス事業者・学校・病院を参照データ(国土数値情報)から洗い出し、
+ * 調べる対象を選んで AI に Web で調べてもらう(docs/interfaces-1105.md §3.2・§6.4、docs/tasks-1103.md の T16)。
+ * 対象は重要拠点の優先順位の上から既定で選び、上限は 30 件。保存済みの結果(デモ)を使えば、AI を呼ばずに結果を見られる。
+ * サーバーに送るのは target_id だけ。GTFS の中身は送らない。
+ * 施設の読み込みと結果の読み直しは ResearchLoader が受け持つ。開閉(details)は RestoreStep が付ける
+ */
+export function ResearchSection({ chat = useChatStore }: { chat?: ChatStoreHook }) {
+  const stops = useResearchStops()
+  const facilities = useResearchStore((s) => s.facilities)
+  const loadFacilities = useResearchStore((s) => s.loadFacilities)
+  const results = useResearchStore((s) => s.results)
+  const demo = useResearchStore((s) => s.demo)
+  const inUse = useResearchStore(facilitiesInUse)
+  const order = usePriorityStore((s) => s.order)
+  const { candidates, selectedIds, isDefault, maxTargets, overlaps } = useResearchView()
+  const reduced = useReducedStops()
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds])
+  const byId = useMemo(() => new Map(candidates.map((c) => [c.facility.targetId, c])), [candidates])
+  // 選んだ対象のうち、上限に数えるもの(周辺のバス事業者以外)と、事業者
+  const pickedOperators = selectedIds.filter((id) => byId.get(id)?.facility.kind === 'operator').length
+  const pickedOthers = selectedIds.length - pickedOperators
+  const groups = useMemo(() => groupCandidates(candidates, order), [candidates, order])
+  const [limitNote, setLimitNote] = useState<string | null>(null)
+  // 調査を始めるボタンの送信(POST)の間
+  const [starting, setStarting] = useState(false)
+  // 「読み込み直す」を押した後、読み込み終えるまで、前の理由とボタン(処理中)を残す
+  const [retryMessage, setRetryMessage] = useState<string | null>(null)
+
+  // 欄が消えたら(GTFS を削除したなど)、地図の強調を解く
+  useEffect(() => () => useMapStore.getState().setHighlighted(null), [])
+
+  const sending = useStore(chat, (s) => s.sending)
+  const progress = useStore(chat, (s) => s.research)
+  const researchError = useStore(chat, (s) => s.researchError)
+  const progressText = researchText(progress)
 
   const onToggle = (id: string, checked: boolean) => {
     const next = selectedIds.filter((x) => x !== id)
@@ -814,12 +822,9 @@ function ResearchBody({ chat }: { chat: ChatStoreHook }) {
 
   return (
     <>
-      <OperationPremise />
-
-      <h3 className="text-sm font-medium">周辺の事業者・施設の調査</h3>
       <p className="text-sm text-muted-foreground">
         停留所の分布の外周に 2km の余白を足した範囲から、周辺のバス事業者・学校・病院を洗い出します。調べる対象を選び、AI に Web
-        で調べてもらうと、通学・通院の時刻などの判断材料が出典つきで集まります。調査は飛ばして、次の「減便の方針」へ進めます。
+        で調べてもらうと、通学・通院の時刻(始業・外来の受付など)が出典つきで集まり、この手順の「学校・病院の近く」の時間帯に使います。調べなくても、便は平日に戻せます。
       </p>
 
       <PriorityList />

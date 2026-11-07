@@ -10,7 +10,7 @@ interface MapState {
   setMap: (map: MapLibreMap | null) => void
   /**
    * 強調する施設の target_id(一覧の行(行の下の調べた結果を含む)に、マウスやキーボードの焦点が当たっているもの)。
-   * 一覧(ResearchStep)が setHighlighted で書き、地図の記号(FacilityLayer)が読む。
+   * 一覧(steps/restore/ResearchSection.tsx)が setHighlighted で書き、地図の記号(FacilityLayer)が読む。
    * 地図は動かさず、輪と記号の拡大だけで示す。強調するものが無ければ null
    */
   highlightedTargetId: string | null

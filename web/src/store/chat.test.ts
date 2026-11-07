@@ -534,9 +534,9 @@ function fakeResearch() {
 }
 
 const demoIds = (n: number) => Array.from({ length: n }, (_, i) => `P29:${String(i + 1).padStart(4, '0')}`)
-const RESEARCH_LINE_51 = '[画面の状態] 前提情報:調査の結果 51 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。'
+const RESEARCH_LINE_51 = '[画面の状態] 周辺の施設の調査:調査の結果 51 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。'
 
-/** 前提情報の store の代わり(結果のある target_id と、そのうちデモの数)。changed で見張りを呼ぶ */
+/** 周辺の施設の調査の store の代わり(結果のある target_id と、そのうちデモの数)。changed で見張りを呼ぶ */
 function setupWithResearch(initial: string[] = []) {
   const research = fakeResearch()
   let ids = initial
@@ -559,7 +559,7 @@ function setupWithResearch(initial: string[] = []) {
 }
 
 describe('調べた結果の対象を、セッションを作るたびに登録する(指摘15.1)', () => {
-  it('デモを読み込んでから最初の発言をすると、50 件ずつに分けて登録してから、前提情報の行と発言を送る', async () => {
+  it('デモを読み込んでから最初の発言をすると、50 件ずつに分けて登録してから、周辺の施設の調査の行と発言を送る', async () => {
     const { s, fake, research, messages } = setupWithResearch(demoIds(51))
     expect(await s().send('平日を土曜ダイヤにしてください')).toBe(true)
     expect(research.known).toEqual([
@@ -576,14 +576,14 @@ describe('調べた結果の対象を、セッションを作るたびに登録�
         { type: 'text', text: '平日を土曜ダイヤにしてください' },
       ],
     ])
-    // 同じセッションには同じ集まりを2度送らない。件数が変わらなければ前提情報の行も入れない
+    // 同じセッションには同じ集まりを2度送らない。件数が変わらなければ周辺の施設の調査の行も入れない
     expect(await s().send('二つ目')).toBe(true)
     expect(research.known).toHaveLength(2)
     expect(messages()[1]).toEqual([{ type: 'text', text: '二つ目' }])
     expect(s().researchError).toBeNull()
   })
 
-  it('結果が 0 件なら登録も前提情報の行も無い。セッションがある間に結果が増えたら、増えた分だけすぐ登録し、次の発言で件数を伝える', async () => {
+  it('結果が 0 件なら登録も周辺の施設の調査の行も無い。セッションがある間に結果が増えたら、増えた分だけすぐ登録し、次の発言で件数を伝える', async () => {
     const { s, research, messages, changed } = setupWithResearch()
     // セッションが無い間は登録しない
     changed(demoIds(3))
@@ -604,13 +604,13 @@ describe('調べた結果の対象を、セッションを作るたびに登録�
     expect(await s().send('二つ目')).toBe(true)
     expect(research.known).toHaveLength(2)
     expect(messages()[1]).toEqual([
-      { type: 'text', text: '[画面の状態] 前提情報:調査の結果 4 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。' },
+      { type: 'text', text: '[画面の状態] 周辺の施設の調査:調査の結果 4 件(保存済みの結果(デモ)を含む)。get_research_results で読めます。' },
       { type: 'text', text: '二つ目' },
     ])
     // デモが無ければ括弧の補足を付けない
     changed(['P04:1'], 0)
     expect(await s().send('三つ目')).toBe(true)
-    expect(messages()[2][0]).toEqual({ type: 'text', text: '[画面の状態] 前提情報:調査の結果 1 件。get_research_results で読めます。' })
+    expect(messages()[2][0]).toEqual({ type: 'text', text: '[画面の状態] 周辺の施設の調査:調査の結果 1 件。get_research_results で読めます。' })
   })
 
   it('セッションを作り直したら(新しく始める・取っ手が使えなくなった)、また登録する', async () => {
@@ -626,7 +626,7 @@ describe('調べた結果の対象を、セッションを作るたびに登録�
     expect(research.known.map((k) => k.handle)).toEqual(['h1', 'h2', 'h3'])
   })
 
-  it('登録に失敗しても発言は送り、前提情報の手順に短い文を出す。次の発言で登録し直す', async () => {
+  it('登録に失敗しても発言は送り、「判断材料を調べる」に短い文を出す。次の発言で登録し直す', async () => {
     const { s, research, messages } = setupWithResearch(demoIds(2))
     research.knownFailures.push(new ClaudeRequestError(429, '回数の上限です'))
     expect(await s().send('一つ目')).toBe(true)
@@ -639,7 +639,7 @@ describe('調べた結果の対象を、セッションを作るたびに登録�
     ])
   })
 
-  it('「前提情報を調べる」でセッションを作ったときも、調査を始める前に登録する。「AI に送る情報」の件数は送った対象の数', async () => {
+  it('「周辺の施設を調べる」でセッションを作ったときも、調査を始める前に登録する。「AI に送る情報」の件数は送った対象の数', async () => {
     const { s, research } = setupWithResearch(demoIds(2))
     const view = await s().startResearch(['P04:1', 'P04:2', 'P04:1'])
     expect(view).not.toBeNull()

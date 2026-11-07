@@ -97,8 +97,8 @@ afterEach(() => {
 
 describe('FacilityAccessPanel', () => {
   it('施設を読めていないときは、理由を出す', () => {
-    renderPanel({ facilities: null, unavailable: '手順「前提情報」で学校・病院を読み込むと、施設ごとに確かめます。' })
-    expect(panel().textContent).toContain('手順「前提情報」で学校・病院を読み込むと、施設ごとに確かめます。')
+    renderPanel({ facilities: null, unavailable: '周辺の学校・病院の参照データを読み込むと、施設ごとに確かめます。' })
+    expect(panel().textContent).toContain('周辺の学校・病院の参照データを読み込むと、施設ごとに確かめます。')
     expect(screen.queryByRole('list')).toBeNull()
   })
 

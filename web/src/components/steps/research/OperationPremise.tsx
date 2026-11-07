@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import NumberField from '@/components/NumberField'
 import { SELECTED_TOGGLE_CLASS } from '@/components/selectedToggle'
+import { CountField } from '@/components/steps/CountField'
 import PlacesEditor from '@/components/steps/reach/PlacesEditor'
 import {
   DEADHEAD_KMH_RANGE,
@@ -8,13 +9,10 @@ import {
   parseCheckMinutes,
   parseDeadheadKmh,
   parseRoster,
-  parseShortage,
   parseWorkDays,
   PREMISE_TITLE,
   ROSTER_LABEL,
-  SHORTAGE_LABEL,
   WORK_DAYS_LABEL,
-  type OptionalCountResult,
 } from '@/components/steps/reach/driverText'
 import { PREMISE_SECTION_ID } from '@/components/steps/stepIds'
 import { Button } from '@/components/ui/button'
@@ -25,13 +23,14 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { BOUND_LIMIT_MIN, dutyAssumptions, type DutyParams, type DutyPlace } from '@/gtfs/edit/duties'
 import { DOHOKU_SAMPLE_BUTTON, DOHOKU_SAMPLE_OFFICE_COUNT, DOHOKU_SAMPLE_PLACES, DOHOKU_SAMPLE_ROSTER } from '@/lib/samplePlaces'
 import type { ParseResult } from '@/reach/input'
-import { MAX_ROSTER, MAX_SHORTAGE, WORK_DAYS_RANGE, useDriversStore } from '@/store/drivers'
+import { MAX_ROSTER, WORK_DAYS_RANGE, useDriversStore } from '@/store/drivers'
 import { useGtfsStore } from '@/store/gtfs'
 
 /**
- * 前提情報の手順の「運行の前提(営業所・運転士の数)」の欄(利用者の指摘、11/5)。
+ * 運行の前提の手順(PremiseStep.tsx)の「運行の前提(営業所・運転士の数)」の欄(利用者の指摘、11/5)。
  * 要る運転士の数(目安)の推定と判定に使う入力を、この欄にまとめる:
- * - 運転士の数:在籍の運転士の数(判定に要る)・1人あたりの週の出勤日数(既定 5)・欠員(その日に乗務できない運転士の数)
+ * - 運転士の数:在籍の運転士の数(判定に要る)・1人あたりの週の出勤日数(既定 5)。欠員(その日に乗務できない運転士の数)は、
+ *   2026-11-07 に利用者の指示で、減便の方針の手順の欠員の欄(policy/ShortageSection.tsx)に移した
  * - 道北バスのサンプル(営業所5か所と在籍 150 人)を入れるボタン(サンプルの GTFS を読み込んだときだけ。押したときだけ入れる)
  * - 営業所(reach/PlacesEditor.tsx。地図で置く操作は、この手順の地図で行う。map/PlacesLayer.tsx)
  * - 勤務の数の推定の仮定(拘束時間の上限・点呼・回送の速さ)。欄には今の値の短い要約だけを出し、「勤務時間の設定」の Dialog で変える
@@ -40,7 +39,6 @@ import { useGtfsStore } from '@/store/gtfs'
  * 値は store/drivers.ts(メモリだけ)。GTFS を読み込み直すと運転士の数と場所は消え、仮定は残る
  */
 export default function OperationPremise() {
-  const shortage = useDriversStore((s) => s.shortage)
   const roster = useDriversStore((s) => s.roster)
   const workDays = useDriversStore((s) => s.workDays)
   const params = useDriversStore((s) => s.params)
@@ -49,12 +47,10 @@ export default function OperationPremise() {
   const store = useDriversStore.getState
   return (
     <OperationPremiseView
-      shortage={shortage}
       roster={roster}
       workDays={workDays}
       params={params}
       places={places}
-      onShortage={(v) => store().setShortage(v)}
       onRoster={(v) => store().setRoster(v)}
       onWorkDays={(v) => store().setWorkDays(v)}
       onApplySample={sampleAvailable ? () => store().applyDohokuSample() : undefined}
@@ -67,12 +63,10 @@ export default function OperationPremise() {
 
 /** 欄の中身(store を使わない。テストでは値を直接渡す) */
 export function OperationPremiseView({
-  shortage,
   roster,
   workDays,
   params,
   places,
-  onShortage,
   onRoster,
   onWorkDays,
   onApplySample,
@@ -80,12 +74,10 @@ export function OperationPremiseView({
   onResetParams,
   placesEditor,
 }: {
-  shortage: number | null
   roster: number | null
   workDays: number
   params: DutyParams
   places: readonly DutyPlace[]
-  onShortage: (value: number | null) => void
   onRoster: (value: number | null) => void
   onWorkDays: (value: number) => void
   /** 道北バスのサンプルを入れる(在籍を入れたら true)。サンプルの GTFS でなければ省く(ボタンを出さない) */
@@ -121,18 +113,9 @@ export function OperationPremiseView({
           onCommit={onRoster}
         />
         <WorkDaysField value={workDays} onCommit={onWorkDays} />
-        <CountField
-          id="driver-shortage"
-          label={SHORTAGE_LABEL}
-          value={shortage}
-          max={MAX_SHORTAGE}
-          placeholder="例:19"
-          parse={parseShortage}
-          onCommit={onShortage}
-        />
       </div>
       <p className="text-xs text-muted-foreground">
-        乗務できる運転士の数(目安)を、在籍 × 週の出勤日数 ÷ 7 − 欠員(小数は切り捨て)で数え、減便後に要る勤務の数と比べます。在籍の運転士の数を入れないと、足りるかの目安は出しません。
+        乗務できる運転士の数(目安)を、在籍 × 週の出勤日数 ÷ 7 − 欠員(小数は切り捨て)で数え、減便後に要る勤務の数と比べます。在籍の運転士の数を入れないと、足りるかの目安は出しません。欠員(その日に乗務できない運転士の数)は、手順「減便の方針」で入れます。
       </p>
       {placesEditor}
       <AssumptionFields params={params} places={places} onParams={onParams} onReset={onResetParams} />
@@ -215,66 +198,6 @@ function WorkDaysField({ value, onCommit }: { value: number; onCommit: (value: n
         <span className="shrink-0 text-xs text-muted-foreground">
           日({WORK_DAYS_RANGE.min}〜{WORK_DAYS_RANGE.max}。週休2日なら 5)
         </span>
-      </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
-  )
-}
-
-/** 空でもよい人数の入力欄。空にすると「入れていない」(null)。打っている途中の値で store を壊さないよう、文字は手元に持つ */
-export function CountField({
-  id,
-  label,
-  value,
-  max,
-  placeholder,
-  parse,
-  onCommit,
-}: {
-  id: string
-  label: string
-  value: number | null
-  max: number
-  placeholder: string
-  parse: (text: string) => OptionalCountResult
-  onCommit: (value: number | null) => void
-}) {
-  const [text, setText] = useState(value === null ? '' : String(value))
-  const [committed, setCommitted] = useState(value)
-  const [error, setError] = useState<string | null>(null)
-  if (value !== committed) {
-    setCommitted(value)
-    setText(value === null ? '' : String(value))
-    setError(null)
-  }
-  return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <Label htmlFor={id} className="text-xs">
-        {label}
-      </Label>
-      <div className="flex items-center gap-1">
-        <Input
-          id={id}
-          type="text"
-          inputMode="numeric"
-          placeholder={placeholder}
-          value={text}
-          aria-invalid={error !== null}
-          className="h-7 w-24 tabular-nums"
-          onChange={(e) => {
-            const t = e.target.value
-            setText(t)
-            const r = parse(t)
-            if (!r.ok) {
-              setError(r.message)
-              return
-            }
-            setError(null)
-            setCommitted(r.value)
-            onCommit(r.value)
-          }}
-        />
-        <span className="shrink-0 text-xs text-muted-foreground">人(0〜{max})</span>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>

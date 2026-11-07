@@ -10,7 +10,7 @@ import type { ReachSnapshot } from './reach'
 import { useResearchStore, type FacilityState } from './research'
 import { buildRestoreHintContext, facilityRegionClass, hintFacilities, type ReachStateForHints } from './restoreHintContext'
 
-// 学校・病院の手がかり(docs/tasks-1103.md の T19)の材料を、前提情報の施設と到達圏の条件から作る
+// 学校・病院の手がかり(docs/tasks-1103.md の T19)の材料を、周辺の施設と到達圏の条件から作る
 
 const P = { lat: 43.77, lon: 142.37 }
 const CELL = meshCode(P.lat, P.lon, 11)
@@ -216,7 +216,7 @@ describe('到達圏の ctx に学校・病院を入れる(buildRestoreHintContex
 
   const ready = (facilities: Facility[]): FacilityState => ({ status: 'ready', key: '6442', facilities, sources: [] })
 
-  it('前提情報の施設を読めていなければ ctx.facilities は無い。読めていれば学校・病院を入れる', () => {
+  it('周辺の施設を読めていなければ ctx.facilities は無い。読めていれば学校・病院を入れる', () => {
     const state = reachState()
     const order = DEFAULT_PRIORITY_ORDER
     expect(buildRestoreHintContext(state, undefined, { facilities: { status: 'idle' }, results: new Map(), order })!.facilities).toBeUndefined()
@@ -242,7 +242,7 @@ describe('到達圏の ctx に学校・病院を入れる(buildRestoreHintContex
     expect(researched!.facilities![0].windows.arrive.source).toBe('research')
   })
 
-  it('渡さなければ、前提情報の store と優先順位の store の今の状態を使う', () => {
+  it('渡さなければ、周辺の施設の調査の store と優先順位の store の今の状態を使う', () => {
     const state = reachState()
     expect(buildRestoreHintContext(state)!.facilities).toBeUndefined()
     useResearchStore.setState({ facilities: ready([HOSPITAL]) })
